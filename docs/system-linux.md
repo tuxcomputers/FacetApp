@@ -2,13 +2,12 @@
 
 [← Back to README](../README.md) · [The Mac →](system-mac.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Port findings →](port-findings.md)
 
-**What this machine is, and what is known about building and driving Facet on it.** This is the second
+**What this machine is, and everything needed to build and drive Facet on it.** This is the second
 platform, and the only place BlueZ and MATE can be exercised.
 
-**Every line is either measured, with the date, or it is marked unknown.** Nothing in between.
-
-**The Rust half is not measured yet**, because this box has no Rust toolchain. The section on building
-says what is known and what has to be checked, and is explicit about which is which.
+**Every line is either measured, with the date, or it is marked unknown.** Nothing in between, and
+nothing inferred from what should be the case. A guess written into a facts file is worse than no line
+at all, because the next reader cannot tell it from a measurement.
 
 ---
 
@@ -25,11 +24,13 @@ says what is known and what has to be checked, and is explicit about which is wh
 | Desktop | **MATE 1.26.1** |
 | Display server | **X11**, `XDG_SESSION_TYPE=x11` |
 
-`hostnamectl`, `lscpu`, `/etc/os-release`, `mate-session --version`. Measured 2026-09-07.
+`hostnamectl`, `lscpu`, `/etc/os-release`, `mate-session --version`. Measured 2026-09-07, re-checked
+2026-09-20.
 
 **The two machines differ by instruction set as well as by operating system**: `arm64` there, `x86_64`
 here. Both are little-endian, which is what the BLE frame parsing cares about, but **no built artefact
-is interchangeable** and a timing figure taken on the Mac is not one about this box.
+is interchangeable** and a timing figure taken on the Mac is not one about this box. This box is the
+slower of the two by a wide margin, and the build timings below are the ones to plan CI around.
 
 **X11 matters for the scripted suite.** Synthetic mouse and keyboard events go through XTEST here.
 Under Wayland there is no equivalent a normal process may call, so the AT-SPI approach works in the
@@ -37,33 +38,157 @@ shape planned rather than needing a compositor-specific route.
 
 **MATE 1.26.1**, not 1.26.2 as an earlier document claimed. Which MATE applet is running matters for
 tray click behaviour, and [rust-port.md](rust-port.md) explains why: this box has
-`mate-indicator-applet` installed, which is the applet with the open left/right click bug, rather than
-the Notification Area applet whose bugs are closed.
+`mate-indicator-applet` **1.26.0** installed, which is the applet with the open left/right click bug,
+rather than the Notification Area applet whose bugs are closed.
 
 ---
 
 ## Building Facet here
 
-**Not measured. No Rust toolchain is installed on this box as of 2026-09-20**, so none of what follows
-is a build that has been run.
+**Everything in this section was measured on 2026-09-20 by running it**, from a tree with no `target/`
+directory at all, so every figure below is a cold build. **The whole workspace and both probes compile
+with exactly what is described here and nothing else installed.** Nothing had to be added.
 
-What can be said from what is installed and from the dependency choices:
+This supersedes the previous revision of this file, which said no Rust toolchain was installed. One
+is, and it is the same version as the Mac's.
+
+### Rust
 
 | | |
 |---|---|
-| Rust | **Absent.** Install through rustup, as on the Mac |
-| A C compiler | Needed, because `rusqlite`'s `bundled` feature compiles SQLite's C source. `make` 4.3 is present; whether a full `build-essential` is has not been checked |
-| System SQLite | **Not needed by the app.** `bundled` means the binary carries its own. The `sqlite3` CLI is still wanted by the scripts |
-| Bluetooth | `btleplug` talks to BlueZ over D-Bus. `libdbus-1-dev` is installed. Whether the crate needs it, or speaks the bus in pure Rust, is **unverified** |
-| Secrets | `keyring` targets the Secret Service, which is live here (below). `libsecret-1-dev` is installed. Again **unverified** against the crate |
-| Slint | On the Mac the default renderer is femtovg over OpenGL plus a pure-Rust software renderer, needing no cmake. **What the Linux backend pulls in has not been checked**, and it is the most likely place a system package turns out to be wanted |
+| cargo | **1.98.1** (`797e8a9bc`, 2026-08-05) |
+| rustc | **1.98.1** (`48a229cea`, 2026-09-01) |
+| rustup | **1.29.1** (`d95a37b6a`, 2026-08-13) |
+| Toolchains | One: `stable-x86_64-unknown-linux-gnu`. No nightly |
+| Targets | One: `x86_64-unknown-linux-gnu`. **Nothing here cross-compiles** |
+| Installed by | rustup, into `~/.cargo` and `~/.rustup` |
+| `clippy` | **Installed**, 0.1.98. `cargo clippy` runs clean on the workspace |
+| `rustfmt` | **Installed**, 1.9.0-stable. `cargo fmt --check` is clean |
 
-**The honest summary is that the Linux build is a thing to try, not a thing to plan around.** The first
-person to run `cargo build` here should record what it asked for, in this section.
+**The toolchain versions match the Mac exactly**, which is worth stating rather than assuming: both are
+on cargo and rustc 1.98.1 with the same commit hashes, so a compiler-version difference is not
+available as an explanation when the two machines disagree about something.
 
-**`libsqlite3-dev` was installed for the Swift build and is probably now unnecessary.** Swift shipped no
-SQLite module for Linux, so a modulemap had to name the real header. `rusqlite` bundles its own copy
-instead. Left installed; noted so nobody assumes it is load-bearing.
+**`clippy` and `rustfmt` are installed here and are not on the Mac.** That is the one toolchain
+difference between the machines, and it points the same way for CI: **the lint and format gates can be
+run from this box today**, and adding them would make the Mac the machine that needs work, not this
+one.
+
+**The PATH behaves the opposite way to the Mac's, and both need knowing.** Here `~/.cargo/env` *is*
+sourced, by both `.bashrc` (line 118) and `.profile` (line 28), so an ordinary shell finds `cargo`
+without being told. **A shell with no environment at all still does not**: `env -i bash -c 'cargo'`
+fails, because the bare default PATH has no `~/.cargo/bin`. So a systemd unit, a cron job or anything
+else starting from an empty environment needs the same line the Mac needs everywhere:
+
+```sh
+. "$HOME/.cargo/env"          # or: export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+### The C toolchain, and what actually needs it
+
+| | |
+|---|---|
+| `cc` / `gcc` | **13.3.0** (`Ubuntu 13.3.0-6ubuntu2~24.04.1`) |
+| `g++` | 13.3.0 |
+| `clang` | **not installed**, and nothing wants it |
+| `build-essential` | **12.10ubuntu1, installed** |
+| `make` | GNU Make 4.3 |
+| `pkg-config` | 1.8.1 |
+
+**A C compiler is a hard requirement, and it is `rusqlite` that needs it**, not Rust. The `bundled`
+feature compiles SQLite's own C source into the binary, so `libsqlite3-sys` invokes `cc` on every clean
+build. That is also what makes the shipped binary self-contained: **nothing links the system SQLite and
+no SQLite needs installing on a user's machine.** Confirmed here by `libsqlite3-sys` 0.30.1 compiling
+in the cold build below, and by the built artefacts in `target/debug/deps`.
+
+**`libsqlite3-dev` was installed for the Swift build and is confirmed unnecessary now.** Swift shipped
+no SQLite module for Linux, so a modulemap had to name the real header. `rusqlite` bundles its own copy
+instead, and the build above never consults the system headers. Left installed; noted so nobody assumes
+it is load-bearing.
+
+### What the UI needs, and what it does not
+
+**No cmake, no ninja, and neither is installed** — the same answer as the Mac, and it was worth
+measuring separately because this is a different Slint backend. C++ Skia is **never compiled**: it is an
+unenabled optional dependency. What actually builds on this box is
+
+```
+i-slint-backend-winit        the Linux backend
+i-slint-renderer-femtovg     OpenGL, through glutin
+i-slint-renderer-software    tiny-skia, which is pure Rust and not C++ Skia
+```
+
+verified by `cargo tree -e normal` and by the crates present in the probe's `target/debug/deps`. The
+only `skia` in the graph is `tiny-skia` 0.11.4 / 0.12.0, which is the pure-Rust one.
+
+**So enabling Slint's Skia renderer later is not a feature flag, it is a new build dependency**, on
+this machine as much as on the Mac. It would want cmake and ninja, neither of which is here.
+
+**The previous revision guessed this was the most likely place a system package would turn out to be
+wanted. It was wrong: no package had to be added.** The Slint probe links only libraries already
+present on an ordinary desktop:
+
+```
+libfontconfig.so.1  libfreetype.so.6  libpng16.so.16  libexpat.so.1
+libbrotlidec.so.1   libbrotlicommon.so.1  libbz2.so.1.0  libz.so.1  libc/libm/libgcc_s
+```
+
+**Note that `libfontconfig1-dev` is *not* installed and the build did not ask for it**, only the
+runtime `libfontconfig1`. That is a measurement, not a recommendation: a machine built from scratch may
+still want the dev package, and nobody has tested one.
+
+### The two unverified crate questions, one of them now answered
+
+Both were open in the previous revision. One is settled and the other is not:
+
+- **`btleplug` does need `libdbus-1-dev`.** It is not pure Rust on this path. The probe binary links
+  `/lib/x86_64-linux-gnu/libdbus-1.so.3`, by way of `dbus` 0.9.12 → `dbus-tokio` 0.7.6 →
+  `bluez-generated` 0.4.0 → `bluez-async` 0.8.2 → `btleplug` 0.13.1. **So `libdbus-1-dev` is
+  load-bearing and must go in any build instructions.**
+- **`keyring` and the Secret Service remain unbuilt against.** `libsecret-1-dev` 0.21.4 is installed
+  and the service is live (below), but no crate in the workspace or either probe pulls `keyring` in
+  yet, so nothing here has exercised it. **Still unverified**, and honestly so.
+
+### The commands, and what they cost cold
+
+```sh
+cargo build                   # facet-core alone, by default-members
+cargo test                    # the hermetic suite
+cargo build -p facet-linux    # the native binary
+```
+
+**A bare build is the core only**, because the other three crates are each buildable on exactly one
+platform and this machine cannot compile the CoreBluetooth or WinRT adapters.
+
+| Command | Cold | Notes |
+|---|---|---|
+| `cargo build` | **15.93s** | 19 rlibs, `libsqlite3-sys` 0.30.1 and `rusqlite` 0.32.1 among them |
+| `cargo build -p facet-linux` | 0.15s | Incremental on the above; the crate is a stub today |
+| `cargo test` | 0.21s | **0 tests.** The hermetic suite does not exist yet |
+| `cargo clippy` | 5.34s | Exit 0, no warnings |
+| `cargo fmt --check` | instant | Exit 0, no diff |
+
+**`cargo test` reporting 0 passed is the true state of the tree, not a broken invocation.** The 2,063
+behaviours in [behaviour-inventory.md](behaviour-inventory.md) are what has to land there.
+
+**The probes are excluded from the workspace** and resolve their own dependencies:
+
+```sh
+(cd probe/timeflip-btleplug && cargo build)     # running it needs the cube
+(cd probe/slint-editable-table && cargo build)  # running it opens a window
+```
+
+| Probe | Cold build | `target/` |
+|---|---|---|
+| `timeflip-btleplug` | **29.98s** | 319 MB |
+| `slint-editable-table` | **4m 53s** | **3.1 GB** |
+
+Both built 2026-09-20 on btleplug 0.13.1 and slint 1.18.0, matching the Mac. **Only built, not run**:
+one needs the cube and the other opens a window on the owner's screen.
+
+**The Slint probe's 4m 53s and 3.1 GB are the figures to plan around.** That is a cold build of the UI
+dependency graph on two cores, and it is roughly twenty times the core's. A CI job on a machine like
+this one should expect to cache `target/` rather than rebuild Slint per run.
 
 ---
 
@@ -76,22 +201,31 @@ instead. Left installed; noted so nobody assumes it is load-bearing.
 | `python3-gi` | 3.48.2 | importable as `gi` | Screenshots, and the GTK bits of the drivers |
 | `python3-pyatspi` | 2.46.1 | importable as `pyatspi` | The accessibility tree |
 | `python3-dbus` | 1.3.2 | importable as `dbus` | `tray-menu.py`, `linux-ble-probe.py` |
-| `sqlite3` | 3.45.1 | `/usr/bin/sqlite3` | The database scripts. The Mac is on 3.51.0 |
+| `sqlite3` | 3.45.1 | `/usr/bin/sqlite3` | The database scripts. The Mac is on 3.51.0. **Not the app**, which bundles its own |
 | `secret-tool` | 0.21.4 | `/usr/bin/secret-tool` | Reading the keyring by hand |
 | `git` | 2.43.0 | `/usr/bin/git` | |
 | `gh` | 2.45.0 | `/usr/bin/gh` | Logged in as `tuxcomputers` |
-| `jq` | 1.7.1 | `/usr/bin/jq` | |
+| `jq` | 1.7.1 packaged, **reports `jq-1.7`** | `/usr/bin/jq` | |
 | `curl` | 8.5.0 | `/usr/bin/curl` | |
 | `make` | 4.3 | `/usr/bin/make` | |
-| `wmctrl` | present | | |
-| `xdotool` | **not installed** | | |
+| `gcc` / `cc` | 13.3.0 | `/usr/bin/cc` | `rusqlite`'s bundled SQLite |
+| `wmctrl` | 1.07 | `/usr/bin/wmctrl` | |
+| `cmake`, `ninja` | **not installed** | | Only if Slint's Skia renderer is ever enabled |
+| `xdotool` | **not installed** | | Nothing checked in calls it |
 | `Xvfb` / `xvfb-run` | **not installed** | | **The thing standing between a window check and running without the owner's screen.** One `apt install xvfb` |
 | ImageMagick | **only `imagemagick-6-common`** | | No `convert`, no `import`. A screenshot goes through `gi` instead |
 | pyobjc | **absent and staying absent** | | The `ax-*.py` scripts are Mac-only by design |
 
+**`jq` is the packaged 1.7.1 but answers `jq-1.7` to `--version`.** Both are recorded because a script
+that greps the version string will see the second, and an earlier revision of this file recorded only
+the first.
+
 **`/bin/sh` is `dash`.** A `#!/bin/sh` script carrying a bash-ism runs on the Mac, whose `/bin/sh` is
 bash in POSIX mode, and fails here. Nothing checked in has a `#!/bin/sh` line, and this is the reason to
 keep it that way.
+
+**Write for bash 5 on both machines.** This box is on 5.2.21 and the Mac's Homebrew bash is 5.3.15;
+the Mac also still carries Apple's 3.2.57, which nothing here is written for.
 
 **The `sqlite3` version gap no longer reaches the app.** It is 3.45.1 here against 3.51.0 on the Mac,
 which mattered when the app linked the system library. With `rusqlite`'s bundled SQLite the app carries
@@ -104,12 +238,16 @@ against 3.45.1 and needs nothing newer: see the last section.
 
 | | |
 |---|---|
-| Volume | `/dev/nvme0n1p2`, **ext4**, 916 GB. `/` and `$HOME` are the same filesystem |
+| Volume | `/dev/nvme0n1p2`, **ext4**, 916 GB, 819 GB free. `/` and `$HOME` are the same filesystem |
 | Case sensitivity | **case-SENSITIVE**, on both the repository volume and `/tmp` |
 
 The mirror of the Mac's hazard. Two filenames differing only in case coexist here perfectly, get
 committed without complaint, and then cannot be checked out on the Mac at all. **Never add a name that
 collides case-wise with one already in the tree.**
+
+**The build artefacts are not small on this box**: 106 MB for the workspace `target/` plus 3.4 GB
+across the two probe trees. All three are gitignored. Worth knowing before assuming a clean checkout
+costs nothing to build.
 
 ---
 
@@ -118,14 +256,20 @@ collides case-wise with one already in the tree.**
 | | |
 |---|---|
 | Repository | `/home/harry/harry.git/FacetApp` (the Swift one is at `.../TimeFlipApp`) |
-| Remote | HTTPS, matching the Mac |
+| Remote | `https://github.com/tuxcomputers/FacetApp.git` (**HTTPS**, matching the Mac) |
 | Git identity | Harry Phillips `<harry@tux.com.au>`, the same identity as the Mac |
 | App data directory | `/home/harry/.local/share/Facet` |
-| Databases | One plain `appdata.sqlite`, plus `debug.sqlite` |
+| Databases | `production.sqlite` and `test.sqlite`, with `appdata.sqlite` a symlink to whichever is live |
+| Google credentials | `~/.config/facet/google-client.json`, outside every repository |
 
 **No XDG variable is set.** `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`
 are all unset, so the XDG default of `$HOME/.local/share` is what produces the path above. The
-platform-aware answer needs no variable to be set to be right.
+platform-aware answer needs no variable to be set to be right. The Mac reaches
+`~/Library/Application Support/Facet` from the same call.
+
+**The Google credentials live at the same path as the Mac's**, `~/.config/facet/`, which on that
+machine is a non-standard location and on this one is the XDG default. `scripted-seed.json` sits beside
+it. Both are mode 600 and neither is in any repository.
 
 **This box can push as `tuxcomputers`**, with the token in the login keyring rather than a file and
 `gh auth git-credential` as the credential helper. **The `workflow` scope is per token and per
@@ -134,11 +278,11 @@ different token rather than adding a scope to one. Fixed with `gh auth refresh -
 workflow`, which needs a person at a browser. Expect it again only if the token is revoked or somebody
 runs a fresh `gh auth login`.
 
-**`appdata.sqlite` here is a plain file, and that stops the scripted suite starting.**
-`scripts/switch-database.sh` refuses a plain file outright, deliberately, and its advice describes a
-migration the app does not perform. On the Mac the production/test split predates the check and was
-made by hand. **Making this host runnable is `mv appdata.sqlite production.sqlite` and a symlink beside
-it.**
+**The production/test split has been made here** (2026-09-20), so the previous revision's note that a
+plain `appdata.sqlite` stops the scripted suite starting no longer applies. The directory now holds
+`production.sqlite`, `test.sqlite` and a `singleinstance.lock`, with `appdata.sqlite` symlinked to
+`test.sqlite` as of this measurement. `scripts/switch-database.sh` moves the symlink and is the only
+thing that should; `setting.db_type` is how a launch reports which one it landed on.
 
 ---
 
@@ -152,14 +296,21 @@ it.**
 | Clock | `systemd-timesyncd` active, synchronised |
 
 **The same zone as the Mac**, so the two-zones hazard is not live between these machines today and is
-not fixed either.
+not fixed either: nothing pins a zone, so moving either machine would make it real without anything
+failing.
+
+**This box has a `LANG` where a double-clicked Mac app has none.** That asymmetry is itself the reason
+for the discipline: **never make an environment variable the primary source of anything**, because what
+is reliably present here is reliably absent there. Pin a fixed POSIX locale at every format site rather
+than taking the machine's.
 
 **Zone identifiers are not reliably canonical**, which is why the schema seeds `timezone` and reads it
 through `timezone_lookup`. Measured here against Swift's Foundation: a legacy IANA name such as `Cuba`,
 a `backward` link to `America/Havana`, came back verbatim and uncanonicalised, and an unusable `TZ` fell
 back silently to the system zone rather than erroring. **Both behaviours are the date library's, not
-the operating system's, so both must be re-measured against whatever Rust uses.** The schema decision
-is the conservative one either way.
+the operating system's, so both must be re-measured against whatever Rust uses.** Nothing in the
+workspace parses a date yet, so that re-measurement has not happened. The schema decision is the
+conservative one either way.
 
 ---
 
@@ -182,6 +333,10 @@ building against it: `gh auth login` put its token there rather than in a file, 
 back, and `git push` has been driven from it. So the store works, unprompted, for a background process
 on this desktop.
 
+**Still unbuilt against.** The `keyring` crate is pinned at 4.2.0 in the workspace manifest but no crate
+depends on it yet, so nothing has compiled against `libsecret` here. The Mac's keychain adapter is in
+the same position.
+
 **Untested, and it matters**: what happens when the keyring is **locked**. The failure arrives as a
 prompt to the user, or as a D-Bus error if there is nobody to prompt, and which one a background app
 gets has not been measured.
@@ -192,25 +347,47 @@ gets has not been measured.
 
 | | |
 |---|---|
-| Adapter | `hci0`, `88:E9:FE:5F:1B:52` |
+| Adapter | `hci0`, `88:E9:FE:5F:1B:52`, named `harry-MacBookPro` |
 | Adapter provenance | **built in**, on `dw-apb-uart` rather than USB, Broadcom. Not a dongle |
 | BlueZ | **5.72** |
 | Cube, as this box names it | `E8:DB:D8:CF:F9:0F`, address type **random** |
+| Cube name | `TimeFlip v2.0`, the same string the Mac sees |
+| As the app's own identifier | `FACE7000-0000-0000-0000-E8DBD8CFF90F`, derived from the address |
 | Paired / Bonded / Trusted | **no / no / no**, and that is correct here |
 
-**The address is random, not public, so it is no more durable than the Mac's per-host UUID.** The
-specification allows a device to change a random address, and whether this one survives a battery change
-or a factory reset is **untested**. Neither machine's name for this cube can be written into a shared
-table and trusted on the other.
+Adapter and BlueZ measured 2026-09-07; the cube rows re-confirmed 2026-09-20 with `bluetoothctl info`
+against the cube in range.
+
+**The address is random rather than public, so durability could not be assumed — but it has now been
+measured.** `E8:DB:D8:CF:F9:0F` was the same before and after a factory reset
+([linux-bluez-port-notes.md](linux-bluez-port-notes.md), 2026-09-07), which this file previously
+recorded as untested. **Whether it survives a battery change is still untested**, and the specification
+still allows a random address to change, so the finding is one data point and not a guarantee.
+
+**It changes nothing about the shared schema.** Neither machine's name for this cube can be written into
+a shared table and trusted on the other — the Mac sees `FA1DDE60-5DBB-D5E9-B53C-881E16916B5E` for the
+same hardware — so `device_uuid` remains a platform-specific value in a shared table, and a database
+moved between the machines carries a pairing only one of them can act on.
 
 **BlueZ forgets the cube across a boot.** `bluetoothctl info` answers `not available` until a scan
 rediscovers it, there being no bond to persist. **So on this platform, finding the cube is always a
 scan**, the same lesson the device rename cost on the Mac, arrived at from the other direction.
 
+**There is no OS-level bond and there cannot be one**, which the Mac reached from its own side: it lists
+no TimeFlip in `system_profiler` either. The cube runs no pairing agent and the PIN is the whole of the
+authentication. **So whatever either machine holds about the cube is rows in its own database and
+nothing the OS knows.**
+
 **One advertising detail worth having**: manufacturer data under key `0xffff` with value
 `54 2e 46 6c 69 70 00`, ASCII `T.Flip`. It still advertises **no service UUID**, which is finding 12 and
 why discovery must not be filtered on one. Note that `0xffff` is the Bluetooth SIG value reserved for
 testing rather than an assigned vendor id, so it is not an authoritative stamp.
+
+**The cube is factory reset before it moves between the machines**, stated by the owner as a standing
+practice and recorded in [system-mac.md](system-mac.md), which has what follows from it. The part that
+matters on this side: a reset puts the cube back on the vendor default PIN `000000`, restarts the event
+counter and drops the clock, face colours, LED, blink and task settings. All of those are asked for on
+connect regardless, so a handover exercises existing mechanisms rather than needing a new one.
 
 ---
 
@@ -218,15 +395,30 @@ testing rather than an assigned vendor id, so it is not an authoritative stamp.
 
 | | |
 |---|---|
-| Display | `eDP-1`, 2560x1600 at 60Hz, the only one |
+| Display | `eDP-1`, 2560x1600 at 60Hz, 286mm x 179mm, the only one |
 | Automation stack | AT-SPI: `at-spi2-core` 2.52.0, `libatk-adaptor` 2.52.0, `python3-pyatspi` 2.46.1 |
-| Registry | **running**: `at-spi-bus-launcher` and `at-spi2-registryd` both up |
+| Registry | **running**: `at-spi-bus-launcher`, `at-spi2-registryd` and the AT-SPI `dbus-daemon` all up |
 | `toolkit-accessibility` | **false** |
+| Drivers | `at-press.py`, `at-dump.py`, `at-set.py`, `at-hold.py`, `at-key.py`, `at-alert.py`, `at-clipboard.py`, `atspi_tree.py`, `tray-menu.py`, `linux-ble-probe.py` |
+
+**These are the Linux counterparts of the Mac's `ax-*.py` scripts**, name for name, plus
+`at-clipboard.py`, `atspi_tree.py` and `tray-menu.py` which have no Mac equivalent. Both sets live in
+`scripts/`. The Mac's `status-item-click.py` is the tray driver there; `tray-menu.py` is the one here,
+and it goes through D-Bus because **tray items are addressed by label on Linux, no identifier surviving
+the trip**.
 
 **The accessibility bus is running but toolkit accessibility is switched off.** Turning it on is one
 `gsettings set`. Note that a GTK3 app loaded the bridge anyway with this setting false, measured
 2026-09-08, so the setting is not the gate it looks like; see [port-findings.md](port-findings.md).
-Whether a Slint window needs it is unknown.
+
+**Slint ships its own AT-SPI bridge, and it is in the graph.** Measured 2026-09-20 from the Slint
+probe's build: `accesskit` 0.24.1, `accesskit_unix` 0.22.1, `accesskit_atspi_common` 0.19.1 and
+`atspi` 0.29.0 all compile as part of `i-slint-backend-winit`. **So a Slint window does not depend on
+`libatk-adaptor` the way a GTK app does**: it speaks AT-SPI over zbus in pure Rust, linking no system
+D-Bus library, which is why the probe binary links no `libdbus` while the btleplug one does.
+
+**Whether a Slint window actually appears on the accessibility bus is still unknown**, because the
+probe was built and not run. That is the next thing to measure, and it needs the owner's screen.
 
 ---
 
@@ -245,3 +437,6 @@ Whether a Slint window needs it is unknown.
 **So nothing in the DDL needs a SQLite newer than 3.45.1.** That mattered more when the app used the
 system library; with the bundled build it is now a statement about the scripts rather than about the
 app. The 1.32s is why a test that bootstraps its own database costs what it does on this box.
+
+**The app's own SQLite is `libsqlite3-sys` 0.30.1's bundled copy**, whatever version that vendors, and
+it is the same on both machines. The 3.45.1 above is the CLI the scripts call.

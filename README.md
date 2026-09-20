@@ -71,7 +71,8 @@ app needs. Every other concern has many cross-platform answers; the radio has al
   questions on the update check
 - [`system-mac.md`](docs/system-mac.md): the Mac, and everything needed to build and drive Facet
   on it
-- [`system-linux.md`](docs/system-linux.md): the Linux box, and what is not yet measured there
+- [`system-linux.md`](docs/system-linux.md): the Linux box, and everything needed to build and
+  drive Facet on it
 
 ---
 
