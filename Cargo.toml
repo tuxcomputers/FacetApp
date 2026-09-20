@@ -46,7 +46,7 @@ slint-build = "1.18.0"
 
 # chosen in docs/rust-port.md, not yet built against
 rusqlite = { version = "0.32.1", features = ["bundled"] }
-tray-icon = "0.25.1"
+tray-icon = "0.24.2"   # not 0.25: it wants muda 0.20 while slint pins 0.19, and two mudas means two ObjC classes of the same name
 ksni = "0.3.6"          # the Linux tray backend: AppIndicator emits no click events at all
 keyring = "4.2.0"
 sha2 = "0.11.0"

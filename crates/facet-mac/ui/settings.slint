@@ -1,0 +1,283 @@
+// The Settings window.
+//
+// Tabs are a centred pill group rather than Slint's TabWidget, which draws a full-width segmented
+// strip welded to the top edge. docs/rust-port.md records that difference as the reason the tab bar
+// has to be built rather than adopted.
+//
+// Every control a check must reach carries accessible-id AND accessible-role, because Slint refuses
+// the id without the role, and every pill answers accessible-action-default so that an accessibility
+// press reaches it. A bare TouchArea is invisible to AXPress and reports success anyway, which is the
+// silent pass CLAUDE.md has a section about.
+
+import { Palette, ScrollView, AboutSlint } from "std-widgets.slint";
+
+component TabPill inherits Rectangle {
+    in property <string> label;
+    in property <string> tab-id;
+    in property <bool> selected;
+    callback chose();
+
+    accessible-role: tab;
+    accessible-id: root.tab-id;
+    accessible-label: root.label;
+    accessible-action-default => { root.chose(); }
+
+    border-radius: 6px;
+    background: root.selected ? Palette.accent-background
+        : touch.has-hover ? Palette.alternate-background
+        : transparent;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 5px;
+        padding-bottom: 5px;
+
+        Text {
+            text: root.label;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            color: root.selected ? Palette.accent-foreground : Palette.foreground;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.chose(); }
+    }
+}
+
+// A tab with nothing on it yet. The pane still exists, still carries its identifier, and still spans
+// the width, so the window's shape is testable before any of the content is written.
+component BlankPane inherits Rectangle {
+    in property <string> pane-id;
+    in property <string> title;
+
+    accessible-role: tab-panel;
+    accessible-id: root.pane-id;
+    accessible-label: root.title;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 6px;
+        alignment: start;
+
+        Text {
+            text: root.title;
+            font-size: 15px;
+            font-weight: 600;
+            color: Palette.foreground;
+        }
+
+        Text {
+            text: "Nothing here yet.";
+            color: Palette.foreground;
+            opacity: 0.55;
+        }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    // One width, pinned. Every tab is drawn into the same window, so switching between them must not
+    // move it: a tab that arrives wider is one demanding room the others were not given.
+    //
+    // min and max rather than `width`, which the windowing layer treats as a starting hint and then
+    // overrides: setting `width: 640px` produced an 800pt window with 160pt of dead strip beside the
+    // content. Height is left free, as it was in the Swift app.
+    min-width: 640px;
+    max-width: 640px;
+    preferred-width: 640px;
+    min-height: 420px;
+    preferred-height: 520px;
+    title: "Facet Settings";
+    background: Palette.background;
+
+    in-out property <int> active-tab: 0;
+    in property <string> app-version: "0.1.0";
+
+    callback tab-selected(string);
+    callback close-requested();
+
+    VerticalLayout {
+        padding: 0px;
+
+        // The tab bar: a centred pill group, welded to nothing.
+        Rectangle {
+            height: 44px;
+            background: Palette.alternate-background;
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: 2px;
+                padding: 6px;
+
+                TabPill {
+                    label: "Faces"; tab-id: "settings-tab-faces";
+                    selected: root.active-tab == 0;
+                    chose => { root.active-tab = 0; root.tab-selected("Faces"); }
+                }
+                TabPill {
+                    label: "Categories"; tab-id: "settings-tab-categories";
+                    selected: root.active-tab == 1;
+                    chose => { root.active-tab = 1; root.tab-selected("Categories"); }
+                }
+                TabPill {
+                    label: "Report"; tab-id: "settings-tab-report";
+                    selected: root.active-tab == 2;
+                    chose => { root.active-tab = 2; root.tab-selected("Report"); }
+                }
+                TabPill {
+                    label: "App"; tab-id: "settings-tab-app";
+                    selected: root.active-tab == 3;
+                    chose => { root.active-tab = 3; root.tab-selected("App"); }
+                }
+                TabPill {
+                    label: "Device"; tab-id: "settings-tab-device";
+                    selected: root.active-tab == 4;
+                    chose => { root.active-tab = 4; root.tab-selected("Device"); }
+                }
+                TabPill {
+                    label: "About"; tab-id: "settings-tab-about";
+                    selected: root.active-tab == 5;
+                    chose => { root.active-tab = 5; root.tab-selected("About"); }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Palette.border;
+        }
+
+        // The pane. Content spans the full width of the window, inset by the pane's own padding and
+        // nothing more, which is what makes the tabs read as one window.
+        Rectangle {
+            vertical-stretch: 1;
+
+            if root.active-tab == 0: BlankPane {
+                pane-id: "settings-pane-faces"; title: "Faces";
+            }
+            if root.active-tab == 1: BlankPane {
+                pane-id: "settings-pane-categories"; title: "Categories";
+            }
+            if root.active-tab == 2: BlankPane {
+                pane-id: "settings-pane-report"; title: "Report";
+            }
+            if root.active-tab == 3: BlankPane {
+                pane-id: "settings-pane-app"; title: "App";
+            }
+            if root.active-tab == 4: BlankPane {
+                pane-id: "settings-pane-device"; title: "Device";
+            }
+
+            if root.active-tab == 5: Rectangle {
+                accessible-role: tab-panel;
+                accessible-id: "settings-pane-about";
+                accessible-label: "About";
+
+                ScrollView {
+                    VerticalLayout {
+                        padding: 20px;
+                        spacing: 14px;
+                        alignment: start;
+
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: "Facet";
+                                font-size: 22px;
+                                font-weight: 700;
+                                color: Palette.foreground;
+                                accessible-role: text;
+                                accessible-id: "about-app-name";
+                            }
+                            Text {
+                                text: "Version " + root.app-version;
+                                color: Palette.foreground;
+                                opacity: 0.6;
+                                accessible-role: text;
+                                accessible-id: "about-app-version";
+                            }
+                        }
+
+                        Text {
+                            text: "A desktop time tracker driven by a TimeFlip2 cube. Turn the cube "
+                                + "onto a face, and the time spent on that face is recorded against "
+                                + "the category assigned to it.";
+                            wrap: word-wrap;
+                            color: Palette.foreground;
+                        }
+
+                        Rectangle { height: 1px; background: Palette.border; }
+
+                        // The Slint attribution. This is a licence condition rather than a courtesy:
+                        // Facet uses Slint under its Royalty-free licence, whose clause 2(a) is
+                        // satisfied by showing this widget in an About screen reachable from the
+                        // menu. See NOTICE. Removing it puts a build out of compliance.
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: "Built with";
+                                font-weight: 600;
+                                color: Palette.foreground;
+                            }
+                            // The height is taken from the widget rather than chosen. A fixed
+                            // 56px clipped nothing and overlapped everything below it: AboutSlint
+                            // draws a logo, a version and a link, and it is not this file's business
+                            // to know how tall that is.
+                            Rectangle {
+                                accessible-role: image;
+                                accessible-id: "about-slint";
+                                accessible-label: "Made with Slint";
+                                height: slint-badge.min-height;
+                                slint-badge := AboutSlint { }
+                            }
+                            Text {
+                                text: "Slint is used under the Slint Royalty-free Desktop, Mobile, "
+                                    + "and Web Applications License, version 2.0.";
+                                wrap: word-wrap;
+                                font-size: 11px;
+                                opacity: 0.6;
+                                color: Palette.foreground;
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: Palette.border; }
+
+                        VerticalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "Licence";
+                                font-weight: 600;
+                                color: Palette.foreground;
+                            }
+                            Text {
+                                text: "Facet is licensed under the Apache License 2.0. "
+                                    + "Copyright 2026 Harry Phillips.";
+                                wrap: word-wrap;
+                                color: Palette.foreground;
+                                accessible-role: text;
+                                accessible-id: "about-licence";
+                            }
+                            Text {
+                                text: "The activity icons are TimeFlip's copyrighted set, used by "
+                                    + "permission granted for this project. That permission does not "
+                                    + "transfer with the code.";
+                                wrap: word-wrap;
+                                font-size: 11px;
+                                opacity: 0.6;
+                                color: Palette.foreground;
+                            }
+                        }
+
+                        Text {
+                            text: "github.com/tuxcomputers/FacetApp";
+                            font-size: 11px;
+                            opacity: 0.6;
+                            color: Palette.foreground;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

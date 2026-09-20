@@ -390,14 +390,21 @@ Each of these is a thing to run, not a thing to think about further.
    See *Driving it from a script, measured* below. This entry read, for about an hour, that the driver layer
    needed replacing; that was wrong and the section says why.
 
-4. **The scripted suite's hold on the status item.** `MenuBarController` sets an accessibility identifier on
-   the status item button, which is how `scripts/status-item-click.py` finds it. `tray-icon` exposes no
-   equivalent API, so that script and every scripted check that presses the status item would need rewriting
-   against whatever handle the Rust item does expose. **The Linux port has already solved the same problem
-   and its answer transfers**: `linux-port.md` on `feature/linuxPort` records that no identifier crosses to the tray there either, so
-   a Linux check addresses a tray item **by its label**. That is the pattern macOS would adopt, which makes
-   this a conversion rather than an invention. It is still a real line item against a 32-script suite whose
-   front door is the status item.
+4. ~~**The scripted suite's hold on the status item.**~~ **Answered 2026-09-21: the identifier can be
+   set, and `scripts/status-item-click.py` works unchanged.** `tray-icon` exposes no API for it, which
+   is what this entry said, but it does hand over the `NSStatusItem` through `ns_status_item()`. From
+   there `button(mtm).setAccessibilityIdentifier(...)` sets `status-item`, which is the identifier that
+   script already looks for, so the locator model converted rather than needing the Linux
+   address-by-label pattern on macOS after all. `crates/facet-mac/src/main.rs` is the four lines.
+   Measured by running the script against the built app: it found the item and clicked it.
+
+   **Two things that came out of testing it.** `status-item-click.py --right` clicks the *right half*
+   of a wide status item rather than posting a right button, which is a distinction the Swift app's
+   two-halves status item needed and an icon-only item does not; a real right click needs a
+   `kCGEventRightMouseDown`. And with `with_menu_on_left_click(false)` a left click reaches the app as
+   an event while right click opens the menu, which is the split the design rule wants, confirmed on
+   the real menu bar.
+
 5. ~~**Editable tables in Slint.**~~ **Answered 2026-09-20: they work.** See *The tables, measured* below.
    What is still untested is sorting, a row leaving the list mid-edit, and the icon grid.
 
