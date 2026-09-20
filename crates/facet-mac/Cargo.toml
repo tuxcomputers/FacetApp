@@ -1,0 +1,10 @@
+[package]
+name = "facet-mac"
+description = "Composition root and platform adapters for mac."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+facet-core.workspace = true
