@@ -1,0 +1,70 @@
+Facet
+Copyright 2026 Harry Phillips
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE.
+
+Facet is a fork of TimeFlipApp by growler (https://github.com/growler/TimeFlipApp),
+released into the public domain under The Unlicense. That licence imposes no
+conditions; the acknowledgement is made because it is deserved.
+
+
+THIRD-PARTY COMPONENTS WITH THEIR OWN TERMS
+===========================================
+
+Two things distributed with Facet are not covered by the Apache licence above.
+Anyone redistributing Facet, modified or unmodified, has to satisfy both.
+
+
+1. Slint
+--------
+
+The user interface is built with Slint (https://slint.dev), by SixtyFPS GmbH,
+which is available under three licences:
+
+    GPL-3.0-only
+    OR LicenseRef-Slint-Royalty-free-2.0
+    OR LicenseRef-Slint-Software-3.0
+
+Facet uses Slint under the Royalty-free Desktop, Mobile, and Web Applications
+License, version 2.0. That licence requires attribution, and clause 2 gives two
+ways to provide it. Facet does the first:
+
+    (a) Display the AboutSlint widget in an "About" screen or dialog that is
+        accessible from the top level menu of the Application.
+
+So the About tab carries the AboutSlint widget, and that is a licence condition
+rather than a courtesy. Removing it, or making the About tab unreachable from
+the menu, puts a build out of compliance.
+
+The same licence also forbids distributing Slint on its own without an
+application around it, forbids use in an embedded system, and forbids shipping
+an application that exposes Slint's own APIs. None of those is a constraint
+Facet comes near, and all three are recorded so that a future change does not
+walk into one.
+
+The full text of all three Slint licences ships inside the slint crate, under
+LICENSES/ in its source.
+
+
+2. The activity icons
+---------------------
+
+The activity icons are TimeFlip's copyrighted icon set. Permission to use them
+was granted to Harry Phillips for this project specifically, and IT DOES NOT
+TRANSFER WITH THE CODE. The Apache licence covers Facet's own code and does not
+cover these icons.
+
+If you fork Facet and want to distribute it, or otherwise make it available to
+others, with these icons included, you must obtain your own permission from
+TimeFlip first. Without that permission, remove or replace the icons before
+sharing it on.
+
+
+3. Rust dependencies
+--------------------
+
+Everything else Facet links is permissively licensed, overwhelmingly
+"MIT OR Apache-2.0". For the licence of every crate in a given build:
+
+    cargo metadata --format-version 1 \
+      | python3 -c "import json,sys; [print(p['name'], p.get('license')) for p in json.load(sys.stdin)['packages']]"

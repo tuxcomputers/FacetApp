@@ -22,7 +22,7 @@ exclude = ["probe/timeflip-btleplug", "probe/slint-editable-table"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "Unlicense"
+license = "Apache-2.0"
 repository = "https://github.com/tuxcomputers/FacetApp"
 
 # Pinned here so every crate agrees, and so the decisions in docs/rust-port.md are visible in one

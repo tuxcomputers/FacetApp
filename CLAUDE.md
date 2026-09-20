@@ -342,6 +342,18 @@ it, and the space after them to the end of the row. A triangle is a small target
 is obviously about, and a heading that ignores a click is a control that looks broken rather than one
 being precise.
 
+### The About tab carries the Slint attribution, and that is a licence condition
+
+**Facet uses Slint under its Royalty-free licence, whose clause 2 requires attribution**, and the way
+Facet satisfies it is the `AboutSlint` widget in an About screen reachable from the top level menu.
+
+So: **the About tab exists, is reachable from the menu, and carries that widget.** Removing it, hiding
+it behind something, or dropping the widget while keeping the tab puts a build out of compliance. This
+is the one piece of UI whose presence is not a design decision. [`NOTICE`](NOTICE) has the clause.
+
+It is also the place a scripted check should assert, since a condition nothing verifies is a condition
+that quietly lapses.
+
 ---
 
 ## Testability is a design constraint, not a later concern

@@ -67,6 +67,8 @@ app needs. Every other concern has many cross-platform answers; the radio has al
 
 - [`scripted-suite.md`](docs/scripted-suite.md): the 32 checks, and what converts
 - [`google-oauth-setup.md`](docs/google-oauth-setup.md): the Cloud project, and what the app must do
+- [`about-tab.md`](docs/about-tab.md): the one piece of UI the licence requires, and the open
+  questions on the update check
 - [`systems-info.md`](docs/systems-info.md): measured facts about the two development machines
 
 ---
@@ -142,13 +144,18 @@ fact that only exists in a frozen tree is a fact somebody pays for twice.
 
 ## Licence
 
-[The Unlicense](LICENSE). Public domain, as far as my own code goes.
+[Apache License 2.0](LICENSE). Copyright 2026 Harry Phillips.
 
-### The icons are not covered by it
+**[`NOTICE`](NOTICE) is part of the licence, not decoration.** Two things shipped with Facet are not
+covered by Apache-2.0, and anyone redistributing it has to satisfy both.
 
-The activity icons are TimeFlip's copyrighted icon set. Permission to use them was granted to me, for this
-project specifically, and **it does not transfer with the code**. The Unlicense covers my code; it does
-not cover TimeFlip's icons.
+**Slint is tri-licensed** (`GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR
+LicenseRef-Slint-Software-3.0`) and Facet takes the royalty-free option, which requires attribution.
+Facet satisfies it by carrying the `AboutSlint` widget in the About tab, reachable from the menu.
+**That widget is a licence condition rather than a courtesy**, so removing it, or making the About
+tab unreachable, puts a build out of compliance.
 
-**If you fork this and want to distribute it with those icons, obtain your own permission from TimeFlip
-first.** Without it, remove or replace them before sharing it on.
+**The activity icons are TimeFlip's copyrighted set.** Permission was granted for this project
+specifically and **does not transfer with the code**. Apache-2.0 covers Facet's own code, not the
+icons. If you fork this and want to distribute it with them, get your own permission from TimeFlip
+first; without it, remove or replace them before sharing it on.
