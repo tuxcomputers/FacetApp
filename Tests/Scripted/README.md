@@ -1,18 +1,44 @@
 # Scripted checks
 
-Checks that drive the real app and read the real database. `swift test` is hermetic and never opens a
+Checks that drive the real app and read the real database. `cargo test` is hermetic and never opens a
 window or touches a radio, so a feature can be entirely green there and broken the moment it runs.
 These are what say it works.
 
 They need no AI, no Claude, and nothing installed beyond what building the app already needs.
 
+---
+
+**Status, 2026-09-21: the harness is here and the checks are not.** `run.sh`, `lib.sh`, `platform.sh`,
+`testlog.sh` and `seed-private.sh` came across from the Swift suite. The 32 numbered checks did not,
+because a check for a feature the Rust app does not have yet cannot pass, and a tree full of red nobody
+can act on teaches nothing. [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists all 32 with
+what each proved, and each goes back as its feature lands.
+
+**So read this for how the suite works and why, not as instructions you can follow today.** Every
+numbered script named below is one of the missing ones. Where a file is gone rather than merely
+unwritten, the text says so.
+
+**Running `run.sh` today is harmless, and that was checked rather than assumed** (2026-09-21). It finds
+no checks, prints `No scripts matched.` and exits 2, and it does so *before* it kills anything, rebuilds
+any database or launches the app. So there is no way to lose the test database by trying it.
+
+**Audited against the tree on 2026-09-21.** What was Swift and is now cargo has been corrected; what
+described a file that no longer exists is marked rather than quietly left to mislead.
+
+---
+
 ```sh
 Tests/Scripted/run.sh
 ```
 
-That **rebuilds `test.sqlite` from the DDL**, builds the app if the sources are newer than the bundle,
-launches it, runs every script in order, quits it, and writes everything to `logs/screen.txt` as well as
-the terminal.
+That **rebuilds `test.sqlite` from the DDL**, builds the app if cargo says anything changed, launches
+it, runs every script in order, quits it, and writes everything to `logs/screen.txt` as well as the
+terminal.
+
+**There is no bundle any more**, so nothing compares timestamps against one: cargo decides whether a
+build is needed and `platform.sh` runs it. The binary is `target/debug/facet-mac` or
+`target/debug/facet-linux`, and the DDL is compiled into it rather than sitting beside it, so it works
+wherever it is run.
 
 The terminal gets colour; **`logs/screen.txt` is plain text**, written live, so it can be watched with
 `tail -f logs/screen.txt` during a run and opened in an editor afterwards without a screenful of escape
@@ -41,8 +67,8 @@ signing in again.
 
 The captured file is `~/.config/facet/scripted-seed.json`, **outside the repository** and beside the
 OAuth client credentials it belongs with. It holds a real email address and a real calendar id, and this
-repository takes outside contributions: a seed committed into it would put one developer's account into
-everybody's checkout.
+repository is public: a seed committed into it would put one developer's account into everybody's
+checkout.
 
 ## A new calendar every run
 
@@ -98,7 +124,7 @@ Tests/Scripted/run.sh --keep 09       # one script, against the database as it s
 ```
 
 **`00-setup` is a prerequisite and not merely the first script**, and skipping it fails in a way that
-points at the app. A rebuilt database has `debug` off -- `011_setting.sql` seeds
+points at the app. A rebuilt database has `debug` off -- `crates/facet-core/resources/database/011_setting.sql` seeds
 `{"enabled":false,"directory":""}` -- and `00-setup` is what turns it on. So an app launched without it
 has no logger at all, by design, and every check polling the trace reports something like
 
@@ -264,9 +290,16 @@ finish
 CI cannot run this suite: there is no screen, no Keychain and no Google account on a build machine. What
 it can do is refuse a pull request that has no record of a run.
 
+**Not carried over, and worth restoring.** `scripts/check_interactive_checklists.sh` was the gate and it
+is not in this repository: it was written against `swift build` and the Swift suite's stamp, and porting
+it before there are any checks to gate would be porting it blind. No stamp file exists yet either. The
+CI workflow here runs `cargo build` and `cargo test` and enforces nothing about this suite.
+
+The rest of this section is the arrangement as it worked, kept because the reasoning is what makes it
+worth rebuilding rather than reinventing.
+
 `run.sh` writes **`Tests/Scripted/last-run-mac.md`** at the end of every run, from the recorded run rather
-than from anything it was told, and that file is committed. On a pull request,
-`scripts/check_interactive_checklists.sh` requires all of:
+than from anything it was told, and that file is committed. On a pull request, the gate requires all of:
 
 - the run was on **this** branch;
 - it **passed**, with zero failing checks;
@@ -277,8 +310,10 @@ than from anything it was told, and that file is committed. On a pull request,
   than skipped past. The failure names which scripts skipped and how many;
 - the tree was **clean** when it ran, since a run against uncommitted changes is not evidence about the
   commit it names;
-- the commit it names is **in this branch's history**, and nothing under `Sources/`, `Tests/Scripted/` or
-  `database/` has changed since.
+- the commit it names is **in this branch's history**, and nothing under the app's sources,
+  `Tests/Scripted/` or the DDL has changed since. Those are `crates/` and
+  `crates/facet-core/resources/database/` now, where they were `Sources/` and `database/` in Swift, so
+  whatever restores the gate has to name the new paths.
 
 That last one is why the stamp carries a commit rather than a date. The old checklists recorded a date and
 a branch, so a run from before the last five commits looked exactly like one from after them. Editing a
@@ -312,22 +347,28 @@ passed, and unfiltered.
 **A contributor with no TimeFlip cannot clear this, and is not meant to.** The suite needs a cube in range
 and a person to turn it, so a fork's pull request lands here red however good the change is -- which is the
 honest state of it: the change has not been tried against hardware. What clears it is somebody who *has* a
-device running the suite against that branch and committing the stamp. `CONTRIBUTING.md` says what a
-contributor should do, and the two things that make it possible: leaving "Allow edits by maintainers"
-ticked, and not force-pushing the branch while it is being run.
+device running the suite against that branch and committing the stamp. The two things that make that
+possible are leaving "Allow edits by maintainers" ticked and not force-pushing the branch while it is
+being run. In Swift that was written down in `CONTRIBUTING.md`, which has not been carried over; it
+wants writing again when this repository takes outside contributions.
 
 ## When one of these fails
 
 The app is still there if you passed `--keep-running`. Beyond that:
 
 ```sh
-# The trace is its own file, beside the app's database.
-sqlite3 ~/Library/Application\ Support/Facet/debug.sqlite \
+# The trace is its own file, beside the app's database. platform.sh knows where that is on both
+# platforms, so ask it rather than writing the path out and being wrong on one of them.
+source Tests/Scripted/platform.sh
+sqlite3 "$DEBUG_DB" \
   "SELECT logged_at, tag, message FROM debug_log ORDER BY debug_log_id DESC LIMIT 40;"
 
-python3 scripts/ax-dump.py          # what the script can see and press
+python3 scripts/ax-dump.py --app facet-mac   # what the script can see and press
 ```
 
-`Tests/Methods.md` is the reference for both, and for the traps that have already cost time: what needs
-a real mouse event, why a status item is not in the menu bar's accessibility tree, and why launching
-the `.app` directly can run a binary older than the change you are testing.
+[`Tests/Methods.md`](../Methods.md) is the reference for both, and for the traps that have already cost
+time: what needs a real mouse event, and why a status item is not in the menu bar's accessibility tree.
+
+**One trap from the Swift suite no longer applies.** Launching the `.app` directly could run a binary
+older than the change being tested. There is no `.app`: the binary is what cargo built, and `run.sh`
+builds before it launches.

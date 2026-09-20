@@ -35,14 +35,13 @@ source Tests/Scripted/platform.sh || exit 2
 # database, start a log, and then fail on the first thing that needs a window -- leaving a half-written
 # record of a run that never had anything to test. One clear refusal is better than that.
 #
-# **This stopped refusing on Linux of its own accord**, which is what it was written to do: it asks
-# SwiftPM whether the executable product exists rather than being told, so item 11 adding `FacetLinux`
-# turned it green with nothing here to remember to change (confirmed 2026-09-20).
+# **It asks rather than being told**, so a platform crate appearing turns this green with nothing here
+# to remember to change. That is what it was written for and it has already earned it once, on Linux.
 platform_app_is_declared
 case $? in
     0) ;;
     1)  echo "There is no app to drive on this platform, so this suite cannot run here."
-        echo "Package.swift declares no executable product for $PLATFORM."
+        echo "The workspace declares no crate named $CRATE."
         echo "platform.sh resolves $SUPPORT and would write $STAMP."
         exit 2 ;;
     *)  echo "Cannot tell whether there is an app to drive; the reason is above."
