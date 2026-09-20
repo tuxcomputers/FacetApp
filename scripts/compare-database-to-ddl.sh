@@ -19,7 +19,23 @@
 # The target is only ever read. Exits 0 when it matches the DDL, 1 when it does not.
 set -euo pipefail
 
-TARGET="${1:-$HOME/Library/Application Support/Facet/production.sqlite}"
+# The default comes from the file that decides where things are, not from a path written here. Written
+# here it was the macOS one, so on Linux this defaulted to a database under a directory that does not
+# exist and reported it missing rather than saying it had looked in the wrong place.
+if [ -z "${1:-}" ] && [ -r "$(dirname "${BASH_SOURCE[0]}")/../Tests/Scripted/platform.sh" ]; then
+  # shellcheck source=../Tests/Scripted/platform.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/../Tests/Scripted/platform.sh"
+fi
+if [ -z "${1:-}" ]; then
+  if [ -z "${SUPPORT:-}" ]; then
+    echo "error: cannot work out where the databases live; Tests/Scripted/platform.sh is what decides." >&2
+    echo "       Name the database explicitly instead: $0 <path-to.sqlite>" >&2
+    exit 2
+  fi
+  TARGET="$SUPPORT/production.sqlite"
+else
+  TARGET="$1"
+fi
 if [ ! -f "$TARGET" ]; then
   echo "error: no such database: $TARGET" >&2
   exit 2
