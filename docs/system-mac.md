@@ -202,19 +202,39 @@ case-wise with one already in the tree.**
 | Git identity | Harry Phillips `<harry@tux.com.au>` |
 | App data directory | `~/Library/Application Support/Facet` |
 | Google credentials | `~/.config/facet/google-client.json`, outside every repository |
-| Swift reference tree | `~/harry.git/TimeFlipLinux`, a git worktree of `TimeFlipApp` pinned to `feature/linuxPort` |
-| The frozen Swift repo | `~/harry.git/TimeFlipApp`, sitting on `main`, and the owner of that worktree |
+| Swift reference tree | `~/harry.git/TimeFlipLinux`, a git worktree pinned to `feature/linuxPort`. **Read, do not run** |
+| The working Swift app | `~/harry.git/TimeFlipApp`, on `main`. **Built and run as the day-to-day app** |
 
 **The remote is HTTPS deliberately.** `gh auth switch` does not change which SSH key is offered, so an
 SSH remote authenticates as the wrong GitHub account for this repo.
 
-**The reference tree is a worktree, not a clone**, so it costs no second copy of the history and cannot
-drift from the branch. `TimeFlipApp` had to come off `feature/linuxPort` to give it up, which is why that
-checkout now sits on `main`; git allows one worktree per branch. Undo the whole thing with
+### Three folders, three jobs
+
+The Rust app cannot track time yet, so the Swift one stays in service while it is built. That wants the
+two checkouts kept apart, because each is useless for the other's purpose.
+
+| Folder | Branch | What it is for |
+|---|---|---|
+| `FacetApp` | `feature/rustPort` | The Rust rewrite. Where the work happens |
+| `TimeFlipApp` | `main` | **The working app.** `swift build` then `scripts/run.sh`, and it is the copy actually used to record time |
+| `TimeFlipLinux` | `feature/linuxPort` | **The reference.** Read it, search it, do not run it and do not commit in it |
+
+**`main` is the right branch for the working copy** because it is the last released state, rather than
+`feature/linuxPort`, which is mid-port and carries a half-built second platform. Measured 2026-09-21:
+`swift build` on `main` completes with one warning and no errors.
+
+**The reference is a worktree, not a clone**, so it costs no second copy of the history and cannot drift
+from its branch. `TimeFlipApp` had to come off `feature/linuxPort` to give it up, git allowing one
+worktree per branch, and `main` is where a working copy wanted to be anyway. Undo the arrangement with
 `git worktree remove ../TimeFlipLinux` from `TimeFlipApp`.
 
 **Nothing should be committed in the reference tree.** It is checked out on a real branch, so a commit
 there lands on `feature/linuxPort` in a repository that is meant to be frozen.
+
+**The two apps both want the menu bar, and both are called Facet.** Only one should run at a time, and
+the Swift one owns `~/Library/Application Support/Facet` with the real recorded time in it. The Rust
+binary is `facet-mac` and writes nothing yet, but that will stop being true, and when it does the two
+need separating before they are ever run together.
 
 **No environment variable names the data directory, and none is standard here.** `XDG_DATA_HOME`,
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` are all unset; macOS has no equivalent. The

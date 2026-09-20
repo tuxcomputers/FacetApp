@@ -28,9 +28,14 @@ rg 'func historyFrame' ~/harry.git/TimeFlipLinux/Sources/FacetCore
 cat ~/harry.git/TimeFlipLinux/Tests/FacetTests/DeviceHistoryRulesTests.swift
 ```
 
-**The other branches are still reachable from `~/harry.git/TimeFlipApp`**, which sits on `main`. Use
-`git show feature/rustPort:<path>` there for anything the reference tree does not carry, which in practice
-is only the two probes, and those are already in `probe/` here.
+**`~/harry.git/TimeFlipApp` sits on `main` and is the working Swift app**, built and run day to day
+because the Rust one cannot track time yet. Do not switch its branch: somebody is using it. Other branches
+are still reachable there with `git show feature/rustPort:<path>`, which in practice is only wanted for
+the two probes, and those are already in `probe/` here.
+
+**Both apps want the menu bar and both are called Facet.** The Swift one owns
+`~/Library/Application Support/Facet` and the real recorded time in it. Only one runs at a time, and
+`facet-mac` must not be left running after a verification.
 
 **It is a reference, not a place to copy from.** Reading it is not permission to import it. **"The Swift
 version did X" is not a reason for anything on its own**; when it wins, it wins because the reason survives
