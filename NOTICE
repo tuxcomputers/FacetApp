@@ -32,9 +32,16 @@ ways to provide it. Facet does the first:
     (a) Display the AboutSlint widget in an "About" screen or dialog that is
         accessible from the top level menu of the Application.
 
-So the About tab carries the AboutSlint widget, and that is a licence condition
-rather than a courtesy. Removing it, or making the About tab unreachable from
-the menu, puts a build out of compliance.
+"About Facet" is therefore the first item on the status item's menu, and that
+menu is this app's top level menu: Facet is an accessory application and has no
+application menu bar of its own. Choosing it opens the About screen directly,
+with the AboutSlint widget on it.
+
+Reaching About only by opening Settings and hunting for a tab would depend on
+reading "accessible from" loosely, which is not a footing to put a licence
+condition on. Three things therefore have to stay true together, and a build
+that breaks any of them is out of compliance: the menu item exists, it opens the
+About screen, and that screen shows the widget.
 
 The same licence also forbids distributing Slint on its own without an
 application around it, forbids use in an embedded system, and forbids shipping

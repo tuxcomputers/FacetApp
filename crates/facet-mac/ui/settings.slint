@@ -97,6 +97,15 @@ export component SettingsWindow inherits Window {
     callback tab-selected(string);
     callback close-requested();
 
+    // Opening straight onto About is a licence condition rather than a convenience: the Slint
+    // Royalty-free licence wants the AboutSlint widget in an About screen reachable from the top
+    // level menu, and for a menu bar app the top level menu is the status item's. The index lives
+    // here, beside the tabs it indexes, rather than as a number in main.rs.
+    public function show-about() {
+        root.active-tab = 5;
+        root.tab-selected("About");
+    }
+
     VerticalLayout {
         padding: 0px;
 

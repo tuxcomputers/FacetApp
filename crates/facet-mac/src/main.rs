@@ -35,9 +35,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("[settings] Settings tab selected: {tab}");
     });
 
+    // About sits on the top level menu, and that placement is a licence condition. Slint's
+    // Royalty-free licence wants the AboutSlint widget in an About screen "accessible from the top
+    // level menu of the Application"; this app has no application menu bar, being an accessory, so
+    // the status item's menu is its top level menu. Reaching About only by opening Settings and
+    // then finding a tab would rest on reading "accessible from" loosely. See NOTICE.
+    //
+    // When Pause and Resume arrive they go first, per the rule in docs/rust-port.md that the menu is
+    // the primary route to everything and left click is only an accelerator for its first item.
     let menu = Menu::new();
+    let about_item = MenuItem::with_id("about", "About Facet", true, None);
     let settings_item = MenuItem::with_id("settings", "Settings...", true, None);
     let quit_item = MenuItem::with_id("quit", "Quit Facet", true, None);
+    menu.append(&about_item)?;
     menu.append(&settings_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&quit_item)?;
@@ -70,6 +80,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             match event.id.as_ref() {
+                "about" => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.invoke_show_about();
+                        show_settings(&ui);
+                    }
+                }
                 "settings" => {
                     if let Some(ui) = ui_weak.upgrade() {
                         show_settings(&ui);

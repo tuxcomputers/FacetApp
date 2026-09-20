@@ -2,9 +2,9 @@
 
 [← Back to README](../README.md) · [NOTICE →](../NOTICE) · [The Rust port →](rust-port.md)
 
-**Not built. This is what it is for and what is not decided yet**, written down now because one half of
-it is a licence obligation and the other half has a design question with a wrong answer that is easy to
-reach by accident.
+**The tab is built. The update check on it is not**, and this file is both halves: why the tab has to
+exist at all, which is a licence obligation rather than a product decision, and the design question the
+update check turns on, which has a wrong answer that is easy to reach by accident.
 
 ---
 
@@ -16,10 +16,18 @@ reach by accident.
 > (a) Display the `AboutSlint` widget in an "About" screen or dialog that is accessible from the top
 > level menu of the Application.
 
-So the tab is a compliance artefact before it is a feature. **It has to exist, be reachable from the
-menu, and carry that widget.** The alternative, clause 2(b), is a Made-with-Slint badge on the download
-page at `facet.tux.com.au`, which would cost nothing and is the fallback if the tab is ever dropped.
-Doing both is allowed and is cheap insurance.
+So the tab is a compliance artefact before it is a feature.
+
+**`About Facet` is the first item on the status item's menu**, which is this app's top level menu, since
+an accessory application has no menu bar of its own. Choosing it opens the Settings window on the About
+tab. Built the other way round first, reachable only by opening Settings and finding the tab, and that
+was changed on 2026-09-21: it rested on reading "accessible from" loosely, and a licence condition
+should not rest on an argument.
+
+**Clause 2(b) is a fully independent alternative and is worth doing as well.** A Made-with-Slint badge on
+the download page at `facet.tux.com.au` satisfies the attribution on its own, whatever the app does, and
+costs nothing on a site that is already owned. Doing both means compliance never depends on how anyone
+reads clause 2(a). **Not done yet.**
 
 The rest of the tab is ordinary: version, licence, a link to the source, acknowledgements. The
 acknowledgements are not decoration either. The icon permission is per-project and does not transfer,

@@ -361,17 +361,22 @@ it, and the space after them to the end of the row. A triangle is a small target
 is obviously about, and a heading that ignores a click is a control that looks broken rather than one
 being precise.
 
-### The About tab carries the Slint attribution, and that is a licence condition
+### About is on the top level menu, and that is a licence condition
 
-**Facet uses Slint under its Royalty-free licence, whose clause 2 requires attribution**, and the way
-Facet satisfies it is the `AboutSlint` widget in an About screen reachable from the top level menu.
+**Facet uses Slint under its Royalty-free licence, whose clause 2(a) wants the `AboutSlint` widget in an
+About screen "accessible from the top level menu of the Application".** This app is an accessory and has
+no application menu bar, so **the status item's menu is its top level menu**, and `About Facet` is the
+first item on it.
 
-So: **the About tab exists, is reachable from the menu, and carries that widget.** Removing it, hiding
-it behind something, or dropping the widget while keeping the tab puts a build out of compliance. This
-is the one piece of UI whose presence is not a design decision. [`NOTICE`](NOTICE) has the clause.
+**Three things have to stay true together**: the menu item exists, it opens the About screen, and that
+screen shows the widget. Breaking any one puts a build out of compliance, so this is the one piece of UI
+whose presence is not a design decision. [`NOTICE`](NOTICE) has the clause.
 
-It is also the place a scripted check should assert, since a condition nothing verifies is a condition
-that quietly lapses.
+**Reaching About only through Settings is not good enough**, which is how it was built first. It depends
+on reading "accessible from" loosely, and a licence condition should not rest on an argument.
+
+**It is also the place a scripted check should assert**, since a condition nothing verifies is a
+condition that quietly lapses across a refactor.
 
 ---
 
