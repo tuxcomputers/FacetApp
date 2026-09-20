@@ -69,7 +69,9 @@ app needs. Every other concern has many cross-platform answers; the radio has al
 - [`google-oauth-setup.md`](docs/google-oauth-setup.md): the Cloud project, and what the app must do
 - [`about-tab.md`](docs/about-tab.md): the one piece of UI the licence requires, and the open
   questions on the update check
-- [`systems-info.md`](docs/systems-info.md): measured facts about the two development machines
+- [`system-mac.md`](docs/system-mac.md): the Mac, and everything needed to build and drive Facet
+  on it
+- [`system-linux.md`](docs/system-linux.md): the Linux box, and what is not yet measured there
 
 ---
 

@@ -1,6 +1,6 @@
 # The Rust port
 
-[← Back to README](../README.md) · [Port findings →](port-findings.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Architecture →](architecture.md) · [The two systems →](systems-info.md) · [TimeFlip BLE →](timeflip.md)
+[← Back to README](../README.md) · [Port findings →](port-findings.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Architecture →](architecture.md) · [The Mac →](system-mac.md) · [The Linux box →](system-linux.md) · [TimeFlip BLE →](timeflip.md)
 
 **The evaluation that decided Facet will be rewritten in Rust, and the requirements it was judged against.**
 Written 2026-09-18. Nothing here has been built into the app: this is the record of a decision and of what was

@@ -42,7 +42,7 @@ subprocess and no Python.
 | Reads | `DI_LABS`, `2.0`, `FW_v3.64`, battery `100%`, facing `0c` |
 | Notifications | values pushed as `PropertiesChanged` signals carrying `ay`, read as `[UInt8]` |
 
-**The address survived the factory reset.** `E8:DB:D8:CF:F9:0F` before and after, which `systems-info.md`
+**The address survived the factory reset.** `E8:DB:D8:CF:F9:0F` before and after, which [`system-linux.md`](system-linux.md)
 had recorded as untested -- and worth knowing because it is a *random*-type address, the kind the
 specification allows a device to change.
 
