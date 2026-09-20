@@ -25,8 +25,7 @@ the numbers as each check is re-added, so a gap is visibly a gap.
 **To read any of them in full:**
 
 ```sh
-cd ~/harry.git/TimeFlipApp
-git show feature/linuxPort:Tests/Scripted/55-device-face.sh
+cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 ```
 
 ### No cube required

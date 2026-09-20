@@ -13,7 +13,7 @@ actually does where the two disagree. **The hardware wins**, and where it does, 
 cites the finding.
 
 **Carried over from the Swift implementation and rewritten to name mechanisms rather than types.** Where
-a behaviour needs its implementation read, the citation is to the frozen TimeFlipApp repository; the
+a behaviour needs its implementation read, it is in the reference tree at `~/harry.git/TimeFlipLinux`; the
 corresponding tests are in [behaviour-inventory.md](behaviour-inventory.md).
 
 ---
@@ -288,7 +288,8 @@ limit is set on. See [Operation Spec § 6](operation-spec.md).
 ## 6. The connection sequence
 
 **What the app does, in order.** The archived predecessor's version of this sequence, and the rebuild's,
-are both in the frozen repository; the differences below are the ones that were paid for.
+are both in the reference tree at `~/harry.git/TimeFlipLinux`; the differences below are the ones that
+were paid for.
 
 1. **Wait for the radio.**
 2. **Scan unfiltered and match on service or name.** A service-filtered scan finds nothing (finding 12).

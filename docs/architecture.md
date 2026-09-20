@@ -186,7 +186,8 @@ module is **deep** when a lot of behaviour sits behind a small interface, and **
 interface is nearly as complex as what is inside it.
 
 The rewrite is the moment to make the shallow ones deep, because the interfaces are being written from
-scratch anyway. The review's nine candidates are on `feature/linuxPort` in the frozen repository at
-`docs/architecture-review-2026-09.md`; four were done in Swift and the rest are open. Read it before
+scratch anyway. The review's nine candidates are in the reference tree at
+`~/harry.git/TimeFlipLinux/docs/architecture-review-2026-09.md`; four were done in Swift and the rest are
+open. Read it before
 designing a core module that has a Swift counterpart, and read that counterpart's tests in
 [behaviour-inventory.md](behaviour-inventory.md) for what it has to do.

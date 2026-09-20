@@ -10,7 +10,7 @@ This is what replaced it: **one project, owned by you, whose client ID ships ins
 **Part 1 is about Google and is entirely language-independent.** It was done once, it is done now, and
 none of it has to be repeated for the Rust build. **Part 2 is what the app has to do**, restated as
 requirements rather than as the Swift implementation that satisfied them; the Swift version is in the
-frozen TimeFlipApp repository at `docs/google-oauth-setup.md` on `feature/linuxPort`, alongside
+reference tree at `~/harry.git/TimeFlipLinux/docs/google-oauth-setup.md`, alongside
 `GoogleOAuthRules` and `GoogleOAuthClient`.
 
 **Google's console moves.** The tabs have been reorganised at least twice and scope classifications

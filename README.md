@@ -137,10 +137,11 @@ layer that talks to the TimeFlip2, mostly with OpenAI Codex, and has said themse
 written for macOS before. Everything built on top of that fork is the same story: the code was written by
 Claude, and the design decisions are mine (Harry Phillips), for better or worse.
 
-**The Swift repository is frozen at `tuxcomputers/TimeFlipApp` and remains readable.**
-`feature/linuxPort` carries the furthest state of the app and the Linux port, `feature/rustPort` carries
-the probes and the evaluation, and `main` is the last release. Docs here cite it by branch and path where
-reading the original is worth it.
+**The Swift repository is frozen at `tuxcomputers/TimeFlipApp` and remains readable.** Locally,
+**`~/harry.git/TimeFlipLinux` is the reference tree**: a worktree of it pinned to `feature/linuxPort`,
+which is the furthest state of the app and the Linux port, checked out as ordinary files so it can be
+read and searched directly. Docs here cite paths inside it. The other branches are reachable from
+`~/harry.git/TimeFlipApp`, which sits on `main`.
 
 **Anything found over there that turns out to matter gets written into `docs/` in the same change.** A
 fact that only exists in a frozen tree is a fact somebody pays for twice.

@@ -202,9 +202,19 @@ case-wise with one already in the tree.**
 | Git identity | Harry Phillips `<harry@tux.com.au>` |
 | App data directory | `~/Library/Application Support/Facet` |
 | Google credentials | `~/.config/facet/google-client.json`, outside every repository |
+| Swift reference tree | `~/harry.git/TimeFlipLinux`, a git worktree of `TimeFlipApp` pinned to `feature/linuxPort` |
+| The frozen Swift repo | `~/harry.git/TimeFlipApp`, sitting on `main`, and the owner of that worktree |
 
 **The remote is HTTPS deliberately.** `gh auth switch` does not change which SSH key is offered, so an
 SSH remote authenticates as the wrong GitHub account for this repo.
+
+**The reference tree is a worktree, not a clone**, so it costs no second copy of the history and cannot
+drift from the branch. `TimeFlipApp` had to come off `feature/linuxPort` to give it up, which is why that
+checkout now sits on `main`; git allows one worktree per branch. Undo the whole thing with
+`git worktree remove ../TimeFlipLinux` from `TimeFlipApp`.
+
+**Nothing should be committed in the reference tree.** It is checked out on a real branch, so a commit
+there lands on `feature/linuxPort` in a repository that is meant to be frozen.
 
 **No environment variable names the data directory, and none is standard here.** `XDG_DATA_HOME`,
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` are all unset; macOS has no equivalent. The

@@ -18,10 +18,24 @@ and that repository is frozen at `~/harry.git/TimeFlipApp` on GitHub as `tuxcomp
 decision, the requirements it was judged against and every measurement behind it are in
 [`docs/rust-port.md`](docs/rust-port.md).
 
-**The frozen repository is a citable reference, not a place to copy from.** Branches `feature/rustPort`,
-`feature/linuxPort` and `main` all still resolve, so a doc here may cite a file and branch by path and the
-citation will work. Reading it is not permission to import it. **"The Swift version did X" is not a reason
-for anything on its own**; when it wins, it wins because the reason survives inspection today.
+**`~/harry.git/TimeFlipLinux` is the reference tree, and it is where to read the Swift app.** It is a
+git worktree of that repository pinned to `feature/linuxPort`, which is the furthest state of the app and
+of the Linux port. **It is checked out as ordinary files**, so read it with `cat`, `grep` and `rg` rather
+than `git show`, and it does not move when somebody switches branches in `TimeFlipApp` itself.
+
+```sh
+rg 'func historyFrame' ~/harry.git/TimeFlipLinux/Sources/FacetCore
+cat ~/harry.git/TimeFlipLinux/Tests/FacetTests/DeviceHistoryRulesTests.swift
+```
+
+**The other branches are still reachable from `~/harry.git/TimeFlipApp`**, which sits on `main`. Use
+`git show feature/rustPort:<path>` there for anything the reference tree does not carry, which in practice
+is only the two probes, and those are already in `probe/` here.
+
+**It is a reference, not a place to copy from.** Reading it is not permission to import it. **"The Swift
+version did X" is not a reason for anything on its own**; when it wins, it wins because the reason survives
+inspection today. **Do not commit to it**: it is checked out on a real branch, so a commit would land on
+`feature/linuxPort` in a repository that is meant to be frozen.
 
 **What was worth keeping has been brought forward**, and that was the condition of not carrying the tree:
 
@@ -172,7 +186,7 @@ sessions cost.**
    and the code had to work anyway. **Its comments say which measurement forced each departure.**
 3. **[`docs/TimeFlip2 BLE Protocol v4.3.md`](docs/TimeFlip2%20BLE%20Protocol%20v4.3.md)**, the vendor spec.
 4. **[`docs/timeflip.md`](docs/timeflip.md)**, this project's summary of the BLE surface.
-5. **The Swift implementation**, in the frozen repository. Worth reading for a question the four above
+5. **The Swift implementation**, in the reference tree at `~/harry.git/TimeFlipLinux`. Worth reading for a question the four above
    cannot answer, and anything found there that matters gets written into 1 in the same change.
 
 **Query the evidence database rather than only reading the prose around it.** It holds real rows from this

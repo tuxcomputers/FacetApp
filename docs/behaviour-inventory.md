@@ -11,13 +11,14 @@ product, written down as assertions. **Re-deriving it from the app's behaviour w
 avoidable cost of the rewrite.**
 
 **How to use this file.** Before writing a core module, find its row. Then read the named test file in
-the frozen repository, because **the row gives the subject and not the assertions**, there is no
+the reference tree, because **the row gives the subject and not the assertions**, there is no
 substitute for reading what was actually asserted:
 
 ```sh
-cd ~/harry.git/TimeFlipApp
-git show feature/linuxPort:Tests/FacetTests/<Name>Tests.swift
-git show feature/linuxPort:Sources/FacetCore/<Name>.swift
+REF=~/harry.git/TimeFlipLinux            # the reference worktree, pinned to feature/linuxPort
+cat $REF/Tests/FacetTests/<Name>Tests.swift
+cat $REF/Sources/FacetCore/<Name>.swift
+rg 'daily limit' $REF/Sources/FacetCore  # it is ordinary files, so search it like any tree
 ```
 
 Test *names* in that suite are written as sentences, so `grep -E '^\s*(func test|@Test)'` on a file is a

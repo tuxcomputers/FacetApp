@@ -7,8 +7,8 @@ none of them is about Swift.** This file exists so the Rust port does not pay fo
 
 **Everything here is measured, with the date and the machine.** Where something was reasoned rather than
 run, it says so. The full originals, including the Swift-specific material and the task lists that are now
-spent, are `docs/linux-port.md` and `docs/architecture-review-2026-09.md` on `feature/linuxPort` in the
-frozen TimeFlipApp repository.
+spent, are `docs/linux-port.md` and `docs/architecture-review-2026-09.md` in the reference tree at
+`~/harry.git/TimeFlipLinux/docs/`.
 
 **What is deliberately *not* here:** anything about the cube's own behaviour, which is
 [`timeflip2-firmware-observations.md`](timeflip2-firmware-observations.md); anything about BlueZ as a
