@@ -1,0 +1,284 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1280" width="1280" height="1280" font-family="'IBM Plex Sans','Helvetica Neue',Arial,sans-serif">
+  <title>Facet architecture model: the core, its ports, and the platform adapters</title>
+  <desc>FacetCore is the circle. Every platform capability leaves it through a named port. Each square is one
+  capability's adapters, holding a slot per platform, of which the build selects one. What travels the arm is the
+  same whichever slot is built. Six squares, evenly spaced at sixty degrees. Two capabilities were removed rather than drawn, and the comments say which and why.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowMissing" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b45309"/>
+    </marker>
+    <marker id="arrowSmall" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="1280" fill="#f6f6f4"/>
+
+  <!-- THE CONVENTION, so each finished adapter is marked the same way. Three things go green, and they go green
+       at three different moments, which is the point of having three of them.
+
+         1. THE ARM (#059669 solid, from #b45309 dashed) once the port exists and something is handed over it.
+         2. THE SLOT (#059669, from black #0f172a) once that one platform's adapter sits in the square and its
+            composition root hands it over. One slot per platform, each going green on its own.
+         3. THE SQUARE (#059669 border on #f0fdf4, from black on white) only once EVERY platform's adapter is
+            done. A capability with a finished macOS adapter and no Linux one keeps a black square: the arm is
+            green and the macOS slot is green, and the square says the capability itself is not finished.
+
+       So a green square means the whole capability is settled, not that somebody made a start on it. The macOS
+       work landing first turned arms and slots green for a long while before any square followed; the Linux slots
+       came in on 2026-09-11 and four of them are green, with every square but the clock's still waiting on Windows,
+       which nobody is writing.
+
+       A black slot means the code for that platform exists but is not yet through a port. A dashed slot means
+       it has not been written.
+
+       A GREEN ARM INTO A BLACK SLOT is the ordinary middle of this, not a mistake, and one square is in it.
+
+       `Windows and dialogs`: the arm carries `what to show, and which answer came back`, and it does, all
+       nineteen dialogues being `Dialogue` values decided in the core and rendered by `AlertPresenter`. The
+       slot stands for the whole AppKit adapter, and its other half, the Settings window and its five tabs,
+       is still written directly rather than behind a port. That is the last of this work.
+
+       WHAT MAKES A SLOT GREEN is that the adapter is an adapter, not that it is small. `MenuBarController`
+       is 518 lines and green; `BluetoothRadio` is 696 and green, being a central manager, a peripherals
+       table and a scan-and-connect state machine, with its decisions delegated to core rules 24 times over
+       and its twenty callbacks pointing inwards, which is the platform reaching in and needs no port.
+
+       THERE IS NO GREY ANY MORE, and its going is worth recording. It was a fourth state, meaning a capability
+       that turned out not to need a port because one implementation already answered it everywhere, and
+       `Files and folders` was the only thing wearing it. Two squares have now reached that answer, `Storage`
+       and this one, and both were removed instead: a capability that is simply *in the core* is not a square
+       with a special colour, it is not a square. If a third turns out the same way, remove it too. -->
+
+  <!-- Windows is drawn because the model allows for it, not because it is planned. Nothing is in scope for it. -->
+
+  <!-- ══════════ title ══════════ -->
+  <text x="48" y="52" font-size="26" font-weight="600" fill="#0f172a" font-family="Newsreader,Georgia,serif">The shape Facet is being moved into</text>
+  <text x="48" y="76" font-size="13.5" fill="#475569">Inside the circle is the core. It knows nothing about the platform it runs on. Every platform capability leaves through a named port.</text>
+  <text x="48" y="95" font-size="13.5" fill="#475569">Each square holds one capability's adapters, a slot per platform, of which the build selects one. What travels the arm never changes.</text>
+
+  <!-- ══════════ the circle ══════════ -->
+  <circle cx="640" cy="560" r="252" fill="#ffffff" stroke="#0f172a" stroke-width="2.5"/>
+  <circle cx="640" cy="560" r="240" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+
+  <text x="640" y="392" text-anchor="middle" font-size="19" font-weight="600" fill="#0f172a" font-family="Newsreader,Georgia,serif">FacetCore</text>
+  <text x="640" y="412" text-anchor="middle" font-size="10.5" fill="#64748b" letter-spacing="1.4">DOES NOT KNOW WHAT IT IS RUNNING ON</text>
+
+  <!-- modules inside, in three bands, with arms between them -->
+  <g font-size="11" fill="#334155" text-anchor="middle">
+    <!-- band 1: what the app decides -->
+    <rect x="472" y="438" width="336" height="52" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="640" y="456" font-size="9.5" fill="#64748b" letter-spacing="1.2">THE RULES</text>
+    <text x="640" y="472" font-size="10.5">DeviceCommandRules · DailyLimitEnforcement · ManualTimerRules</text>
+    <text x="640" y="484" font-size="10.5">PauseMenuRules · GoogleAccountRules · DeviceScanRules</text>
+
+    <!-- band 2: what it remembers -->
+    <rect x="452" y="506" width="376" height="52" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="640" y="524" font-size="9.5" fill="#64748b" letter-spacing="1.2">WHAT IT REMEMBERS</text>
+    <text x="640" y="540" font-size="10.5">SettingStore · CategoryStore · FaceStore · TimeEntryStore</text>
+    <text x="640" y="552" font-size="10.5">DeviceEventRecorder · DevicePairingRecorder</text>
+
+    <!-- band 3: what it does over time -->
+    <rect x="442" y="574" width="396" height="64" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="640" y="592" font-size="9.5" fill="#64748b" letter-spacing="1.2">WHAT IT DOES OVER TIME</text>
+    <text x="640" y="608" font-size="10.5">DeviceLogin · CubeCommandChannel · CubeReachSequence · CubeResetProof</text>
+    <text x="640" y="620" font-size="10.5">CubeLock · FaceColourSync · DeviceSettingsSync · DeviceReconnector</text>
+    <text x="640" y="632" font-size="10.5">HistoryIngestor · CalendarSync · ManualClock · CubeReports</text>
+
+    <!-- band 4: what it says -->
+    <rect x="472" y="654" width="336" height="38" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="640" y="672" font-size="9.5" fill="#64748b" letter-spacing="1.2">WHAT IT SAYS</text>
+    <text x="640" y="686" font-size="10.5">StatusItemTitle · StatusItemMenu · Dialogue · DurationFormat</text>
+  </g>
+
+  <!-- arms between bands, inside the circle -->
+  <g stroke="#94a3b8" stroke-width="1.2" marker-end="url(#arrowSmall)" opacity="0.7">
+    <line x1="640" y1="490" x2="640" y2="502"/>
+    <line x1="640" y1="558" x2="640" y2="570"/>
+    <line x1="640" y1="638" x2="640" y2="650"/>
+  </g>
+  <text x="640" y="712" text-anchor="middle" font-size="10" fill="#94a3b8" font-style="italic">modules inside link to one another freely</text>
+
+  <!-- ══════════ squares ══════════ -->
+  <!-- each: title, then a slot per platform. macOS filled, the others waiting.
+
+       SIX, EVENLY SPACED, and the ring is an ellipse rather than a circle on purpose. The squares are 210 wide
+       and 112 tall, so a true circle of centres would either push the east and west pair off the canvas or
+       pull the north and south pair through the title. What is even here is the symmetry: the six sit in
+       three mirrored pairs, 427 either side of the centre line and 386 or 266 above and below it, which is
+       what reads as even. The angles come out 58 and 64 rather than 60 each, which is the ellipse and not a
+       mistake to correct. -->
+
+  <!-- N: Radio. The Linux slot went dashed to black to green inside one day, 2026-09-11, and the three states
+       are what that day looked like: `BlueZCubeGatt` behind `CubeGatt` made it written, `BlueZCubeRadio` behind
+       `CubeRadio` made it a port, and main.swift constructing both made it handed over. The square stays black
+       because Windows has no adapter and never has had one. -->
+  <g>
+    <rect x="535" y="118" width="210" height="112" rx="4" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
+    <text x="640" y="140" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">Radio</text>
+    <rect x="547" y="150" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="640" y="165" text-anchor="middle" font-size="10" fill="#ffffff">macOS: CoreBluetooth</text>
+    <rect x="547" y="176" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="640" y="191" text-anchor="middle" font-size="10" fill="#ffffff">Linux: BlueZ</text>
+    <rect x="547" y="202" width="186" height="22" rx="3" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="3 2"/>
+    <text x="640" y="217" text-anchor="middle" font-size="10" fill="#94a3b8">Windows</text>
+  </g>
+  <line x1="640" y1="308" x2="640" y2="234" stroke="#059669" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <rect x="576" y="256" width="128" height="30" rx="4" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="640" y="269" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">connect, read,</text>
+  <text x="640" y="280" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">write, subscribe</text>
+
+  <!-- NE: Secrets -->
+  <g>
+    <rect x="962" y="238" width="210" height="112" rx="4" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
+    <text x="1067" y="260" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">Secrets</text>
+    <rect x="974" y="270" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="1067" y="285" text-anchor="middle" font-size="10" fill="#ffffff">macOS: Keychain</text>
+    <rect x="974" y="296" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="1067" y="311" text-anchor="middle" font-size="10" fill="#ffffff">Linux: secret-tool</text>
+    <rect x="974" y="322" width="186" height="22" rx="3" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="3 2"/>
+    <text x="1067" y="337" text-anchor="middle" font-size="10" fill="#94a3b8">Windows</text>
+  </g>
+  <line x1="822" y1="440" x2="960" y2="336" stroke="#059669" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <rect x="836" y="368" width="122" height="30" rx="4" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="897" y="381" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">store, look up,</text>
+  <text x="897" y="392" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">clear</text>
+
+  <!-- E: nothing. `Storage` was drawn here and has been removed, because it was never a platform capability. It was the
+       only square whose slots were not platforms: SQLite, an API, in memory. All four files that touch
+       `sqlite3_` are already inside the circle, and `import SQLite3` is the same line on both platforms, an
+       SDK module on macOS and a system-library target of that name on Linux. A different import is not a
+       different implementation, so by the test in CLAUDE.md it is a shim and the storage lives in the core.
+       A remote backend would be an adapter one day, but that is a deployment choice rather than a platform
+       one, and it has an unsettled question in front of it: the first design rule says read from the
+       database every time a value is needed, which is a network round trip per question over an API.
+       Drawing a square for it put a job on the board nobody had scheduled. -->
+
+  <!-- SE: Menu bar -->
+  <g>
+    <rect x="962" y="770" width="210" height="112" rx="4" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
+    <text x="1067" y="792" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">Menu bar</text>
+    <rect x="974" y="802" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="1067" y="817" text-anchor="middle" font-size="10" fill="#ffffff">macOS: NSStatusItem</text>
+    <rect x="974" y="828" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="1067" y="843" text-anchor="middle" font-size="10" fill="#ffffff">Linux: AppIndicator</text>
+    <rect x="974" y="854" width="186" height="22" rx="3" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="3 2"/>
+    <text x="1067" y="869" text-anchor="middle" font-size="10" fill="#94a3b8">Windows</text>
+  </g>
+  <line x1="822" y1="680" x2="960" y2="784" stroke="#059669" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <rect x="838" y="716" width="124" height="30" rx="4" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="900" y="729" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">a title, a menu,</text>
+  <text x="900" y="740" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">a click and its side</text>
+
+  <!-- S: Windows and dialogs. BOTH slots are black, for one reason said twice. The arm carries `what to show, and
+       which answer came back`, and it does: all nineteen dialogues are `Dialogue` values decided in the core, with
+       `AlertPresenter` on one side and `GtkDialoguePresenter` on the other since 2026-09-11. Each slot stands for
+       the whole toolkit adapter, and the other half of each is written directly rather than behind a port: a
+       Settings window and its five tabs on the Mac, and whatever this platform grows. That is the last of this
+       work on either side. -->
+  <g>
+    <rect x="535" y="890" width="210" height="112" rx="4" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
+    <text x="640" y="912" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">Windows and dialogs</text>
+    <rect x="547" y="922" width="186" height="22" rx="3" fill="#0f172a"/>
+    <text x="640" y="937" text-anchor="middle" font-size="10" fill="#ffffff">macOS: AppKit</text>
+    <rect x="547" y="948" width="186" height="22" rx="3" fill="#0f172a"/>
+    <text x="640" y="963" text-anchor="middle" font-size="10" fill="#ffffff">Linux: GTK</text>
+    <rect x="547" y="974" width="186" height="22" rx="3" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="3 2"/>
+    <text x="640" y="989" text-anchor="middle" font-size="10" fill="#94a3b8">Windows</text>
+  </g>
+  <line x1="640" y1="812" x2="640" y2="886" stroke="#059669" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <rect x="566" y="834" width="148" height="30" rx="4" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="640" y="847" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">what to show, and</text>
+  <text x="640" y="858" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">which answer came back</text>
+
+  <!-- SW: Lifecycle -->
+  <g>
+    <rect x="108" y="770" width="210" height="112" rx="4" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
+    <text x="213" y="792" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">Starting and stopping</text>
+    <rect x="120" y="802" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="213" y="817" text-anchor="middle" font-size="10" fill="#ffffff">macOS: NSApplication</text>
+    <rect x="120" y="828" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="213" y="843" text-anchor="middle" font-size="10" fill="#ffffff">Linux: gtk_main</text>
+    <rect x="120" y="854" width="186" height="22" rx="3" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="3 2"/>
+    <text x="213" y="869" text-anchor="middle" font-size="10" fill="#94a3b8">Windows</text>
+  </g>
+  <line x1="458" y1="680" x2="320" y2="784" stroke="#059669" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <rect x="318" y="716" width="124" height="30" rx="4" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="380" y="729" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">may I stop yet,</text>
+  <text x="380" y="740" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">and now you may</text>
+
+  <!-- NW: Clock. Moved here from due west when the ring went from eight positions to six, so the six sit at
+       60 degrees to each other. It mirrors `Secrets` across the vertical and sits directly above
+       `Starting and stopping`, which is what makes the spacing read as even rather than nearly even. -->
+  <!-- THE FIRST GREEN SQUARE, 2026-09-11. Every slot this one draws is filled: `RunLoopScheduler` in FacetMac,
+       `GLibScheduler` in FacetLinux, and `HandDrivenScheduler` in the tests, each handed over by its own
+       composition root. It has no Windows slot to wait on, unlike the five others, because what it needs from a
+       platform is a timeout source rather than a toolkit and the three that exist are the three there are.
+
+       The hand-driven slot was drawn dashed until now and should not have been: `HandDrivenScheduler` has
+       existed since the port landed and is what every core module's tests wake through. -->
+  <g>
+    <rect x="108" y="238" width="210" height="112" rx="4" fill="#f0fdf4" stroke="#059669" stroke-width="2"/>
+    <text x="213" y="260" text-anchor="middle" font-size="13" font-weight="600" fill="#065f46">The clock</text>
+    <rect x="120" y="270" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="213" y="285" text-anchor="middle" font-size="10" fill="#ffffff">macOS: RunLoop.main</text>
+    <rect x="120" y="296" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="213" y="311" text-anchor="middle" font-size="10" fill="#ffffff">Linux: g_timeout_add</text>
+    <rect x="120" y="322" width="186" height="22" rx="3" fill="#059669"/>
+    <text x="213" y="337" text-anchor="middle" font-size="10" fill="#ffffff">driven by hand, for tests</text>
+  </g>
+  <line x1="458" y1="440" x2="320" y2="336" stroke="#059669" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <rect x="335" y="368" width="94" height="30" rx="4" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="382" y="381" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">wake me in</text>
+  <text x="382" y="392" text-anchor="middle" font-size="9.5" fill="#065f46" font-weight="600">N seconds</text>
+
+  <!-- W: nothing. `The clock` was here and has moved to north-west so the six squares sit evenly.
+       `Files and folders` was drawn at north-west and has been removed for the reason `Storage` was: it is in the core
+       and there is nothing to select. All four callers are in `FacetCore` with no platform conditional between
+       them, and one Foundation call answers correctly on each platform, measured on real hardware 2026-09-08:
+       `applicationSupportDirectory` gives Application Support on a Mac and the XDG data directory on Linux, and
+       `docs/linux-port.md` records it as "No code change: corelibs does the XDG layout". `InstanceLock` imports
+       nothing but Foundation and holds a POSIX `flock`, which worked there against two live processes.
+
+       THE ONE THING THAT WOULD BRING IT BACK is Windows, and only half of it: `flock` does not exist there and
+       the equivalent is a named mutex or `LockFileEx`, which is a different implementation and so an arm by
+       this model's own test. The directory half needs nothing even then, Foundation mapping it to AppData.
+       Windows is not in scope, and one file is not a square. -->
+
+  <!-- ══════════ legend ══════════ -->
+  <line x1="48" y1="1046" x2="1232" y2="1046" stroke="#e2e8f0" stroke-width="1"/>
+
+  <text x="48" y="1066" font-size="11" fill="#64748b" letter-spacing="1.2">THREE THINGS GO GREEN, AT THREE DIFFERENT MOMENTS</text>
+
+  <!-- One row per line, evenly spaced at 26. Two columns collided here once: the left column's text ran under
+       the right column's swatches, because the text is long and nothing constrained it. Keep this a single
+       column, and re-space every row when one is added rather than squeezing the new one in under the last. -->
+  <g font-size="11.5" fill="#334155">
+    <!-- the arm -->
+    <line x1="52" y1="1088" x2="102" y2="1088" stroke="#059669" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+    <text x="120" y="1092"><tspan font-weight="600" fill="#065f46">The arm</tspan>, once the port exists and something is handed over it. Amber and dashed until then.</text>
+
+    <!-- the slot -->
+    <rect x="52" y="1106" width="50" height="17" rx="3" fill="#059669"/>
+    <text x="120" y="1118"><tspan font-weight="600" fill="#065f46">One slot</tspan>, once that platform's adapter sits in the square and its own composition root hands it over.</text>
+
+    <!-- the square -->
+    <rect x="52" y="1131" width="50" height="19" rx="3" fill="#f0fdf4" stroke="#059669" stroke-width="2"/>
+    <text x="120" y="1144"><tspan font-weight="600" fill="#065f46">The square</tspan>, only once <tspan font-weight="600">every</tspan> platform's adapter is done, so a green square means the capability is settled rather than started.</text>
+
+    <!-- written, no port -->
+    <rect x="52" y="1158" width="50" height="17" rx="3" fill="#0f172a"/>
+    <text x="120" y="1170"><tspan font-weight="600">Black</tspan>, where that platform's code is written but is not behind a port: the core reaches it directly, or it sits on the wrong side of the line.</text>
+
+    <!-- not written -->
+    <rect x="52" y="1184" width="50" height="17" rx="3" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="3 2"/>
+    <text x="120" y="1196"><tspan font-weight="600">Dashed</tspan>, where nothing is written yet. The build selects one slot per square, and the core cannot tell which it got.</text>
+
+  </g>
+
+  <text x="48" y="1230" font-size="12" fill="#64748b" font-style="italic">The rule this draws is in CLAUDE.md, under "The core is platform-blind, and every platform capability is a port".</text>
+</svg>
