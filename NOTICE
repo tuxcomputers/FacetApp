@@ -32,8 +32,8 @@ ways to provide it. Facet does the first:
     (a) Display the AboutSlint widget in an "About" screen or dialog that is
         accessible from the top level menu of the Application.
 
-"About Facet" is therefore the first item on the status item's menu, and that
-menu is this app's top level menu: Facet is an accessory application and has no
+"About Facet" is therefore an item on the status item's menu, below the
+separator beside Quit, and that menu is this app's top level menu: Facet is an accessory application and has no
 application menu bar of its own. Choosing it opens the About screen directly,
 with the AboutSlint widget on it.
 

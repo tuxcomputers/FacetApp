@@ -97,14 +97,19 @@ export component SettingsWindow inherits Window {
     callback tab-selected(string);
     callback close-requested();
 
-    // Opening straight onto About is a licence condition rather than a convenience: the Slint
-    // Royalty-free licence wants the AboutSlint widget in an About screen reachable from the top
-    // level menu, and for a menu bar app the top level menu is the status item's. The index lives
-    // here, beside the tabs it indexes, rather than as a number in main.rs.
-    public function show-about() {
-        root.active-tab = 5;
-        root.tab-selected("About");
-    }
+    // Which tab an open lands on, as functions rather than as numbers in main.rs, so the indices sit
+    // beside the tabs they index.
+    //
+    // The tab the window was left on is deliberately not kept: every ordinary open selects Faces,
+    // which is what the Swift app did and why Faces is first. Opening straight onto About is the
+    // licence condition, the Slint Royalty-free licence wanting the AboutSlint widget in an About
+    // screen reachable from the top level menu.
+    //
+    // Neither fires tab-selected. That callback is a user choosing a tab; an open is its own event
+    // and main.rs reports it, which is also the only way it gets reported at all, since selecting a
+    // tab that is already selected changes nothing and announces nothing.
+    public function open-on-faces() { root.active-tab = 0; }
+    public function open-on-about() { root.active-tab = 5; }
 
     VerticalLayout {
         padding: 0px;

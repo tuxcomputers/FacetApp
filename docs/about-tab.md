@@ -18,9 +18,10 @@ update check turns on, which has a wrong answer that is easy to reach by acciden
 
 So the tab is a compliance artefact before it is a feature.
 
-**`About Facet` is the first item on the status item's menu**, which is this app's top level menu, since
-an accessory application has no menu bar of its own. Choosing it opens the Settings window on the About
-tab. Built the other way round first, reachable only by opening Settings and finding the tab, and that
+**`About Facet` is on the status item's menu**, below the separator beside Quit, and that menu is this
+app's top level menu since an accessory application has no menu bar of its own. Where on the menu it
+sits does not matter to the licence, only that it is on it. Choosing it opens the Settings window on the
+About tab. Built the other way round first, reachable only by opening Settings and finding the tab, and that
 was changed on 2026-09-21: it rested on reading "accessible from" loosely, and a licence condition
 should not rest on an argument.
 

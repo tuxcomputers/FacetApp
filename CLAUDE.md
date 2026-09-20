@@ -283,6 +283,16 @@ to be left alone, and wait for it. **Once done, or if interrupted**, kill the pr
 debug-only scaffolding added to drive the verification, and post an equally prominent all-clear. **The all
 clear matters as much as the warning**; do not let it shrink to an aside in a longer message.
 
+**Clearance is for one stretch of driving and it lapses at the all-clear.** It is not a session-wide
+permit, and "you have the keyboard and mouse" earlier in a conversation does not carry forward to a later
+launch. Ask again, every time. Getting this wrong once already: clearance given for one verification was
+treated as standing for the rest of the session, and later rounds drove the machine without asking.
+
+**Synthetic keystrokes are the sharpest case**, sharper than an accessibility press. `AXPress` and writing
+`AXValue` are addressed at an element and go nowhere else, so a wrong locator does nothing. A System
+Events `keystroke` or a `CGEvent` **lands wherever focus happens to be**, which may be the owner's editor
+or terminal rather than the app. Anything that posts one needs the warning, not just the launch.
+
 ---
 
 ## Nothing fails silently
@@ -365,8 +375,9 @@ being precise.
 
 **Facet uses Slint under its Royalty-free licence, whose clause 2(a) wants the `AboutSlint` widget in an
 About screen "accessible from the top level menu of the Application".** This app is an accessory and has
-no application menu bar, so **the status item's menu is its top level menu**, and `About Facet` is the
-first item on it.
+no application menu bar, so **the status item's menu is its top level menu**, and `About Facet` is on
+it, below the separator beside Quit. Where on the menu it sits does not matter to the licence, only that
+it is on the menu at all.
 
 **Three things have to stay true together**: the menu item exists, it opens the About screen, and that
 screen shows the widget. Breaking any one puts a build out of compliance, so this is the one piece of UI

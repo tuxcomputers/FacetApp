@@ -41,15 +41,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the status item's menu is its top level menu. Reaching About only by opening Settings and
     // then finding a tab would rest on reading "accessible from" loosely. See NOTICE.
     //
+    // Where About sits in the menu does not matter to the licence, only that it is on it, so it goes
+    // below the separator beside Quit where the things that are not about tracking time belong.
+    //
     // When Pause and Resume arrive they go first, per the rule in docs/rust-port.md that the menu is
     // the primary route to everything and left click is only an accelerator for its first item.
     let menu = Menu::new();
-    let about_item = MenuItem::with_id("about", "About Facet", true, None);
     let settings_item = MenuItem::with_id("settings", "Settings...", true, None);
+    let about_item = MenuItem::with_id("about", "About Facet", true, None);
     let quit_item = MenuItem::with_id("quit", "Quit Facet", true, None);
-    menu.append(&about_item)?;
     menu.append(&settings_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
+    menu.append(&about_item)?;
     menu.append(&quit_item)?;
 
     // Right click makes the host show the menu; left click reaches the app instead. That split is the
@@ -82,13 +85,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match event.id.as_ref() {
                 "about" => {
                     if let Some(ui) = ui_weak.upgrade() {
-                        ui.invoke_show_about();
-                        show_settings(&ui);
+                        ui.invoke_open_on_about();
+                        show_settings(&ui, "About");
                     }
                 }
                 "settings" => {
                     if let Some(ui) = ui_weak.upgrade() {
-                        show_settings(&ui);
+                        ui.invoke_open_on_faces();
+                        show_settings(&ui, "Faces");
                     }
                 }
                 "quit" => {
@@ -123,18 +127,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Brings the Settings window up and puts the app in front of whatever had focus.
+/// Brings the Settings window up on `tab` and puts the app in front of whatever had focus.
 ///
 /// An accessory app is not activated by showing a window, so without the activation the window
 /// appears behind the frontmost application and looks as though the menu item did nothing.
-fn show_settings(ui: &SettingsWindow) {
+fn show_settings(ui: &SettingsWindow, tab: &str) {
     if let Err(error) = ui.show() {
         eprintln!("[settings] The Settings window could not be shown: {error}");
         return;
     }
     ui.window().set_maximized(false);
     activate_app();
-    println!("[settings] Settings window opened");
+    // Reported here rather than left to the tab callback, which does not fire for a tab that is
+    // already selected, and since every ordinary open lands on Faces that is most opens.
+    println!("[settings] Settings opened on {tab}");
 }
 
 #[cfg(target_os = "macos")]
