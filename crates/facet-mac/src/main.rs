@@ -12,6 +12,8 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 
+mod keychain;
+
 slint::include_modules!();
 
 /// How often the tray's event channels are drained, on the UI thread.
@@ -119,6 +121,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settle.start(slint::TimerMode::SingleShot, Duration::from_millis(0), || {
         set_accessory_activation_policy();
     });
+
+    // Asked for at launch rather than when a secret is first needed, so the prompt (if there is one)
+    // arrives while somebody is looking at the app rather than in the middle of pairing a cube.
+    keychain::touch_at_launch();
 
     println!("[launch  ] Facet is in the menu bar. Right click the icon for the menu.");
 

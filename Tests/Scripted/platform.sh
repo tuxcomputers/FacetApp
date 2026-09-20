@@ -64,9 +64,9 @@ case "$PLATFORM" in
         # `~/Library/Application Support/Facet`, which is what the platform's own application-support
         # lookup answers there.
         #
-        # **This is still the Swift app's directory and it holds real recorded time.** The Rust app
-        # writes nothing to it yet. When it does, the two want separating before they are ever run
-        # together; see docs/system-mac.md.
+        # **This is ours now.** It was the Swift app's until 2026-09-21, when that app was renamed to
+        # TimeFlip and its directory moved with it, leaving this name free. Nothing of the Swift app's
+        # is shared any more except the codesigning identity and the Google project.
         SUPPORT="$HOME/Library/Application Support/Facet"
         # **No bundle yet.** There is no `.app`, so the binary is the whole of it and `APP` is empty,
         # which is the shape Linux has always had. A bundle is a packaging job that has not been done.
@@ -74,9 +74,11 @@ case "$PLATFORM" in
         CRATE="facet-mac"
         BINARY="target/debug/$CRATE"
         PROCESS_NAME="$CRATE"
-        # The Swift app, which is still the one recording real time. Here so that anything warning
-        # about two icons in the menu bar does not grow a platform case of its own. Goes when it does.
-        LEGACY_PROCESS_NAME="Facet"
+        # The Swift app, which is still the one recording real time. It was renamed to TimeFlip on
+        # 2026-09-21 so that this one could take the Facet name, its directory and its identifier.
+        # Here so that anything warning about two icons in the menu bar does not grow a platform case
+        # of its own. Goes when the Swift app does.
+        LEGACY_PROCESS_NAME="TimeFlip"
         STAMP="Tests/Scripted/last-run-mac.md"
         ;;
     linux)
@@ -95,7 +97,7 @@ case "$PLATFORM" in
         CRATE="facet-linux"
         BINARY="target/debug/$CRATE"
         PROCESS_NAME="$CRATE"
-        LEGACY_PROCESS_NAME="FacetLinux"
+        LEGACY_PROCESS_NAME="TimeFlipLinux"
         STAMP="Tests/Scripted/last-run-linux.md"
         ;;
 esac

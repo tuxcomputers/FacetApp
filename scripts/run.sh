@@ -210,6 +210,33 @@ if [ ! -x "$binary" ]; then
     exit 1
 fi
 
+# **Signed with a real certificate where there is one, and left ad-hoc where there is not.**
+#
+# This is what stops macOS asking for Keychain access after every single rebuild. Cargo leaves a
+# linker-applied ad-hoc signature whose designated requirement is the binary's own hash, so each build
+# is a different application to the Keychain and the permission granted to the last one matches
+# nothing. A certificate makes the requirement stable, so Always Allow is answered once and holds.
+#
+# Re-signed on every run rather than only after a rebuild: cargo rewrites the binary whenever it
+# rebuilds, taking the signature with it, and `codesign` on an already-signed unchanged binary is
+# cheap. Failure is reported and does not stop the launch, because an unsigned app still runs and the
+# only cost is the prompt.
+if [ "$(uname -s)" = "Darwin" ]; then
+    identity="$(scripts/codesign-identity.sh || true)"
+    if [ -n "$identity" ]; then
+        if codesign --force --sign "$identity" --timestamp=none "$binary" 2>/tmp/facet-codesign.err; then
+            echo "==> Signed as: $identity"
+        else
+            echo "warning: signing failed, so this build is ad-hoc and the Keychain will ask again:" >&2
+            sed 's/^/    /' /tmp/facet-codesign.err >&2
+        fi
+        rm -f /tmp/facet-codesign.err
+    else
+        echo "note: no codesigning identity, so this build is ad-hoc signed."
+        echo "      macOS will ask for Keychain access again after every rebuild."
+    fi
+fi
+
 echo "==> Running $binary"
 echo "    Right click the menu bar icon for the menu. Ctrl-C here also stops it."
 echo

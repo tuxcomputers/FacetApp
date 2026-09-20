@@ -216,7 +216,7 @@ two checkouts kept apart, because each is useless for the other's purpose.
 | Folder | Branch | What it is for |
 |---|---|---|
 | `FacetApp` | `feature/rustPort` | The Rust rewrite. Where the work happens |
-| `TimeFlipApp` | `main` | **The working app.** `swift build` then `scripts/run.sh`, and it is the copy actually used to record time |
+| `TimeFlipApp` | `renameToTimeFlip` | **The working app, called TimeFlip.** `scripts/run.sh` there, and it is the copy actually used to record time |
 | `TimeFlipLinux` | `feature/linuxPort` | **The reference.** Read it, search it, do not run it and do not commit in it |
 
 **`main` is the right branch for the working copy** because it is the last released state, rather than
@@ -231,10 +231,12 @@ worktree per branch, and `main` is where a working copy wanted to be anyway. Und
 **Nothing should be committed in the reference tree.** It is checked out on a real branch, so a commit
 there lands on `feature/linuxPort` in a repository that is meant to be frozen.
 
-**The two apps both want the menu bar, and both are called Facet.** Only one should run at a time, and
-the Swift one owns `~/Library/Application Support/Facet` with the real recorded time in it. The Rust
-binary is `facet-mac` and writes nothing yet, but that will stop being true, and when it does the two
-need separating before they are ever run together.
+**The two were separated on 2026-09-21.** The Swift app is TimeFlip, on `au.com.tux.timeflip`, with its
+data in `~/Library/Application Support/TimeFlip`; Facet is the Rust one and owns the Facet name, that
+identifier and that directory. Nothing is shared but the codesigning identity and the Google project.
+
+**Both still want the menu bar**, so only one runs at a time, and TimeFlip is the one holding real
+recorded time.
 
 **No environment variable names the data directory, and none is standard here.** `XDG_DATA_HOME`,
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` are all unset; macOS has no equivalent. The

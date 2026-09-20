@@ -28,14 +28,33 @@ rg 'func historyFrame' ~/harry.git/TimeFlipLinux/Sources/FacetCore
 cat ~/harry.git/TimeFlipLinux/Tests/FacetTests/DeviceHistoryRulesTests.swift
 ```
 
-**`~/harry.git/TimeFlipApp` sits on `main` and is the working Swift app**, built and run day to day
-because the Rust one cannot track time yet. Do not switch its branch: somebody is using it. Other branches
+**The two are separate applications and are named apart.** The Swift one is **TimeFlip**; the Rust one
+in this repository is **Facet**. That was done on 2026-09-21 so the Rust app could take the Facet name
+outright rather than carry a transitional one.
+
+| | Swift | Rust |
+|---|---|---|
+| Called | TimeFlip | Facet |
+| Identifier | `au.com.tux.timeflip` | `au.com.tux.facet` |
+| Data | `~/Library/Application Support/TimeFlip` | `~/Library/Application Support/Facet` |
+| Keychain | `au.com.tux.timeflip.device` and `.google` | `au.com.tux.facet.*` |
+| Process | `TimeFlip` | `facet-mac` |
+
+**Nothing is shared between them except the codesigning identity and the Google project**, and the Google
+half is why two strings in the Swift app still say Facet: the calendar's name and the text written into
+each event. Renaming those would orphan the calendar that account already has.
+
+**`~/harry.git/TimeFlipApp` sits on `renameToTimeFlip` and is the working app**, built and run day to day
+because Facet cannot track time yet. **Do not switch its branch: somebody is using it.** Other branches
 are still reachable there with `git show feature/rustPort:<path>`, which in practice is only wanted for
 the two probes, and those are already in `probe/` here.
 
-**Both apps want the menu bar and both are called Facet.** The Swift one owns
-`~/Library/Application Support/Facet` and the real recorded time in it. Only one runs at a time, and
+**Both want the menu bar.** TimeFlip owns the real recorded time, so only one runs at a time and
 `facet-mac` must not be left running after a verification.
+
+**The Swift app's original Keychain items still exist** at `au.com.tux.facet.device` and `.google`. They
+were copied rather than moved during the rename and are its fallback until the migration is confirmed
+against the cube, so **do not write to those two names** and do not delete them without asking.
 
 **It is a reference, not a place to copy from.** Reading it is not permission to import it. **"The Swift
 version did X" is not a reason for anything on its own**; when it wins, it wins because the reason survives
