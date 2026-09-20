@@ -1,0 +1,20 @@
+# Who has to approve a change, and to what.
+#
+# One owner, everything. `*` matches every path in the repository, so every pull request needs an
+# approving review from @tuxcomputers and from nobody else, which is the point: with the branch
+# ruleset set to require a code owner's review, an approval from anybody else does not satisfy it.
+#
+# **The owner is exempt, and that is deliberate rather than an oversight.** GitHub will not let
+# somebody approve their own pull request, so a rule requiring one approval would leave the only
+# person able to give it unable to merge anything. The ruleset grants the admin role an always
+# bypass for exactly that reason, which is what lets the owner merge without a review while
+# everybody else needs one.
+#
+# **The status check is not bypassed, and that is where the teeth are.** Classic protection on
+# `main` requires the `All tests pass` context with `enforce_admins` on, so the owner is bound by
+# CI even though the review requirement is bypassable. Nothing reaches `main` red.
+#
+# **This file only counts on the default branch.** GitHub reads CODEOWNERS from the *base* of a
+# pull request, so a change to it does nothing until it is merged into `main`.
+
+* @tuxcomputers

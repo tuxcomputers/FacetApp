@@ -1,0 +1,141 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel a superseded run on the same branch. A second push while the first run is still going
+# proves nothing about the first commit that anybody is waiting on.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Every test runs on every platform that can run it, which is a decision rather than a default:
+  # see "Run every test on every platform that can run it" in docs/port-findings.md. Both platform
+  # divergences the Swift port ever found lived in shared code that passed on one and failed on the
+  # other, so running one test against two platforms asks two different questions.
+  #
+  # For a pull_request event, actions/checkout's default ref resolves to refs/pull/<PR>/merge, a
+  # GitHub-generated commit merging the branch into its base. Testing that catches breakage which
+  # only appears once this branch is combined with whatever has landed on the base since it was
+  # cut. On a push to main there is no merge to preview, so this is the only job that runs.
+  test-macos-merge-result:
+    name: Test (macOS, after merge into base branch)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # A bare build is the core alone, by default-members, because a Mac cannot compile the BlueZ
+      # or WinRT adapters. The native crate is named explicitly, here as everywhere.
+      - name: Build the core
+        run: cargo build --locked
+      - name: Test the core
+        run: cargo test --locked
+      - name: Build the macOS crate
+        run: cargo build --locked -p facet-mac
+      - name: Test the macOS crate
+        run: cargo test --locked -p facet-mac
+
+  # Only meaningful for a pull request: the branch's actual tip rather than the merge preview
+  # above, so a branch that passes only once combined with newer base-branch changes, and would
+  # fail standalone, still gets caught.
+  test-macos-branch-as-is:
+    name: Test (macOS, branch as-is, unmerged)
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the core
+        run: cargo build --locked
+      - name: Test the core
+        run: cargo test --locked
+      - name: Build the macOS crate
+        run: cargo build --locked -p facet-mac
+      - name: Test the macOS crate
+        run: cargo test --locked -p facet-mac
+
+  test-linux-merge-result:
+    name: Test (Linux, after merge into base branch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the core
+        run: cargo build --locked
+      - name: Test the core
+        run: cargo test --locked
+      - name: Build the Linux crate
+        run: cargo build --locked -p facet-linux
+      - name: Test the Linux crate
+        run: cargo test --locked -p facet-linux
+
+  test-linux-branch-as-is:
+    name: Test (Linux, branch as-is, unmerged)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the core
+        run: cargo build --locked
+      - name: Test the core
+        run: cargo test --locked
+      - name: Build the Linux crate
+        run: cargo build --locked -p facet-linux
+      - name: Test the Linux crate
+        run: cargo test --locked -p facet-linux
+
+  # The one required status check on main. It is an aggregator so that branch protection names a
+  # single context and the job list above can change without touching the protection rule.
+  all-tests-pass:
+    name: All tests pass
+    runs-on: ubuntu-latest
+    needs:
+      - test-macos-merge-result
+      - test-macos-branch-as-is
+      - test-linux-merge-result
+      - test-linux-branch-as-is
+    if: always()
+    steps:
+      # A needs: job that fails does not by itself fail an `if: always()` dependent, so every
+      # result is checked by name. Nothing fails silently, including this.
+      - name: Check required jobs succeeded
+        run: |
+          fail=0
+          check() {
+            local job="$1" result="$2" skippable="$3"
+            if [[ "$result" == "success" ]]; then
+              return 0
+            fi
+            # The branch-as-is jobs are pull-request only, so skipped is the expected result on a
+            # push to main rather than a failure.
+            if [[ "$skippable" == "skippable" && "$result" == "skipped" ]]; then
+              echo "$job: skipped, which is expected outside a pull request"
+              return 0
+            fi
+            echo "$job: $result"
+            fail=1
+          }
+          check test-macos-merge-result  "${{ needs.test-macos-merge-result.result }}"  required
+          check test-macos-branch-as-is  "${{ needs.test-macos-branch-as-is.result }}"  skippable
+          check test-linux-merge-result  "${{ needs.test-linux-merge-result.result }}"  required
+          check test-linux-branch-as-is  "${{ needs.test-linux-branch-as-is.result }}"  skippable
+          if [[ "$fail" -ne 0 ]]; then
+            echo "At least one required job did not pass."
+            exit 1
+          fi
+          echo "All required jobs passed."
