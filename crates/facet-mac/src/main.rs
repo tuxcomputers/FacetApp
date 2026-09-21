@@ -5,14 +5,16 @@
 //! the two rules that are easy to get wrong later: the menu is the primary route to everything, and
 //! left click is an accelerator rather than a mechanism.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use tray_icon::{
-    Icon, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 
-mod keychain;
+mod status_icon;
 
 slint::include_modules!();
 
@@ -48,14 +50,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // When Pause and Resume arrive they go first, per the rule in docs/rust-port.md that the menu is
     // the primary route to everything and left click is only an accelerator for its first item.
+    // Pause and Lock are first, per the rule in docs/rust-port.md that the menu is the primary route
+    // to everything and left click is only an accelerator for its first item.
+    //
+    // **In-memory state, and it is the exception being flagged rather than the rule being broken.**
+    // These two facts belong in the database and will be read from it at the point of use like
+    // everything else. There is no database yet, so this holds them to demonstrate that the icon
+    // follows the state; it is the demonstration that is temporary, not the icon.
     let menu = Menu::new();
+    let pause_item = MenuItem::with_id("pause", "Pause", true, None);
+    let lock_item = MenuItem::with_id("lock", "Lock", true, None);
     let settings_item = MenuItem::with_id("settings", "Settings...", true, None);
     let about_item = MenuItem::with_id("about", "About Facet", true, None);
     let quit_item = MenuItem::with_id("quit", "Quit Facet", true, None);
+    menu.append(&pause_item)?;
+    menu.append(&lock_item)?;
+    menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&settings_item)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&about_item)?;
     menu.append(&quit_item)?;
+
+    let showing = Rc::new(Cell::new(status_icon::Showing { paused: false, locked: false }));
 
     // Right click makes the host show the menu; left click reaches the app instead. That split is the
     // shape every platform can manage, and it is why nothing may live behind a left click that has no
@@ -63,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tray = TrayIconBuilder::new()
         .with_id("facet-status-item")
         .with_menu(Box::new(menu))
-        .with_icon(status_item_icon()?)
+        .with_icon(status_icon::draw(showing.get())?)
         .with_icon_as_template(true)
         .with_tooltip("Facet")
         .with_menu_on_left_click(false)
@@ -80,11 +96,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the event loop rather than the function that built it.
     let _tray: TrayIcon = tray;
 
+
     let ui_weak = ui.as_weak();
+    let tray_handle = Rc::new(_tray);
+    let pump_tray = Rc::clone(&tray_handle);
+    let pump_showing = Rc::clone(&showing);
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             match event.id.as_ref() {
+                "pause" => {
+                    let mut next = pump_showing.get();
+                    next.paused = !next.paused;
+                    pump_showing.set(next);
+                    pause_item.set_text(if next.paused { "Resume" } else { "Pause" });
+                    redraw_status_item(&pump_tray, next);
+                }
+                "lock" => {
+                    let mut next = pump_showing.get();
+                    next.locked = !next.locked;
+                    pump_showing.set(next);
+                    lock_item.set_text(if next.locked { "Unlock" } else { "Lock" });
+                    redraw_status_item(&pump_tray, next);
+                }
                 "about" => {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.invoke_open_on_about();
@@ -121,10 +155,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settle.start(slint::TimerMode::SingleShot, Duration::from_millis(0), || {
         set_accessory_activation_policy();
     });
-
-    // Asked for at launch rather than when a secret is first needed, so the prompt (if there is one)
-    // arrives while somebody is looking at the app rather than in the middle of pairing a cube.
-    keychain::touch_at_launch();
 
     println!("[launch  ] Facet is in the menu bar. Right click the icon for the menu.");
 
@@ -206,47 +236,23 @@ fn activate_app() {
 #[cfg(not(target_os = "macos"))]
 fn activate_app() {}
 
-/// A placeholder status item icon: a rounded square outline with a dot, drawn in code.
+/// Redraws the status item for `showing`.
 ///
-/// Alpha is the whole of it, because it is installed as a template image and macOS then draws it in
-/// whichever colour the menu bar needs. The real artwork is `Facet.svg`, which wants an SVG
-/// rasteriser this binary does not yet pull in.
-fn status_item_icon() -> Result<Icon, tray_icon::BadIcon> {
-    const SIZE: i32 = 32;
-    const INSET: i32 = 5;
-    const STROKE: i32 = 3;
-
-    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
-    let centre = (SIZE as f32 - 1.0) / 2.0;
-
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let on_border = (x >= INSET && x < SIZE - INSET && y >= INSET && y < SIZE - INSET)
-                && (x < INSET + STROKE
-                    || x >= SIZE - INSET - STROKE
-                    || y < INSET + STROKE
-                    || y >= SIZE - INSET - STROKE);
-
-            let dx = x as f32 - centre;
-            let dy = y as f32 - centre;
-            let in_dot = dx * dx + dy * dy <= 12.0;
-
-            // Knock the four corners off the border so it reads as rounded rather than boxy.
-            let corner = |cx: i32, cy: i32| (x - cx).abs() + (y - cy).abs() < 3;
-            let clipped = corner(INSET, INSET)
-                || corner(SIZE - 1 - INSET, INSET)
-                || corner(INSET, SIZE - 1 - INSET)
-                || corner(SIZE - 1 - INSET, SIZE - 1 - INSET);
-
-            if (on_border && !clipped) || in_dot {
-                let i = ((y * SIZE + x) * 4) as usize;
-                rgba[i] = 0;
-                rgba[i + 1] = 0;
-                rgba[i + 2] = 0;
-                rgba[i + 3] = 255;
+/// **Says so when it cannot**, rather than leaving the menu bar showing the previous state. An icon
+/// that silently stops following the app is worse than no icon: it is a confident wrong answer, and
+/// this is the one surface that has to be right on all three platforms.
+fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing) {
+    match status_icon::draw(showing) {
+        Ok(icon) => {
+            if let Err(error) = tray.set_icon(Some(icon)) {
+                eprintln!("[tray    ] The status item icon could not be changed: {error}");
+                return;
             }
+            println!(
+                "[tray    ] Status item now shows paused={} locked={}",
+                showing.paused, showing.locked
+            );
         }
+        Err(error) => eprintln!("[tray    ] The status item icon could not be drawn: {error}"),
     }
-
-    Icon::from_rgba(rgba, SIZE as u32, SIZE as u32)
 }

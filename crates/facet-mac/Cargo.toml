@@ -10,7 +10,6 @@ repository.workspace = true
 facet-core.workspace = true
 slint.workspace = true
 tray-icon.workspace = true
-keyring.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true
@@ -20,3 +19,8 @@ slint-build.workspace = true
 objc2 = "0.6"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3"
+
+# Only for examples/draw-status-icons.rs, which renders the menu bar icon to a file so it can
+# be looked at without launching the app.
+[dev-dependencies]
+png = "0.18"
