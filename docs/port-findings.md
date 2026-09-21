@@ -173,6 +173,39 @@ timezone identifiers has to normalise rather than assume; there are alias and lo
 
 ---
 
+## The tray icon is a different kind of object on each platform
+
+**Measured 2026-09-21, from the three backends rather than from documentation.** The icon can be changed
+at runtime everywhere, but what it is allowed to be differs, and the difference decides a design.
+
+| | What `set_icon` does | Can it be wider than it is tall? |
+|---|---|---|
+| **macOS** | Sets the `NSStatusItem` button's image and re-measures the item | **Yes.** tray-icon asks for an 18 point tall image and derives the width from the aspect, so the item widens to fit |
+| **Windows** | `Shell_NotifyIcon` with `NIF_ICON` | **No.** The icon is an `HICON` drawn into the shell's own square slot, so a 2:1 image is squashed rather than given room |
+| **Linux** | Depends entirely on the backend, below | **Untested.** ksni's `icon_pixmap` carries its own width and height and the specification permits non-square |
+
+**So a row of same-size glyphs is a macOS and Linux shape, and Windows needs another answer.** Facet shows
+Play or Pause, with a padlock beside it at the same size when the cube is locked. On Windows both have to
+fit inside one square, which halves them, or the second fact becomes a badge in a corner. **That is a real
+decision for the Windows adapter and not a detail**, and it is here so it is not discovered by looking at
+a squashed icon.
+
+**tray-icon cannot be used for this on Linux at all.** Its Linux backend is libappindicator, whose
+`set_icon` writes a fresh temporary PNG with an incrementing counter and repoints the icon theme path,
+because AppIndicator takes an icon *name* rather than pixels. tray-icon offers no ksni backend: the
+feature list is `gtk` plus `libappindicator` and nothing else. [`rust-port.md`](rust-port.md) had already
+ruled AppIndicator out because it emits no click events, so Linux uses ksni directly, and ksni is the
+richest of the three: raw pixels through `icon_pixmap`, and `overlay_icon_pixmap` for a second image drawn
+on top of the first.
+
+**A template image throws the colours away, and that is not a bug.** macOS draws a template in the menu
+bar's own ink, black on a light bar and white on a dark one, so an icon built with colours in it comes out
+black. `with_icon_as_template(false)` is what lets colours through, and the cost is that they stop
+adapting: a white glyph is invisible on a light menu bar. Facet accepts that, having chosen its colours
+deliberately.
+
+---
+
 ## Design rules that follow from all of the above
 
 Short list, all of them enforceable from the first commit.

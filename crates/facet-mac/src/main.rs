@@ -80,7 +80,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_id("facet-status-item")
         .with_menu(Box::new(menu))
         .with_icon(status_icon::draw(showing.get())?)
-        .with_icon_as_template(true)
+        // **Not a template.** A template image is alpha only: macOS throws the colours away and draws
+        // the shape in the menu bar's own ink, which is why the icon came out black whatever it was
+        // given. False is what lets the glyph colours through, at the cost of them no longer adapting
+        // to a light or dark menu bar. See status_icon.
+        .with_icon_as_template(false)
         .with_tooltip("Facet")
         .with_menu_on_left_click(false)
         .with_menu_on_right_click(true)

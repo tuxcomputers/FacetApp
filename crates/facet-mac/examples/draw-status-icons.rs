@@ -15,7 +15,6 @@ mod status_icon;
 use status_icon::Showing;
 
 const SCALE: usize = 6;
-const SIZE: usize = 32;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = std::env::args().nth(1).unwrap_or_else(|| ".".into());
@@ -29,31 +28,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("paused-locked", Showing { paused: true, locked: true }),
     ] {
         let path = dir.join(format!("{name}.png"));
-        write_png(&path, &status_icon::alpha(showing))?;
-        println!("wrote {}", path.display());
+        let rendered = status_icon::render(showing);
+        write_png(&path, &rendered)?;
+        println!("wrote {} ({}x{})", path.display(), rendered.width, rendered.height);
     }
     Ok(())
 }
 
-/// Grey on white rather than the template's bare alpha, because alpha alone is invisible in a viewer.
-/// What the menu bar actually draws is this shape in whichever colour it needs.
-fn write_png(path: &std::path::Path, alpha: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    let side = SIZE * SCALE;
-    let mut rgb = vec![255u8; side * side * 3];
-    for y in 0..side {
-        for x in 0..side {
-            let on = alpha[(y / SCALE) * SIZE + (x / SCALE)] != 0;
-            if on {
-                let i = (y * side + x) * 3;
-                rgb[i] = 0x22;
-                rgb[i + 1] = 0x22;
-                rgb[i + 2] = 0x22;
+/// Each state on both a light and a dark background, stacked.
+///
+/// **Both, because the colours no longer adapt.** The icon is not a template any more, so what you see
+/// here is what the menu bar draws whichever mode it is in. White pause on the light half is the case
+/// worth looking at.
+fn write_png(
+    path: &std::path::Path,
+    rendered: &status_icon::Rendered,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (w, h) = (rendered.width as usize, rendered.height as usize);
+    let (out_w, band) = (w * SCALE, h * SCALE);
+    let out_h = band * 2;
+    let mut rgb = vec![0u8; out_w * out_h * 3];
+
+    // Top band a light menu bar, bottom band a dark one.
+    for y in 0..out_h {
+        let bg: u8 = if y < band { 0xEC } else { 0x2B };
+        for x in 0..out_w {
+            let i = (y * out_w + x) * 3;
+            rgb[i] = bg;
+            rgb[i + 1] = bg;
+            rgb[i + 2] = bg;
+
+            let sy = (y % band) / SCALE;
+            let j = (sy * w + x / SCALE) * 4;
+            if rendered.rgba[j + 3] != 0 {
+                rgb[i] = rendered.rgba[j];
+                rgb[i + 1] = rendered.rgba[j + 1];
+                rgb[i + 2] = rendered.rgba[j + 2];
             }
         }
     }
 
     let file = std::fs::File::create(path)?;
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), side as u32, side as u32);
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), out_w as u32, out_h as u32);
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.write_header()?.write_image_data(&rgb)?;
