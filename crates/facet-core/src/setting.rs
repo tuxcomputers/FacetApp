@@ -1,0 +1,126 @@
+//! Reading the `setting` table.
+//!
+//! **A read, at the moment of use.** Nothing here caches: every call goes to the table, which is the first
+//! rule in `CLAUDE.md` and the reason this is a function rather than a struct holding values.
+//!
+//! **The JSON is unpacked by sqlite rather than by a parser here.** Each setting's value is a JSON object,
+//! and `json_extract` is built into sqlite, so the field is pulled out where the value already lives instead
+//! of being brought into the app and taken apart a second time. It also means no JSON dependency, and it
+//! means an unparseable value fails on the read rather than somewhere later.
+
+use rusqlite::{Connection, OptionalExtension};
+
+/// The `debug` setting: whether the trace is gathered, and which folder it is kept in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugTrace {
+    pub enabled: bool,
+    /// **As it is stored**, so a leading `~` is still a `~`. Empty means the folder the app already keeps
+    /// its databases in, which is a different directory on each platform and so cannot be seeded as a path.
+    /// Expanding it is the composition root's, at the point the file is opened.
+    pub directory: String,
+}
+
+impl Default for DebugTrace {
+    /// What a database with no `debug` row would give, which is what the DDL seeds: off, and no folder
+    /// named. **Named here rather than at each call site** so a missing row cannot come to mean two
+    /// different things in two places.
+    fn default() -> Self {
+        DebugTrace { enabled: false, directory: String::new() }
+    }
+}
+
+/// Reads the `debug` setting.
+///
+/// A row that is absent gives [`DebugTrace::default`], which is the seeded value: a database that predates
+/// the row is off rather than an error. A row that is *there* and unreadable is an error, because that is a
+/// value somebody set and the app cannot honour.
+pub fn debug_trace(connection: &Connection) -> Result<DebugTrace, rusqlite::Error> {
+    let row = connection
+        .query_row(
+            "SELECT json_extract(setting_value, '$.enabled'), \
+                    coalesce(json_extract(setting_value, '$.directory'), '') \
+             FROM setting WHERE setting_name = 'debug'",
+            [],
+            |row| Ok((row.get::<_, Option<bool>>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+
+    Ok(match row {
+        Some((enabled, directory)) => {
+            DebugTrace { enabled: enabled.unwrap_or(false), directory }
+        }
+        None => DebugTrace::default(),
+    })
+}
+
+/// Which database this launch landed on: `production` or `test`.
+///
+/// **The safety check the scripted suite runs on**, per `Tests/CLAUDE.md`: reading `production` during what
+/// is supposed to be a testing session means the `appdata.sqlite` symlink was never repointed, and testing
+/// must not proceed.
+pub fn database_type(connection: &Connection) -> Result<String, rusqlite::Error> {
+    let value = connection
+        .query_row(
+            "SELECT json_extract(setting_value, '$.type') FROM setting WHERE setting_name = 'db_type'",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?;
+    Ok(value.flatten().unwrap_or_else(|| "unknown".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database;
+
+    #[test]
+    fn a_seeded_database_reads_as_logging_off_with_no_folder_named() {
+        let connection = seeded();
+        assert_eq!(debug_trace(&connection).expect("the debug row should read"), DebugTrace::default());
+    }
+
+    #[test]
+    fn turning_it_on_is_read_back_as_on() {
+        let connection = seeded();
+        connection
+            .execute(
+                "UPDATE setting SET setting_value = '{\"enabled\":true,\"directory\":\"~/Traces\"}' \
+                 WHERE setting_name = 'debug'",
+                [],
+            )
+            .expect("the debug row should be writable");
+
+        let trace = debug_trace(&connection).expect("the debug row should read");
+        assert!(trace.enabled);
+        // Stored as typed, tilde and all: an absolute path names one machine, and this database is copied
+        // between them.
+        assert_eq!(trace.directory, "~/Traces");
+    }
+
+    /// A database old enough not to have the row is off, not broken.
+    #[test]
+    fn a_database_with_no_debug_row_reads_as_the_seeded_value() {
+        let connection = seeded();
+        connection
+            .execute("DELETE FROM setting WHERE setting_name = 'debug'", [])
+            .expect("the debug row should be removable");
+        assert_eq!(debug_trace(&connection).expect("a missing row should read"), DebugTrace::default());
+    }
+
+    #[test]
+    fn a_freshly_seeded_database_calls_itself_production() {
+        let connection = seeded();
+        assert_eq!(database_type(&connection).expect("db_type should read"), "production");
+    }
+
+    fn seeded() -> Connection {
+        let path = std::env::temp_dir().join(format!(
+            "facet-setting-test-{}-{:?}.sqlite",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply")
+    }
+}

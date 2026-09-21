@@ -1,0 +1,252 @@
+//! The debug trace: what the app says it is doing, printed and recorded.
+//!
+//! **Recording is the half that matters.** A terminal transcript is whatever is still in a scrollback
+//! buffer; a `debug_log` row outlives the session and is what every scripted check polls for. So this
+//! prints *and* writes, and a bare `println!` anywhere else in the app is that second half being skipped.
+//!
+//! **Injected, never global.** Built once in the composition root, gated there on the `debug` setting, and
+//! handed on as an [`Option`], so a launch with logging off holds no logger at all rather than one that
+//! returns early on every call. [`Record`] is what lets a call site say what happened without asking first.
+//!
+//! **A message is plain text: no apostrophes, and no quotation marks around a value.** Messages are read
+//! back out of this table by SQL `LIKE` patterns, and a pattern goes inside a single-quoted string literal,
+//! so *The cube's clock is set* closes the quote at `cube` and sqlite refuses the whole statement,
+//! **answering nothing rather than failing**. Inserting is by bound parameter and so is safe either way;
+//! the hazard is entirely on the reading side, which is why the debug build asserts rather than escapes.
+
+use std::cell::Cell;
+use std::path::Path;
+
+use rusqlite::{Connection, params};
+
+use crate::database;
+
+/// What a message is about. **One enum, so the padding is computed rather than typed**, and adding a case
+/// re-pads every tag automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tag {
+    Launch,
+    Settings,
+    Tray,
+    Menu,
+    Database,
+    Quit,
+}
+
+impl Tag {
+    /// Every case, which is what the width below is measured over. **Adding a case means adding it here**;
+    /// a tag missing from this list is one the console columns do not line up with.
+    pub const ALL: &'static [Tag] =
+        &[Tag::Launch, Tag::Settings, Tag::Tray, Tag::Menu, Tag::Database, Tag::Quit];
+
+    /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
+    /// pattern in a check is written once and should not have to guess at capitals.
+    pub const fn word(self) -> &'static str {
+        match self {
+            Tag::Launch => "launch",
+            Tag::Settings => "settings",
+            Tag::Tray => "tray",
+            Tag::Menu => "menu",
+            Tag::Database => "database",
+            Tag::Quit => "quit",
+        }
+    }
+
+    /// The longest tag there is, which is what every tag is padded out to so console lines stay aligned.
+    pub const WIDTH: usize = {
+        let mut widest = 0;
+        let mut index = 0;
+        while index < Tag::ALL.len() {
+            let width = Tag::ALL[index].word().len();
+            if width > widest {
+                widest = width;
+            }
+            index += 1;
+        }
+        widest
+    };
+}
+
+/// Says what happened, if there is anywhere to say it.
+///
+/// **Implemented on `Option<DebugLog>` rather than on the logger**, which is what keeps the gate in the
+/// composition root: a call site says what it did and does not ask first, and a launch with logging off
+/// costs a null check.
+///
+/// The message is built by a closure, so a launch that is recording nothing builds no strings at all.
+pub trait Record {
+    fn record(&self, tag: Tag, message: impl FnOnce() -> String);
+}
+
+impl Record for Option<DebugLog> {
+    fn record(&self, tag: Tag, message: impl FnOnce() -> String) {
+        if let Some(log) = self {
+            log.write(tag, &message());
+        }
+    }
+}
+
+/// The trace database, open from launch to quit.
+pub struct DebugLog {
+    connection: Connection,
+    /// Whether a failed write has already been complained about. **Announced once rather than never and
+    /// rather than every time**: a trace that cannot be written is one fact, and repeating it per message
+    /// would bury the run it is trying to describe under the complaint.
+    reported_failure: Cell<bool>,
+}
+
+impl DebugLog {
+    /// Opens `path` and puts the trace schema in it, creating the file if it is not there.
+    ///
+    /// **The file is brought up by whoever opens it, not by the first message.** The Swift app deferred it
+    /// so that a launch recording nothing left no `debug.sqlite` behind; here the logger is only built at
+    /// all when the setting says so, so the launch that opens it is already one that is recording.
+    pub fn open(path: &Path) -> Result<Self, database::Error> {
+        Ok(DebugLog {
+            connection: database::open(path, database::DEBUG_DDL)?,
+            reported_failure: Cell::new(false),
+        })
+    }
+
+    /// Prints the message and writes it as a row.
+    ///
+    /// **One timestamp for both**, read from sqlite rather than from a clock here: the line in the terminal
+    /// and the row in the table are then the same instant rather than two readings of it, and local time
+    /// comes from the one place that already knows how to ask for it.
+    fn write(&self, tag: Tag, message: &str) {
+        debug_assert!(
+            !message.contains('\''),
+            "a debug message must not contain an apostrophe: it is read back by a SQL LIKE pattern inside \
+             a single-quoted literal, which the apostrophe closes. Reword it. Message: {message}"
+        );
+
+        // Milliseconds in the row and whole seconds on the console. The row is what a check reads and
+        // ordering within a second matters there; the console is read by a person.
+        let stamped: Result<String, _> = self.connection.query_row(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%f', 'now', 'localtime')",
+            [],
+            |row| row.get(0),
+        );
+        let stamped = match stamped {
+            Ok(stamped) => stamped,
+            Err(error) => {
+                self.complain_once(&error);
+                return;
+            }
+        };
+
+        let written = self.connection.execute(
+            "INSERT INTO debug_log (logged_at, tag, message) VALUES (?1, ?2, ?3)",
+            params![stamped, tag.word(), message],
+        );
+        if let Err(error) = written {
+            self.complain_once(&error);
+        }
+
+        // `13:25:38` out of `2026-09-21T13:25:38.123`. Taken from the stamp rather than read again, so a
+        // line in the terminal and the row behind it cannot disagree about when it happened.
+        let clock = stamped.get(11..19).unwrap_or(&stamped);
+        println!("{clock} [{:width$}] {message}", tag.word(), width = Tag::WIDTH);
+    }
+
+    /// Says a trace write failed, the first time it does.
+    ///
+    /// **The trace failing must not be silent**, because a run reconstructed from an empty table looks
+    /// exactly like a run where nothing happened. It also must not become the run: hence once.
+    fn complain_once(&self, error: &rusqlite::Error) {
+        if self.reported_failure.replace(true) {
+            return;
+        }
+        eprintln!(
+            "[{:width$}] the debug trace could not be written, so this run leaves no record: {error}",
+            Tag::Database.word(),
+            width = Tag::WIDTH
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_tag_is_padded_to_the_longest_one() {
+        assert_eq!(Tag::WIDTH, "database".len());
+        for tag in Tag::ALL {
+            assert!(tag.word().len() <= Tag::WIDTH);
+        }
+    }
+
+    /// The width is derived rather than written down, which is the point: this fails the day a longer tag
+    /// is added without the constant being touched, and that is the failure not happening.
+    #[test]
+    fn the_width_follows_the_tags_rather_than_being_stated() {
+        let longest = Tag::ALL.iter().map(|tag| tag.word().len()).max().expect("there is at least one tag");
+        assert_eq!(Tag::WIDTH, longest);
+    }
+
+    #[test]
+    fn a_recorded_message_is_a_row_that_can_be_read_back() {
+        let log = Some(DebugLog::open(&tempfile()).expect("the trace should open"));
+        log.record(Tag::Launch, || "Facet is in the menu bar".to_string());
+
+        let Some(log) = &log else { unreachable!() };
+        let (tag, message, stamped): (String, String, String) = log
+            .connection
+            .query_row("SELECT tag, message, logged_at FROM debug_log", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .expect("the row should be there");
+
+        assert_eq!(tag, "launch");
+        assert_eq!(message, "Facet is in the menu bar");
+        // What a check sorts on, so the shape is interface: a date, a T, and a time carrying milliseconds.
+        assert_eq!(stamped.len(), "2026-09-21T13:25:38.123".len(), "got {stamped}");
+        assert_eq!(&stamped[10..11], "T", "got {stamped}");
+    }
+
+    /// The gate is in the composition root, so this is what a launch with logging off costs.
+    #[test]
+    fn a_launch_with_no_logger_records_nothing_and_builds_nothing() {
+        let absent: Option<DebugLog> = None;
+        let mut built = false;
+        absent.record(Tag::Tray, || {
+            built = true;
+            String::new()
+        });
+        assert!(!built, "the message should not be built when there is nowhere to record it");
+    }
+
+    #[test]
+    fn messages_arrive_in_the_order_they_were_recorded() {
+        let log = Some(DebugLog::open(&tempfile()).expect("the trace should open"));
+        log.record(Tag::Launch, || "first".to_string());
+        log.record(Tag::Settings, || "second".to_string());
+        log.record(Tag::Quit, || "third".to_string());
+
+        let Some(log) = &log else { unreachable!() };
+        let mut statement = log
+            .connection
+            .prepare("SELECT message FROM debug_log ORDER BY debug_log_id")
+            .expect("the query should prepare");
+        let messages: Vec<String> = statement
+            .query_map([], |row| row.get(0))
+            .expect("the query should run")
+            .collect::<Result<_, _>>()
+            .expect("every row should read");
+        assert_eq!(messages, vec!["first", "second", "third"]);
+    }
+
+    fn tempfile() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+        let path = std::env::temp_dir().join(format!(
+            "facet-debug-log-test-{}-{}.sqlite",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+}
