@@ -13,9 +13,9 @@
 // thing the app will draw on a fresh install. They are `in` properties so that wiring the database later is
 // setting them rather than rebuilding the tab. Until then the controls move and go nowhere.
 
-import { Palette, CheckBox, Button, SpinBox, ScrollView } from "std-widgets.slint";
+import { CheckBox, Button, ScrollView } from "std-widgets.slint";
 import { Metrics } from "metrics.slint";
-import { Panel, SectionHeading, SettingsRow, ValueText, Footnote } from "widgets.slint";
+import { Panel, SectionHeading, SettingsRow, StepperField, ValueText, Footnote } from "widgets.slint";
 
 export component AppPane inherits Rectangle {
     // Seeded `display_seconds`.
@@ -48,6 +48,12 @@ export component AppPane inherits Rectangle {
     accessible-label: "App";
 
     ScrollView {
+        // **The content is as wide as the view, not as wide as it would like to be.** Left to itself a scroll
+        // view sizes its viewport to the content's preferred width, and a wrapped footnote prefers the width of
+        // its whole sentence on one line. It then measured one line tall, wrapped to two at the real width, and
+        // the second line sat outside the panel it belongs to.
+        viewport-width: self.visible-width;
+
         VerticalLayout {
             padding: Metrics.tab-padding;
             spacing: Metrics.section-spacing;
@@ -76,29 +82,25 @@ export component AppPane inherits Rectangle {
 
                     SettingsRow {
                         label: "Daily reset at";
-                        SpinBox {
+                        // The face is AM-only, which is the Swift app's own suffix: a stored PM hour still
+                        // draws as its clock-face hour rather than being silently corrected by a reading.
+                        StepperField {
                             value: root.daily-reset-hour12;
                             minimum: 1;
                             maximum: 12;
-                            accessible-id: "app-daily-reset";
+                            suffix: "AM";
+                            field-id: "app-daily-reset";
                         }
-                        // The face is AM-only, which is the Swift app's own suffix: a stored PM hour still
-                        // draws as its clock-face hour rather than being silently corrected by a reading.
-                        Text { text: "AM"; vertical-alignment: center; color: Palette.foreground; }
                     }
 
                     SettingsRow {
                         label: "Fetch history every";
-                        SpinBox {
+                        StepperField {
                             value: root.fetch-interval-minutes;
                             minimum: 1;
                             maximum: 60;
-                            accessible-id: "app-fetch-interval";
-                        }
-                        Text {
-                            text: root.fetch-interval-minutes == 1 ? "min" : "mins";
-                            vertical-alignment: center;
-                            color: Palette.foreground;
+                            suffix: root.fetch-interval-minutes == 1 ? "min" : "mins";
+                            field-id: "app-fetch-interval";
                         }
                     }
 
@@ -107,16 +109,12 @@ export component AppPane inherits Rectangle {
                     // there rather than as time spent.
                     SettingsRow {
                         label: "Ignore flips under";
-                        SpinBox {
+                        StepperField {
                             value: root.blip-seconds;
                             minimum: 0;
                             maximum: 30;
-                            accessible-id: "app-blip-time";
-                        }
-                        Text {
-                            text: root.blip-seconds == 1 ? "sec" : "secs";
-                            vertical-alignment: center;
-                            color: Palette.foreground;
+                            suffix: root.blip-seconds == 1 ? "sec" : "secs";
+                            field-id: "app-blip-time";
                         }
                     }
                 }

@@ -12,6 +12,7 @@
 import { Palette, ScrollView, AboutSlint } from "std-widgets.slint";
 import { Metrics } from "metrics.slint";
 import { AppPane } from "app-settings.slint";
+import { DevicePane } from "device.slint";
 
 component TabPill inherits Rectangle {
     in property <string> label;
@@ -179,9 +180,7 @@ export component SettingsWindow inherits Window {
                 pane-id: "settings-pane-report"; title: "Report";
             }
             if root.active-tab == 3: AppPane { }
-            if root.active-tab == 4: BlankPane {
-                pane-id: "settings-pane-device"; title: "Device";
-            }
+            if root.active-tab == 4: DevicePane { }
 
             if root.active-tab == 5: Rectangle {
                 accessible-role: tab-panel;

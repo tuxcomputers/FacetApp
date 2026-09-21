@@ -8,7 +8,7 @@
 // without the role, and anything pressable answers accessible-action-default. A bare TouchArea is invisible to
 // an accessibility press and reports success anyway, which is the silent pass CLAUDE.md has a section about.
 
-import { Palette } from "std-widgets.slint";
+import { Palette, SpinBox } from "std-widgets.slint";
 import { Metrics } from "metrics.slint";
 
 // A heading that folds what is under it, drawn as the first row of the panel it sits on.
@@ -19,6 +19,10 @@ export component SectionHeading inherits Rectangle {
     in property <string> title;
     in property <string> heading-id;
     in-out property <bool> expanded: true;
+    // **A row of a list rather than a section of the tab.** The Device tab's More and LED are the second kind
+    // of collapsible group: they are lines of a panel that already exists, so there is nothing of their own to
+    // close and they sit at the weight of the rows around them rather than at a heading's.
+    in property <bool> nested: false;
 
     callback toggled(bool);
 
@@ -37,19 +41,27 @@ export component SectionHeading inherits Rectangle {
         spacing: Metrics.title-spacing;
         alignment: start;
 
-        Text {
-            text: root.expanded ? "▾" : "▸";
-            vertical-alignment: center;
-            color: Palette.foreground;
-            opacity: 0.7;
+        // Drawn rather than typed. A glyph for this is a character whose size and baseline are the font's to
+        // decide, and at a heading's size it came out as a speck.
+        Rectangle {
             width: 12px;
-            horizontal-alignment: center;
+            Path {
+                width: 9px;
+                height: 9px;
+                viewbox-width: 9;
+                viewbox-height: 9;
+                commands: root.expanded
+                    ? "M 0.5 2.5 L 8.5 2.5 L 4.5 7.5 Z"
+                    : "M 2.5 0.5 L 7.5 4.5 L 2.5 8.5 Z";
+                fill: Palette.foreground;
+                opacity: 0.75;
+            }
         }
 
         Text {
             text: root.title;
-            font-size: Metrics.heading-font-size;
-            font-weight: 700;
+            font-size: root.nested ? Metrics.body-font-size : Metrics.heading-font-size;
+            font-weight: root.nested ? 400 : 700;
             vertical-alignment: center;
             color: Palette.foreground;
         }
@@ -127,15 +139,69 @@ export component ValueText inherits Text {
 }
 
 // A footnote under a panel or at the end of a list: smaller, quieter, and allowed to wrap.
-export component Footnote inherits Text {
+//
+// **The box is what the layout sees, and the words inside it are given its width.** A wrapping Text placed
+// straight into a layout is measured at the width it would like, which for a sentence is one line, so it was
+// given one line's height and then wrapped to two inside it: the second line of the Debug note sat below the
+// panel it belongs to. Setting the width first and taking the height from the result is what fixes that, and
+// it is why this is a Rectangle around a Text rather than a Text.
+export component Footnote inherits Rectangle {
+    in property <string> text;
     in property <string> note-id;
-    font-size: Metrics.footnote-font-size;
-    wrap: word-wrap;
-    color: Palette.foreground;
-    opacity: 0.6;
-    accessible-role: text;
-    accessible-id: root.note-id;
-    accessible-label: root.text;
+
+    height: label.preferred-height;
+
+    label := Text {
+        width: 100%;
+        text: root.text;
+        font-size: Metrics.footnote-font-size;
+        wrap: word-wrap;
+        color: Palette.foreground;
+        opacity: 0.6;
+        accessible-role: AccessibleRole.text;
+        accessible-id: root.note-id;
+        accessible-label: root.text;
+    }
+}
+
+// A number with its unit beside it, and the one stepped control every tab uses.
+//
+// **Fixed width, and it does not stretch.** A control that filled the row would put the arrows at the window
+// edge and leave the number stranded a long way from the words naming it, which is the opposite of what pinning
+// the control to the right is for. The Swift app's SteppedNumberField is 90 for the box and 34 for the unit;
+// the box here carries its own arrows, so it takes the difference.
+//
+// **Arrows rather than a slider**, which is the Swift app's finding: a slider commits a value per pixel of
+// travel, and one brightness drag logged thirty-odd changes, every one of them a device write.
+export component StepperField inherits HorizontalLayout {
+    in property <int> value;
+    in property <int> minimum: 0;
+    in property <int> maximum: 100;
+    in property <string> suffix;
+    in property <string> field-id;
+    in property <bool> enabled: true;
+
+    spacing: Metrics.title-spacing;
+    horizontal-stretch: 0;
+
+    SpinBox {
+        width: 110px;
+        horizontal-stretch: 0;
+        value: root.value;
+        minimum: root.minimum;
+        maximum: root.maximum;
+        enabled: root.enabled;
+        accessible-id: root.field-id;
+    }
+
+    // Left-aligned in a fixed slot, so the units line up down the tab however long the word is.
+    Text {
+        width: 34px;
+        text: root.suffix;
+        vertical-alignment: center;
+        color: Palette.foreground;
+        opacity: root.enabled ? 1.0 : 0.45;
+    }
 }
 
 // A hairline. The Swift app draws these between a question and its answer, never between rows.

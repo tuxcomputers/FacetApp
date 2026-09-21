@@ -8,7 +8,9 @@ repository.workspace = true
 
 [dependencies]
 facet-core.workspace = true
-slint.workspace = true
+# renderer-software is not for the app: it is what examples/draw-settings-tabs.rs uses to draw the Settings
+# tabs into a buffer, so a layout can be looked at without putting a window on the owner's screen.
+slint = { workspace = true, features = ["renderer-software"] }
 tray-icon.workspace = true
 
 [build-dependencies]
