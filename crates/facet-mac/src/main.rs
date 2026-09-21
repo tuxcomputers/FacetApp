@@ -28,15 +28,27 @@ const TRAY_POLL: Duration = Duration::from_millis(100);
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = SettingsWindow::new()?;
 
-    // A menu bar app owns no dock icon and no menu bar of its own. This has to happen after Slint has
-    // built its backend, because that is what creates the application object, and again from inside
-    // the event loop below, because the windowing layer sets its own policy on the way up.
-    set_accessory_activation_policy();
+    // A menu bar app owns no dock icon. This has to happen after Slint has built its backend, because
+    // that is what creates the application object, and again from inside the event loop below, because
+    // the windowing layer sets its own policy on the way up.
+    show_in_dock(false);
 
     ui.on_tab_selected(|tab| {
         // Stands in for the debug log until there is one. The scripted suite reads a line of exactly
         // this shape to prove that selecting a tab did something, so the wording is interface.
         println!("[settings] Settings tab selected: {tab}");
+    });
+
+    // Closing Settings puts the app back in the menu bar and nowhere else.
+    //
+    // **Hidden rather than destroyed**, which is what makes the next open cheap and is why this callback
+    // has to say so: the default for a Slint window is to close it, and a closed window cannot be shown
+    // again. The values it holds are not carried over, whatever it keeps in memory: the window reads them
+    // again on every open, per the source-of-truth rule in CLAUDE.md.
+    ui.window().on_close_requested(|| {
+        show_in_dock(false);
+        println!("[settings] Settings closed");
+        slint::CloseRequestResponse::HideWindow
     });
 
     // About sits on the top level menu, and that placement is a licence condition. Slint's
@@ -157,7 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Once more, now that the windowing layer has finished starting up.
     let settle = slint::Timer::default();
     settle.start(slint::TimerMode::SingleShot, Duration::from_millis(0), || {
-        set_accessory_activation_policy();
+        show_in_dock(false);
     });
 
     println!("[launch  ] Facet is in the menu bar. Right click the icon for the menu.");
@@ -172,8 +184,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// An accessory app is not activated by showing a window, so without the activation the window
 /// appears behind the frontmost application and looks as though the menu item did nothing.
 fn show_settings(ui: &SettingsWindow, tab: &str) {
+    // **Before the window, not after.** The Dock icon and the window are the same act to macOS: the policy
+    // is what decides whether the app has a place in the Dock at all, and changing it out from under a
+    // window already on screen leaves that window belonging to an app the Dock has only just heard of.
+    show_in_dock(true);
+
     if let Err(error) = ui.show() {
         eprintln!("[settings] The Settings window could not be shown: {error}");
+        // Back out of the Dock, or the app sits there advertising a window that never appeared.
+        show_in_dock(false);
         return;
     }
     ui.window().set_maximized(false);
@@ -183,8 +202,18 @@ fn show_settings(ui: &SettingsWindow, tab: &str) {
     println!("[settings] Settings opened on {tab}");
 }
 
+/// Puts the app in the Dock, or takes it out again.
+///
+/// **There is no separate switch for a Dock icon on macOS: it is the activation policy.** `Accessory` is what
+/// a menu bar app is, and giving up the Dock is part of what it buys. So the policy is flipped rather than set
+/// once, `Regular` for as long as a window is on screen and `Accessory` again the moment the last one closes,
+/// which is how a Dock icon can appear beside the Settings window and be gone with it.
+///
+/// **`Regular` also gives the app a menu bar of its own**, which does not change where About lives. The Slint
+/// Royalty-free licence wants it reachable from the top level menu, and the status item's menu is that menu
+/// whether or not a window happens to be open. See NOTICE.
 #[cfg(target_os = "macos")]
-fn set_accessory_activation_policy() {
+fn show_in_dock(wanted: bool) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
@@ -192,12 +221,20 @@ fn set_accessory_activation_policy() {
         eprintln!("[launch  ] Not on the main thread, so the activation policy was left alone");
         return;
     };
-    NSApplication::sharedApplication(mtm)
-        .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    let policy = if wanted {
+        NSApplicationActivationPolicy::Regular
+    } else {
+        NSApplicationActivationPolicy::Accessory
+    };
+    if !NSApplication::sharedApplication(mtm).setActivationPolicy(policy) {
+        // A refusal here is the app being in the Dock when it should not be, or out of it when it should be.
+        // Neither loses anything, and both look like a fault nobody caused, so it says so.
+        eprintln!("[launch  ] macOS refused the activation policy, so the Dock icon is not what it should be");
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn set_accessory_activation_policy() {}
+fn show_in_dock(_wanted: bool) {}
 
 /// Gives the status item's button an accessibility identifier, so a script can find it by name.
 ///
