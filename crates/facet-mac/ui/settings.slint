@@ -13,6 +13,7 @@ import { Palette, ScrollView, AboutSlint } from "std-widgets.slint";
 import { Metrics } from "metrics.slint";
 import { AppPane } from "app-settings.slint";
 import { DevicePane } from "device.slint";
+import { CategoriesPane } from "categories.slint";
 
 component TabPill inherits Rectangle {
     in property <string> label;
@@ -173,9 +174,7 @@ export component SettingsWindow inherits Window {
             if root.active-tab == 0: BlankPane {
                 pane-id: "settings-pane-faces"; title: "Faces";
             }
-            if root.active-tab == 1: BlankPane {
-                pane-id: "settings-pane-categories"; title: "Categories";
-            }
+            if root.active-tab == 1: CategoriesPane { }
             if root.active-tab == 2: BlankPane {
                 pane-id: "settings-pane-report"; title: "Report";
             }

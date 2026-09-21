@@ -1,0 +1,268 @@
+// The Categories tab: the categories themselves, as opposed to which of them is being timed.
+//
+// **Two sections, Active then Inactive**, each folding away behind its own triangle: Active open, because it
+// is the one somebody works in, and Inactive closed, because it is an archive to go looking in occasionally.
+// The create control sits between them rather than inside either list, because it belongs to the tab and not
+// to one section of it.
+//
+// **The lists are columns, not label-and-value rows.** That is the Swift app's own split and the reason this
+// tab does not use `SettingsRow`: a record of what each category *is* wants one property readable down the tab
+// at a glance, so the columns are fixed and a name of any length leaves the next column at the same x.
+//
+// Nothing here reads and nothing here writes. The categories below are placeholders, standing in for a
+// `category` table that this app does not open yet, and they are `in` properties so that wiring the database
+// later is setting them.
+
+import { Palette, CheckBox, Button, ScrollView } from "std-widgets.slint";
+import { Metrics } from "metrics.slint";
+import { Panel, SectionHeading, StepperField, Swatch, Footnote } from "widgets.slint";
+
+// One category, as much of it as a row of either list draws.
+export struct CategoryRow {
+    id: int,
+    name: string,
+    colour: color,
+    // Minutes, and 0 means no limit rather than a limit of nothing. The caption over the column says so,
+    // because the field cannot tell the two apart on its own.
+    daily-limit: int,
+    // Only the Inactive list draws this, and "Never" is a real answer rather than a missing one.
+    last-used: string,
+}
+
+// The column widths both lists line up on. **The Swift app's**, and fixed for its reason: a column sized to
+// its own content would put the next one at a different x on every row.
+global Columns {
+    // A checkbox is narrower than the word "Active" above it, so the column is the caption's width.
+    out property <length> active: 44px;
+    out property <length> icon: 20px;
+    out property <length> name: 160px;
+    // Wide enough for the caption over it rather than for the swatch under it.
+    out property <length> colour: 46px;
+    // Exactly one stepped field wide, since that is what fills it.
+    out property <length> limit: 148px;
+    out property <length> caption-size: 10px;
+}
+
+component ColumnCaption inherits Text {
+    in property <length> column-width;
+    width: root.column-width;
+    font-size: Columns.caption-size;
+    color: Palette.foreground;
+    opacity: 0.55;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+component ActiveRow inherits Rectangle {
+    in property <CategoryRow> category;
+
+    min-height: Metrics.row-height;
+    accessible-role: groupbox;
+    accessible-id: "category-detail-row-" + root.category.id;
+    accessible-label: root.category.name;
+
+    HorizontalLayout {
+        spacing: Metrics.column-spacing;
+        alignment: start;
+
+        Rectangle {
+            width: Columns.active;
+            CheckBox {
+                x: 0;
+                checked: true;
+                accessible-id: "category-active-" + root.category.id;
+            }
+        }
+
+        // The icon column, held open and drawn empty. **The activity icons are TimeFlip's copyrighted set and
+        // the permission to use them does not travel with the code** (see NOTICE), so this app ships none.
+        // Nothing is drawn in the slot rather than an outline standing in for one: an empty box beside a
+        // checkbox reads as a second checkbox, which is a control that does nothing.
+        Rectangle { width: Columns.icon; }
+
+        Text {
+            width: Columns.name;
+            text: root.category.name;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Palette.foreground;
+        }
+
+        Rectangle {
+            width: Columns.colour;
+            Swatch {
+                x: 0;
+                colour: root.category.colour;
+                size: 14px;
+                radius: 3px;
+                icon-size: 0px;
+            }
+        }
+
+        StepperField {
+            value: root.category.daily-limit;
+            minimum: 0;
+            maximum: 1440;
+            suffix: "min";
+            field-id: "category-daily-limit-" + root.category.id;
+        }
+    }
+}
+
+component InactiveRow inherits Rectangle {
+    in property <CategoryRow> category;
+
+    min-height: Metrics.row-height;
+    accessible-role: groupbox;
+    accessible-id: "retired-category-row-" + root.category.id;
+    accessible-label: root.category.name;
+
+    HorizontalLayout {
+        spacing: Metrics.column-spacing;
+        alignment: start;
+
+        Rectangle {
+            width: Columns.active;
+            CheckBox {
+                x: 0;
+                checked: false;
+                accessible-id: "retired-category-active-" + root.category.id;
+            }
+        }
+
+        Text {
+            width: Columns.name;
+            text: root.category.name;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Palette.foreground;
+        }
+
+        Text {
+            text: root.category.last-used;
+            vertical-alignment: center;
+            color: Palette.foreground;
+            opacity: 0.7;
+            accessible-role: AccessibleRole.text;
+            accessible-id: "retired-category-last-used-" + root.category.id;
+            accessible-label: root.category.last-used;
+        }
+    }
+}
+
+export component CategoriesPane inherits Rectangle {
+    in property <[CategoryRow]> active: [
+        { id: 1, name: "Meeting", colour: #0000ff, daily-limit: 0, last-used: "" },
+        { id: 2, name: "Code", colour: #008000, daily-limit: 0, last-used: "" },
+        { id: 3, name: "Admin", colour: #ffa500, daily-limit: 120, last-used: "" },
+        { id: 4, name: "Email", colour: #800080, daily-limit: 0, last-used: "" },
+        { id: 5, name: "Break", colour: #808080, daily-limit: 0, last-used: "" },
+    ];
+    in property <[CategoryRow]> inactive: [
+        { id: 6, name: "Client calls", colour: #008080, daily-limit: 0, last-used: "3 Aug 2026" },
+        { id: 7, name: "Design", colour: #ff00ff, daily-limit: 0, last-used: "Never" },
+    ];
+
+    property <bool> active-expanded: true;
+    property <bool> inactive-expanded: false;
+
+    accessible-role: tab-panel;
+    accessible-id: "settings-pane-categories";
+    accessible-label: "Categories";
+
+    ScrollView {
+        viewport-width: self.visible-width;
+
+        VerticalLayout {
+            padding: Metrics.tab-padding;
+            spacing: Metrics.section-spacing;
+            alignment: start;
+
+            Panel {
+                panel-id: "categories-active-section-panel";
+                // **"Active categories" rather than "Active".** The word on its own means nothing announced out
+                // of context, which is what a section label is for; the App tab's headings say what they are
+                // and pass none.
+                label: "Active categories";
+
+                SectionHeading {
+                    title: "Active";
+                    heading-id: "categories-active-section-heading";
+                    expanded <=> root.active-expanded;
+                }
+
+                if root.active-expanded: VerticalLayout {
+                    spacing: Metrics.row-spacing;
+
+                    HorizontalLayout {
+                        spacing: Metrics.column-spacing;
+                        alignment: start;
+
+                        ColumnCaption { column-width: Columns.active; text: "Active"; }
+                        // Holds the icon column open with nothing in it.
+                        Rectangle { width: Columns.icon; }
+                        ColumnCaption { column-width: Columns.name; text: "Name"; }
+                        ColumnCaption { column-width: Columns.colour; text: "Colour"; }
+                        // The caption says what 0 means, because a limit of nothing and no limit at all are
+                        // opposites and the field cannot tell them apart on its own.
+                        ColumnCaption { column-width: Columns.limit; text: "Daily limit (0 = disabled)"; }
+                    }
+
+                    for category in root.active: ActiveRow { category: category; }
+
+                    if root.active.length == 0: Text {
+                        text: "No active categories.";
+                        color: Palette.foreground;
+                        opacity: 0.55;
+                    }
+                }
+            }
+
+            // **In the gap between the two lists**, which is where the Swift app puts it: it belongs to the tab
+            // rather than to one section of it. Collapsed to a button until it is pressed, when it becomes a
+            // name field with Save at the far end.
+            HorizontalLayout {
+                alignment: start;
+                Button { text: "Create"; accessible-id: "create-category"; }
+            }
+
+            Panel {
+                panel-id: "categories-inactive-section-panel";
+                label: "Inactive categories";
+
+                SectionHeading {
+                    title: "Inactive";
+                    heading-id: "categories-inactive-section-heading";
+                    expanded <=> root.inactive-expanded;
+                }
+
+                if root.inactive-expanded: VerticalLayout {
+                    spacing: Metrics.row-spacing;
+
+                    HorizontalLayout {
+                        spacing: Metrics.column-spacing;
+                        alignment: start;
+
+                        ColumnCaption { column-width: Columns.active; text: "Active"; }
+                        ColumnCaption { column-width: Columns.name; text: "Name"; }
+                        ColumnCaption { column-width: Columns.limit; text: "Last used"; }
+                    }
+
+                    for category in root.inactive: InactiveRow { category: category; }
+
+                    if root.inactive.length == 0: Text {
+                        text: "No inactive categories.";
+                        color: Palette.foreground;
+                        opacity: 0.55;
+                    }
+                }
+            }
+
+            Footnote {
+                note-id: "categories-placeholder-note";
+                text: "Placeholder categories. This app does not open the database yet, so nothing here is "
+                    + "read from it and nothing typed into it is kept.";
+            }
+        }
+    }
+}
