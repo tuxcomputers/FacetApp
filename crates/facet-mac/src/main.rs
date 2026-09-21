@@ -1,14 +1,21 @@
 //! Composition root for macOS. The only place that knows both a port and the thing that performs it.
 //!
-//! Today that is barely anything: a status item, a menu, and the Settings window. There is no radio,
-//! no database and no core behind it yet. What it does establish is the shape the rest hangs off, and
-//! the two rules that are easy to get wrong later: the menu is the primary route to everything, and
-//! left click is an accelerator rather than a mechanism.
+//! Today that is a status item, a menu, the Settings window and the two databases behind them. There is
+//! no radio yet. What it does establish is the shape the rest hangs off, and the two rules that are easy
+//! to get wrong later: the menu is the primary route to everything, and left click is an accelerator
+//! rather than a mechanism.
+//!
+//! **Where the files live is decided here and nowhere else.** `facet-core` is handed paths; it does not
+//! know which platform laid them out, and asking it to would be the core caring what it is running on.
 
 use std::cell::Cell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+use facet_core::database;
+use facet_core::debug_log::{DebugLog, Record, Tag};
+use facet_core::setting;
 use tray_icon::{
     TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
@@ -26,17 +33,27 @@ slint::include_modules!();
 const TRAY_POLL: Duration = Duration::from_millis(100);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // **Before the window**, so that a database that will not come up says so in a terminal rather than
+    // from behind a status item nobody has clicked yet.
+    //
+    // **Shared rather than copied**, there being one trace database and one connection to it. Rc because
+    // everything that records is on the UI thread; the day something off-thread needs to, it gets a
+    // channel to this one rather than a second connection.
+    let log = Rc::new(open_databases()?);
+
     let ui = SettingsWindow::new()?;
 
     // A menu bar app owns no dock icon. This has to happen after Slint has built its backend, because
     // that is what creates the application object, and again from inside the event loop below, because
     // the windowing layer sets its own policy on the way up.
-    show_in_dock(false);
+    show_in_dock(false, &log);
+    wear_the_facet_logo(&log);
 
-    ui.on_tab_selected(|tab| {
-        // Stands in for the debug log until there is one. The scripted suite reads a line of exactly
-        // this shape to prove that selecting a tab did something, so the wording is interface.
-        println!("[settings] Settings tab selected: {tab}");
+    let tab_log = Rc::clone(&log);
+    ui.on_tab_selected(move |tab| {
+        // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
+        // something, so the wording is interface.
+        tab_log.record(Tag::Settings, || format!("Settings tab selected: {tab}"));
     });
 
     // Closing Settings puts the app back in the menu bar and nowhere else.
@@ -45,9 +62,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // has to say so: the default for a Slint window is to close it, and a closed window cannot be shown
     // again. The values it holds are not carried over, whatever it keeps in memory: the window reads them
     // again on every open, per the source-of-truth rule in CLAUDE.md.
-    ui.window().on_close_requested(|| {
-        show_in_dock(false);
-        println!("[settings] Settings closed");
+    let close_log = Rc::clone(&log);
+    ui.window().on_close_requested(move || {
+        show_in_dock(false, &close_log);
+        close_log.record(Tag::Settings, || "Settings closed".to_string());
         slint::CloseRequestResponse::HideWindow
     });
 
@@ -106,7 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // out as the one real line item against a suite whose front door is the status item. It does hand
     // over the NSStatusItem, so the identifier can be set directly and scripts/status-item-click.py
     // keeps working unchanged.
-    name_the_status_item(&tray);
+    name_the_status_item(&tray, &log);
 
     // The status item is removed from the menu bar the moment it is dropped, so it has to outlive
     // the event loop rather than the function that built it.
@@ -117,6 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tray_handle = Rc::new(_tray);
     let pump_tray = Rc::clone(&tray_handle);
     let pump_showing = Rc::clone(&showing);
+    let pump_log = Rc::clone(&log);
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
@@ -126,53 +145,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     next.paused = !next.paused;
                     pump_showing.set(next);
                     pause_item.set_text(if next.paused { "Resume" } else { "Pause" });
-                    redraw_status_item(&pump_tray, next);
+                    redraw_status_item(&pump_tray, next, &pump_log);
                 }
                 "lock" => {
                     let mut next = pump_showing.get();
                     next.locked = !next.locked;
                     pump_showing.set(next);
                     lock_item.set_text(if next.locked { "Unlock" } else { "Lock" });
-                    redraw_status_item(&pump_tray, next);
+                    redraw_status_item(&pump_tray, next, &pump_log);
                 }
                 "about" => {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.invoke_open_on_about();
-                        show_settings(&ui, "About");
+                        show_settings(&ui, "About", &pump_log);
                     }
                 }
                 "settings" => {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.invoke_open_on_faces();
-                        show_settings(&ui, "Faces");
+                        show_settings(&ui, "Faces", &pump_log);
                     }
                 }
                 "quit" => {
-                    println!("[quit    ] Quitting on the menu item");
+                    pump_log.record(Tag::Quit, || "Quitting on the menu item".to_string());
                     let _ = slint::quit_event_loop();
                 }
                 other => {
                     // Nothing fails silently: an id with no arm is a menu item somebody added and
                     // did not wire up, and it should say so rather than doing nothing.
-                    eprintln!("[menu    ] No handler for menu item id {other}");
+                    pump_log.record_failure(Tag::Menu, || {
+                        format!("No handler for menu item id {other}")
+                    });
                 }
             }
         }
 
         while let Ok(event) = TrayIconEvent::receiver().try_recv() {
             if let TrayIconEvent::Click { button, button_state, .. } = event {
-                println!("[tray    ] status item {button:?} {button_state:?}");
+                pump_log.record(Tag::Tray, || {
+                    format!("Status item {button:?} {button_state:?}")
+                });
             }
         }
     });
 
     // Once more, now that the windowing layer has finished starting up.
+    let settle_log = Rc::clone(&log);
     let settle = slint::Timer::default();
-    settle.start(slint::TimerMode::SingleShot, Duration::from_millis(0), || {
-        show_in_dock(false);
+    settle.start(slint::TimerMode::SingleShot, Duration::from_millis(0), move || {
+        show_in_dock(false, &settle_log);
     });
 
-    println!("[launch  ] Facet is in the menu bar. Right click the icon for the menu.");
+    log.record(Tag::Launch, || {
+        "Facet is in the menu bar. Right click the icon for the menu".to_string()
+    });
 
     // Not `ui.run()`: the window is not shown at launch, and the loop must outlive it being closed.
     slint::run_event_loop_until_quit()?;
@@ -183,23 +209,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// An accessory app is not activated by showing a window, so without the activation the window
 /// appears behind the frontmost application and looks as though the menu item did nothing.
-fn show_settings(ui: &SettingsWindow, tab: &str) {
+fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
     // **Before the window, not after.** The Dock icon and the window are the same act to macOS: the policy
     // is what decides whether the app has a place in the Dock at all, and changing it out from under a
     // window already on screen leaves that window belonging to an app the Dock has only just heard of.
-    show_in_dock(true);
+    show_in_dock(true, log);
 
     if let Err(error) = ui.show() {
-        eprintln!("[settings] The Settings window could not be shown: {error}");
+        log.record_failure(Tag::Settings, || {
+            format!("The Settings window could not be shown: {error}")
+        });
         // Back out of the Dock, or the app sits there advertising a window that never appeared.
-        show_in_dock(false);
+        show_in_dock(false, log);
         return;
     }
     ui.window().set_maximized(false);
     activate_app();
     // Reported here rather than left to the tab callback, which does not fire for a tab that is
     // already selected, and since every ordinary open lands on Faces that is most opens.
-    println!("[settings] Settings opened on {tab}");
+    log.record(Tag::Settings, || format!("Settings opened on {tab}"));
 }
 
 /// Puts the app in the Dock, or takes it out again.
@@ -213,12 +241,14 @@ fn show_settings(ui: &SettingsWindow, tab: &str) {
 /// Royalty-free licence wants it reachable from the top level menu, and the status item's menu is that menu
 /// whether or not a window happens to be open. See NOTICE.
 #[cfg(target_os = "macos")]
-fn show_in_dock(wanted: bool) {
+fn show_in_dock(wanted: bool, log: &Option<DebugLog>) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
     let Some(mtm) = MainThreadMarker::new() else {
-        eprintln!("[launch  ] Not on the main thread, so the activation policy was left alone");
+        log.record_failure(Tag::Launch, || {
+            "Not on the main thread, so the activation policy was left alone".to_string()
+        });
         return;
     };
     let policy = if wanted {
@@ -229,40 +259,48 @@ fn show_in_dock(wanted: bool) {
     if !NSApplication::sharedApplication(mtm).setActivationPolicy(policy) {
         // A refusal here is the app being in the Dock when it should not be, or out of it when it should be.
         // Neither loses anything, and both look like a fault nobody caused, so it says so.
-        eprintln!("[launch  ] macOS refused the activation policy, so the Dock icon is not what it should be");
+        log.record_failure(Tag::Launch, || {
+            "macOS refused the activation policy, so the Dock icon is not what it should be".to_string()
+        });
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn show_in_dock(_wanted: bool) {}
+fn show_in_dock(_wanted: bool, _log: &Option<DebugLog>) {}
 
 /// Gives the status item's button an accessibility identifier, so a script can find it by name.
 ///
 /// The identifier is `status-item` because that is what `scripts/status-item-click.py` already looks
 /// for: the locator model converts rather than being reinvented.
 #[cfg(target_os = "macos")]
-fn name_the_status_item(tray: &TrayIcon) {
+fn name_the_status_item(tray: &TrayIcon, log: &Option<DebugLog>) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSAccessibility;
     use objc2_foundation::NSString;
 
     let Some(mtm) = MainThreadMarker::new() else {
-        eprintln!("[launch  ] Not on the main thread, so the status item was not named");
+        log.record_failure(Tag::Launch, || {
+            "Not on the main thread, so the status item was not named".to_string()
+        });
         return;
     };
     let Some(item) = tray.ns_status_item() else {
-        eprintln!("[launch  ] No NSStatusItem came back, so the status item has no identifier");
+        log.record_failure(Tag::Launch, || {
+            "No NSStatusItem came back, so the status item has no identifier".to_string()
+        });
         return;
     };
     let Some(button) = item.button(mtm) else {
-        eprintln!("[launch  ] The status item has no button, so it cannot carry an identifier");
+        log.record_failure(Tag::Launch, || {
+            "The status item has no button, so it cannot carry an identifier".to_string()
+        });
         return;
     };
     button.setAccessibilityIdentifier(Some(&NSString::from_str("status-item")));
 }
 
 #[cfg(not(target_os = "macos"))]
-fn name_the_status_item(_tray: &TrayIcon) {}
+fn name_the_status_item(_tray: &TrayIcon, _log: &Option<DebugLog>) {}
 
 #[cfg(target_os = "macos")]
 fn activate_app() {
@@ -282,18 +320,148 @@ fn activate_app() {}
 /// **Says so when it cannot**, rather than leaving the menu bar showing the previous state. An icon
 /// that silently stops following the app is worse than no icon: it is a confident wrong answer, and
 /// this is the one surface that has to be right on all three platforms.
-fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing) {
+fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &Option<DebugLog>) {
     match status_icon::draw(showing) {
         Ok(icon) => {
             if let Err(error) = tray.set_icon(Some(icon)) {
-                eprintln!("[tray    ] The status item icon could not be changed: {error}");
+                log.record_failure(Tag::Tray, || {
+                    format!("The status item icon could not be changed: {error}")
+                });
                 return;
             }
-            println!(
-                "[tray    ] Status item now shows paused={} locked={}",
-                showing.paused, showing.locked
-            );
+            log.record(Tag::Tray, || {
+                format!(
+                    "Status item now shows paused={} locked={}",
+                    showing.paused, showing.locked
+                )
+            });
         }
-        Err(error) => eprintln!("[tray    ] The status item icon could not be drawn: {error}"),
+        Err(error) => log.record_failure(Tag::Tray, || {
+            format!("The status item icon could not be drawn: {error}")
+        }),
     }
 }
+
+/// Where this Mac keeps Facet's files.
+///
+/// **A platform fact, and so it lives in the platform crate.** `facet-core` is handed paths and never asks
+/// which layout produced them; `~/Library/Application Support/Facet` is this machine's answer and
+/// `~/.local/share/Facet` is the Linux one, and neither belongs in a crate that must not be able to tell
+/// which it is running on.
+fn data_directory() -> PathBuf {
+    // $HOME rather than NSFileManager, so this is the same answer a shell script gets. Tests/Scripted and
+    // scripts/run.sh both resolve it that way through Tests/Scripted/platform.sh, and a suite that looked
+    // in a different directory from the app would be checking a database nobody had written to.
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join("Library/Application Support/Facet")
+}
+
+/// Brings up the app's database and, if the setting says so, the trace beside it.
+///
+/// **Reads the setting rather than being told.** Whether the trace is gathered is a row in `setting`, and
+/// this is the one place that asks: the gate is here, so a launch with logging off holds no logger at all
+/// rather than one that returns early on every call.
+///
+/// The app database is opened even when nothing is going to be recorded, because it is what says whether
+/// anything should be. Its connection is then dropped: nothing reads it yet, and holding one open would be
+/// this app keeping a file the Swift one may also want.
+fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
+    let directory = data_directory();
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
+
+    // **appdata.sqlite, which is usually a symlink**, and opening it follows the link. That is the whole
+    // mechanism behind scripts/switch-database.sh: the app opens one name and sqlite resolves which
+    // physical file it is, so switching databases moves no data and needs nothing from the app.
+    let appdata = directory.join("appdata.sqlite");
+    let connection = database::open(&appdata, database::APPDATA_DDL)?;
+
+    let which = setting::database_type(&connection)?;
+    let trace = setting::debug_trace(&connection)?;
+    drop(connection);
+
+    if !trace.enabled {
+        // Said on stderr rather than recorded, there being nowhere to record it. It is the one message a
+        // launch with logging off should still produce, because otherwise an empty table and a launch that
+        // was never asked to write one look identical.
+        eprintln!(
+            "[launch  ] Logging is off in the {which} database. Turn on debug.enabled in setting to record a trace."
+        );
+        return Ok(None);
+    }
+
+    // An empty directory means the folder the app already keeps its databases in, which cannot be seeded as
+    // a path because it differs per platform. A leading ~ is expanded here, at the point the file is
+    // opened, and never stored expanded: an absolute path names one machine and this database is copied
+    // between them.
+    let folder = match trace.directory.as_str() {
+        "" => directory.clone(),
+        stored => expand_home(stored),
+    };
+    std::fs::create_dir_all(&folder)
+        .map_err(|error| format!("{} could not be created: {error}", folder.display()))?;
+
+    let file = folder.join("debug.sqlite");
+    let log = DebugLog::open(&file)?;
+    let log = Some(log);
+    log.record(Tag::Database, || {
+        format!("Trace open at {}, against the {which} database", file.display())
+    });
+    Ok(log)
+}
+
+/// A stored path with its leading `~` turned into this machine's home.
+///
+/// Only a leading `~/`, and only that: a bare `~` or a `~user` form is left alone rather than guessed at,
+/// since neither is something this app writes and both would be a guess about somebody else's directory.
+fn expand_home(stored: &str) -> PathBuf {
+    match stored.strip_prefix("~/") {
+        Some(rest) => match std::env::var("HOME") {
+            Ok(home) => PathBuf::from(home).join(rest),
+            Err(_) => PathBuf::from(stored),
+        },
+        None => PathBuf::from(stored),
+    }
+}
+
+/// Puts the Facet logo on the Dock icon.
+///
+/// **A running binary has no icon of its own.** An icon normally comes from an app bundle's `Info.plist`,
+/// and this is a bare executable launched from a terminal, so without this the Dock shows the generic
+/// placeholder. Setting `applicationIconImage` is what a bundle would otherwise do, and it keeps working
+/// once there is a bundle, so nothing here has to be undone then.
+///
+/// The image is the same `Facet.svg` the rest of the project uses, rasterised at build time: one drawing,
+/// and no PNG in the repository that can drift from it.
+#[cfg(target_os = "macos")]
+fn wear_the_facet_logo(log: &Option<DebugLog>) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    /// Rasterised from Facet.svg by build.rs.
+    const LOGO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dock-icon.png"));
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        log.record_failure(Tag::Launch, || {
+            "Not on the main thread, so the Dock icon was left as it was".to_string()
+        });
+        return;
+    };
+    let data = NSData::with_bytes(LOGO);
+    let Some(image) = NSImage::initWithData(objc2::AllocAnyThread::alloc(), &data) else {
+        log.record_failure(Tag::Launch, || {
+            "The Facet logo could not be read, so the Dock icon is the generic one".to_string()
+        });
+        return;
+    };
+    // Unsafe only because AppKit does not promise this is main-thread-only in its annotations. The
+    // MainThreadMarker above is the proof that it is being called from the right thread, which is the whole
+    // of what the setter needs.
+    unsafe {
+        NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn wear_the_facet_logo(_log: &Option<DebugLog>) {}

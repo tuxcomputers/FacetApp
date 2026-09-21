@@ -75,15 +75,44 @@ impl Tag {
 ///
 /// The message is built by a closure, so a launch that is recording nothing builds no strings at all.
 pub trait Record {
+    /// Says what happened. Recorded and printed when there is a logger, and costs a null check when
+    /// there is not.
     fn record(&self, tag: Tag, message: impl FnOnce() -> String);
+
+    /// Says something went wrong.
+    ///
+    /// **This one speaks whether or not anything is being recorded**, which is the whole difference
+    /// between it and [`Record::record`]: a trace is optional and a failure is not. It goes to stderr
+    /// always, and into the trace as well when there is one.
+    fn record_failure(&self, tag: Tag, message: impl FnOnce() -> String);
 }
 
 impl Record for Option<DebugLog> {
     fn record(&self, tag: Tag, message: impl FnOnce() -> String) {
         if let Some(log) = self {
-            log.write(tag, &message());
+            let message = message();
+            let stamped = log.write_row(tag, &message);
+            let clock = stamped.as_deref().map(clock).unwrap_or("--:--:--");
+            println!("{clock} [{:width$}] {message}", tag.word(), width = Tag::WIDTH);
         }
     }
+
+    fn record_failure(&self, tag: Tag, message: impl FnOnce() -> String) {
+        let message = message();
+        let stamped = match self {
+            Some(log) => log.write_row(tag, &message),
+            None => None,
+        };
+        let clock = stamped.as_deref().map(clock).unwrap_or("--:--:--");
+        eprintln!("{clock} [{:width$}] {message}", tag.word(), width = Tag::WIDTH);
+    }
+}
+
+/// `13:25:38` out of `2026-09-21T13:25:38.123`. Whole seconds on the console, milliseconds in the row: the
+/// row is what a check reads and ordering within a second matters there, and the console is read by a
+/// person.
+fn clock(stamped: &str) -> &str {
+    stamped.get(11..19).unwrap_or(stamped)
 }
 
 /// The trace database, open from launch to quit.
@@ -108,20 +137,21 @@ impl DebugLog {
         })
     }
 
-    /// Prints the message and writes it as a row.
+    /// Writes the message as a row and gives back the timestamp it was written with, so the line printed
+    /// beside it carries the same one.
     ///
-    /// **One timestamp for both**, read from sqlite rather than from a clock here: the line in the terminal
-    /// and the row in the table are then the same instant rather than two readings of it, and local time
-    /// comes from the one place that already knows how to ask for it.
-    fn write(&self, tag: Tag, message: &str) {
+    /// **The timestamp is read from sqlite rather than from a clock here**: the line in the terminal and
+    /// the row in the table are then the same instant rather than two readings of it, and local time comes
+    /// from the one place that already knows how to ask for it.
+    ///
+    /// `None` when the row could not be written, which has already been complained about by then.
+    fn write_row(&self, tag: Tag, message: &str) -> Option<String> {
         debug_assert!(
             !message.contains('\''),
             "a debug message must not contain an apostrophe: it is read back by a SQL LIKE pattern inside \
              a single-quoted literal, which the apostrophe closes. Reword it. Message: {message}"
         );
 
-        // Milliseconds in the row and whole seconds on the console. The row is what a check reads and
-        // ordering within a second matters there; the console is read by a person.
         let stamped: Result<String, _> = self.connection.query_row(
             "SELECT strftime('%Y-%m-%dT%H:%M:%f', 'now', 'localtime')",
             [],
@@ -131,7 +161,7 @@ impl DebugLog {
             Ok(stamped) => stamped,
             Err(error) => {
                 self.complain_once(&error);
-                return;
+                return None;
             }
         };
 
@@ -141,12 +171,10 @@ impl DebugLog {
         );
         if let Err(error) = written {
             self.complain_once(&error);
+            return None;
         }
 
-        // `13:25:38` out of `2026-09-21T13:25:38.123`. Taken from the stamp rather than read again, so a
-        // line in the terminal and the row behind it cannot disagree about when it happened.
-        let clock = stamped.get(11..19).unwrap_or(&stamped);
-        println!("{clock} [{:width$}] {message}", tag.word(), width = Tag::WIDTH);
+        Some(stamped)
     }
 
     /// Says a trace write failed, the first time it does.

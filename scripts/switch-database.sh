@@ -186,15 +186,34 @@ else
       rm -f "$TEST_DB" "$TEST_DB-wal" "$TEST_DB-shm"
     fi
     echo "Creating $TEST_DB..."
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-    # Same DDL files, same filename-sorted order AppDataStore.runDatabaseDDL() runs at every launch,
-    # with foreign keys enforced during seeding to match the app's own connection. The files hold no
-    # live ALTER TABLE (see database/CLAUDE.md: migrations are commented out and run by hand), so
-    # every statement here applies cleanly to an empty database. A live one would fail this script
-    # under `set -e`, which is the right outcome: it breaks that rule.
-    for sql_file in "$SCRIPT_DIR"/database/*.sql; do
+    REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    DDL_DIR="$REPO_DIR/crates/facet-core/resources/database"
+    if [ ! -d "$DDL_DIR" ]; then
+      echo "error: no DDL at $DDL_DIR, so there is nothing to build a database from." >&2
+      exit 1
+    fi
+    # Same files and same order `facet_core::database::APPDATA_DDL` applies at every launch, with foreign
+    # keys enforced during seeding to match the app's own connection. The files hold no live ALTER TABLE
+    # (see the DDL directory's CLAUDE.md: migrations are commented out and run by hand), so every statement
+    # here applies cleanly to an empty database. A live one would fail this script under `set -e`, which is
+    # the right outcome: it breaks that rule.
+    #
+    # **Below 500 only.** The numbering is what says which database a file belongs to, and 500 and above are
+    # the trace's: putting them here would build a debug_log table inside appdata.sqlite, which is a second
+    # place for a message to land and a table nothing would ever read.
+    applied=0
+    for sql_file in "$DDL_DIR"/[0-4][0-9][0-9]_*.sql; do
+      [ -e "$sql_file" ] || continue
       { echo "PRAGMA foreign_keys = ON;"; cat "$sql_file"; } | sqlite3 "$TEST_DB"
+      applied=$((applied + 1))
     done
+    # Nothing fails silently: an empty glob would leave a database with no schema in it and this script
+    # reporting that it had built one. The app refuses the same thing for the same reason.
+    if [ "$applied" -eq 0 ]; then
+      echo "error: no DDL files matched in $DDL_DIR, so $TEST_DB would have no schema in it." >&2
+      exit 1
+    fi
+    echo "Applied $applied DDL files."
     sqlite3 "$TEST_DB" "UPDATE setting SET setting_value = '{\"type\":\"test\"}' WHERE setting_name = 'db_type';"
 
     # A fresh test.sqlite reads as never-paired, and that is now deliberate: it used to be handed

@@ -15,6 +15,9 @@ tray-icon.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true
+# Rasterises Facet.svg into the Dock icon at build time, so there is one drawing and no generated PNG in
+# the repository to drift from it. Already in the tree: it is the renderer Slint uses for SVG images.
+resvg = "0.48.1"
 
 # Matching the versions tray-icon already pins, so no second copy of either is pulled in.
 [target.'cfg(target_os = "macos")'.dependencies]
