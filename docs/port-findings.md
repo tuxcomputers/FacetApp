@@ -206,6 +206,41 @@ deliberately.
 
 ---
 
+## Three Slint layout facts, measured while drawing the Settings tabs
+
+**Measured 2026-09-21 against Slint 1.18 and the cupertino style**, by rendering the tabs rather than by
+reading source. All three were invisible from the `.slint` files and each produced a layout that looked
+plausible until it was drawn.
+
+**A wrapping `Text` in a layout is measured at one line.** Slint does not do height-for-width for text: a
+`Text` with `wrap: word-wrap` reports the height of the sentence on one line, is given that height, and then
+wraps to two inside it. The second line of the App tab's Debug footnote sat outside the panel it belongs to.
+The fix is to set the width first and take the height from the result, which is what `Footnote` in
+`crates/facet-mac/ui/widgets.slint` is a box around a text for:
+
+```slint
+Rectangle {
+    height: label.preferred-height;
+    label := Text { width: 100%; wrap: word-wrap; }
+}
+```
+
+**A widget in a layout stretches unless it is told not to.** `SpinBox` and the rest fill the space a layout
+gives them, so every stepped field on the App and Device tabs ran to the window edge with its number stranded
+a long way from the words naming it. A control with a size of its own needs both `horizontal-stretch: 0` and
+an explicit width, and the slack goes to a spacer.
+
+**A disclosure triangle typed as a character renders as a speck.** The size and baseline of `▾` belong to the
+font rather than to the layout, and at a heading's size it came out as a dot. Drawn as a `Path` with a
+viewbox, it is the size it is asked to be.
+
+**The renderer is the way to look at any of this.** `cargo run -p facet-mac --example draw-settings-tabs`
+draws each tab through Slint's software renderer into `target/settings-tabs/<tab>.png`, with no window and no
+menu bar, so a layout question does not cost a launch on the owner's screen. It is evidence about arrangement
+rather than about appearance: the fonts are rasterised by Slint and not by the platform.
+
+---
+
 ## Design rules that follow from all of the above
 
 Short list, all of them enforceable from the first commit.

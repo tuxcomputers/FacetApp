@@ -8,9 +8,12 @@
 //! font rasterisation and the native window chrome are not what the Mac backend produces, so a pixel here is
 //! evidence about arrangement rather than about appearance.
 //!
-//!     cargo run --example draw-settings-tabs
+//!     cargo run -p facet-mac --example draw-settings-tabs
+//!     FACET_TAB_HEIGHT=1200 cargo run -p facet-mac --example draw-settings-tabs
 //!
-//! Writes target/settings-tabs/<tab>.png, one per tab.
+//! Writes target/settings-tabs/<tab>.png, one per tab. The default height is the one the window opens at, so
+//! what it draws is what somebody opening Settings sees; FACET_TAB_HEIGHT draws a taller one, which is how to
+//! see the whole of a tab that scrolls.
 
 use std::cell::RefCell;
 use std::fs::File;
@@ -24,9 +27,9 @@ use slint::{LogicalSize, PhysicalSize, PlatformError};
 
 slint::include_modules!();
 
-/// How tall each tab is rendered. Taller than the window's own default so a tab that overflows shows what it
-/// would scroll to rather than being cut at the point the scroll view would cut it.
-const HEIGHT: u32 = 900;
+/// How tall each tab is rendered. **The height the window opens at**, so a tab that does not fit is cut here
+/// exactly where the scroll view cuts it in the app. FACET_TAB_HEIGHT overrides it.
+const DEFAULT_HEIGHT: u32 = 680;
 
 /// The tabs, by the index `active-tab` takes and the name the file gets.
 const TABS: [(i32, &str); 6] = [
@@ -70,16 +73,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = MinimalSoftwareWindow::new(Default::default());
     slint::platform::set_platform(Box::new(SoftwareBackend { window: window.clone() }))?;
 
+    let height: u32 = std::env::var("FACET_TAB_HEIGHT")
+        .ok()
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(DEFAULT_HEIGHT);
+
     let width = 640u32;
     let ui = SettingsWindow::new()?;
-    ui.window().set_size(LogicalSize::new(width as f32, HEIGHT as f32));
-    window.set_size(PhysicalSize::new(width, HEIGHT));
+    ui.window().set_size(LogicalSize::new(width as f32, height as f32));
+    window.set_size(PhysicalSize::new(width, height));
     ui.show()?;
 
     let directory = Path::new("target/settings-tabs");
     std::fs::create_dir_all(directory)?;
 
-    let buffer = RefCell::new(vec![Rgba::default(); (width * HEIGHT) as usize]);
+    let buffer = RefCell::new(vec![Rgba::default(); (width * height) as usize]);
     for (index, name) in TABS {
         ui.set_active_tab(index);
 
@@ -96,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let path = directory.join(format!("{name}.png"));
-        write_png(&path, width, HEIGHT, &buffer.borrow())?;
+        write_png(&path, width, height, &buffer.borrow())?;
         println!("wrote {}", path.display());
     }
 

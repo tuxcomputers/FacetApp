@@ -61,7 +61,7 @@ export component DevicePane inherits Rectangle {
         // view sizes its viewport to the content's preferred width, and a wrapped footnote prefers the width of
         // its whole sentence on one line. It then measured one line tall, wrapped to two at the real width, and
         // the second line sat outside the panel it belongs to.
-        viewport-width: self.visible-width;
+        content-width: self.visible-width;
 
         VerticalLayout {
             padding: Metrics.tab-padding;

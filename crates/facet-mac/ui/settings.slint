@@ -52,36 +52,6 @@ component TabPill inherits Rectangle {
     }
 }
 
-// A tab with nothing on it yet. The pane still exists, still carries its identifier, and still spans
-// the width, so the window's shape is testable before any of the content is written.
-component BlankPane inherits Rectangle {
-    in property <string> pane-id;
-    in property <string> title;
-
-    accessible-role: tab-panel;
-    accessible-id: root.pane-id;
-    accessible-label: root.title;
-
-    VerticalLayout {
-        padding: 20px;
-        spacing: 6px;
-        alignment: start;
-
-        Text {
-            text: root.title;
-            font-size: 15px;
-            font-weight: 600;
-            color: Palette.foreground;
-        }
-
-        Text {
-            text: "Nothing here yet.";
-            color: Palette.foreground;
-            opacity: 0.55;
-        }
-    }
-}
-
 export component SettingsWindow inherits Window {
     // One width, pinned. Every tab is drawn into the same window, so switching between them must not
     // move it: a tab that arrives wider is one demanding room the others were not given.
@@ -89,11 +59,13 @@ export component SettingsWindow inherits Window {
     // min and max rather than `width`, which the windowing layer treats as a starting hint and then
     // overrides: setting `width: 640px` produced an 800pt window with 160pt of dead strip beside the
     // content. Height is left free, as it was in the Swift app.
-    min-width: 640px;
-    max-width: 640px;
-    preferred-width: 640px;
-    min-height: 420px;
-    preferred-height: 520px;
+    min-width: Metrics.window-width;
+    max-width: Metrics.window-width;
+    preferred-width: Metrics.window-width;
+    // **The height is free**, which is the half of the resizing the Swift app kept: a tab grows downward as
+    // it gains sections, and there is no fault in a window taller than its content.
+    min-height: Metrics.window-minimum-height;
+    preferred-height: Metrics.window-default-height;
     title: "Facet Settings";
     background: Palette.background;
 
@@ -185,8 +157,10 @@ export component SettingsWindow inherits Window {
                 accessible-label: "About";
 
                 ScrollView {
+                    content-width: self.visible-width;
+
                     VerticalLayout {
-                        padding: 20px;
+                        padding: Metrics.tab-padding;
                         spacing: 14px;
                         alignment: start;
 
