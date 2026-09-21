@@ -15,6 +15,7 @@ import { AppPane } from "app-settings.slint";
 import { DevicePane } from "device.slint";
 import { CategoriesPane } from "categories.slint";
 import { FacesPane } from "faces.slint";
+import { ReportPane } from "report.slint";
 
 component TabPill inherits Rectangle {
     in property <string> label;
@@ -174,9 +175,7 @@ export component SettingsWindow inherits Window {
 
             if root.active-tab == 0: FacesPane { }
             if root.active-tab == 1: CategoriesPane { }
-            if root.active-tab == 2: BlankPane {
-                pane-id: "settings-pane-report"; title: "Report";
-            }
+            if root.active-tab == 2: ReportPane { }
             if root.active-tab == 3: AppPane { }
             if root.active-tab == 4: DevicePane { }
 
