@@ -1,0 +1,239 @@
+// The App tab: how the app itself behaves, as opposed to what it is timing.
+//
+// **Three sections in the Swift app's order and its wording**: App settings, then Google, then Debug. The
+// first two open and Debug does not, because Debug is a group to go looking in occasionally rather than one
+// somebody opens this tab to work in.
+//
+// **Two of the Swift app's six top rows are not here**, both of them on the Device tab: "Pause the device when
+// locking it" and "Battery warning at". One decides what happens to the cube when the app locks it and the
+// other what counts as the cube running flat, so both sit with the rest of what is said about the cube.
+//
+// **Nothing on this tab writes, and nothing on it reads.** The values below are the numbers the DDL seeds
+// (`crates/facet-core/resources/database/011_setting.sql`), stated here as defaults so the tab draws the same
+// thing the app will draw on a fresh install. They are `in` properties so that wiring the database later is
+// setting them rather than rebuilding the tab. Until then the controls move and go nowhere.
+
+import { Palette, CheckBox, Button, SpinBox, ScrollView } from "std-widgets.slint";
+import { Metrics } from "metrics.slint";
+import { Panel, SectionHeading, SettingsRow, ValueText, Footnote } from "widgets.slint";
+
+export component AppPane inherits Rectangle {
+    // Seeded `display_seconds`.
+    in property <bool> shows-seconds: true;
+    // Seeded `daily_reset_time`, on the 12-hour face the Swift app steps it on.
+    in property <int> daily-reset-hour12: 3;
+    // Seeded `fetch_history_interval_seconds` is 10, which is below the row's own floor on purpose: sub-minute
+    // polling is a developer's value, and the row shows whole minutes and cannot hold 0.
+    in property <int> fetch-interval-minutes: 1;
+    // Seeded `blip_time`.
+    in property <int> blip-seconds: 5;
+    // Seeded `debug`, whose directory is empty and means the folder the app already keeps its databases in.
+    in property <bool> debug-enabled: false;
+    in property <string> debug-directory: "~/Library/Application Support/Facet";
+    // No trace file until logging has written one, so the three buttons have nothing to act on.
+    in property <bool> has-debug-trace: false;
+
+    // What `GoogleAccountRules` calls `notConnected`, which is what an install with no account shows. The note
+    // under the panel is the one for a build with no OAuth client in it, which is every build so far.
+    in property <string> google-status: "Not connected";
+    in property <string> google-note:
+        "This copy of Facet was built without Google credentials, so it cannot sign in.";
+
+    property <bool> app-expanded: true;
+    property <bool> google-expanded: true;
+    property <bool> debug-expanded: false;
+
+    accessible-role: tab-panel;
+    accessible-id: "settings-pane-app";
+    accessible-label: "App";
+
+    ScrollView {
+        VerticalLayout {
+            padding: Metrics.tab-padding;
+            spacing: Metrics.section-spacing;
+            alignment: start;
+
+            Panel {
+                panel-id: "app-settings-section-panel";
+                label: "App settings";
+
+                SectionHeading {
+                    title: "App settings";
+                    heading-id: "app-settings-section-heading";
+                    expanded <=> root.app-expanded;
+                }
+
+                if root.app-expanded: VerticalLayout {
+                    spacing: Metrics.row-spacing;
+
+                    SettingsRow {
+                        label: "Show seconds";
+                        CheckBox {
+                            checked: root.shows-seconds;
+                            accessible-id: "app-show-seconds";
+                        }
+                    }
+
+                    SettingsRow {
+                        label: "Daily reset at";
+                        SpinBox {
+                            value: root.daily-reset-hour12;
+                            minimum: 1;
+                            maximum: 12;
+                            accessible-id: "app-daily-reset";
+                        }
+                        // The face is AM-only, which is the Swift app's own suffix: a stored PM hour still
+                        // draws as its clock-face hour rather than being silently corrected by a reading.
+                        Text { text: "AM"; vertical-alignment: center; color: Palette.foreground; }
+                    }
+
+                    SettingsRow {
+                        label: "Fetch history every";
+                        SpinBox {
+                            value: root.fetch-interval-minutes;
+                            minimum: 1;
+                            maximum: 60;
+                            accessible-id: "app-fetch-interval";
+                        }
+                        Text {
+                            text: root.fetch-interval-minutes == 1 ? "min" : "mins";
+                            vertical-alignment: center;
+                            color: Palette.foreground;
+                        }
+                    }
+
+                    // Turning the cube to the face somebody wants drags it past the others, and each pass-over
+                    // is a real segment the device reports. This is how short one has to be to count as getting
+                    // there rather than as time spent.
+                    SettingsRow {
+                        label: "Ignore flips under";
+                        SpinBox {
+                            value: root.blip-seconds;
+                            minimum: 0;
+                            maximum: 30;
+                            accessible-id: "app-blip-time";
+                        }
+                        Text {
+                            text: root.blip-seconds == 1 ? "sec" : "secs";
+                            vertical-alignment: center;
+                            color: Palette.foreground;
+                        }
+                    }
+                }
+            }
+
+            Panel {
+                panel-id: "app-google-section-panel";
+                label: "Google";
+
+                SectionHeading {
+                    title: "Google";
+                    heading-id: "app-google-section-heading";
+                    expanded <=> root.google-expanded;
+                }
+
+                if root.google-expanded: VerticalLayout {
+                    spacing: Metrics.row-spacing;
+
+                    SettingsRow {
+                        label: "Status";
+                        ValueText { text: root.google-status; value-id: "app-google-status"; }
+                    }
+
+                    // **The Account and Email rows are absent rather than empty.** They exist only once there
+                    // is an account, which is why the section is rebuilt from its state rather than patched.
+                    //
+                    // The Calendar row is absent for the same reason: offering Create where every request
+                    // would be refused is a button that can only fail.
+
+                    SettingsRow {
+                        label: "Google";
+                        Button {
+                            text: "Sign in with Google";
+                            enabled: false;
+                            accessible-id: "app-google-button";
+                        }
+                    }
+                }
+            }
+
+            // **Outside the panel, and it goes with the section it explains.** It says why the button above it
+            // cannot be pressed, so a folded Google section that left the sentence behind would be explaining
+            // something no longer on screen.
+            if root.google-expanded && root.google-note != "": Footnote {
+                text: root.google-note;
+                note-id: "app-google-note";
+            }
+
+            Panel {
+                panel-id: "app-debug-section-panel";
+                label: "Debug";
+
+                SectionHeading {
+                    title: "Debug";
+                    heading-id: "app-debug-section-heading";
+                    expanded <=> root.debug-expanded;
+                }
+
+                if root.debug-expanded: VerticalLayout {
+                    spacing: Metrics.row-spacing;
+
+                    SettingsRow {
+                        label: "Debug logging";
+                        CheckBox {
+                            checked: root.debug-enabled;
+                            accessible-id: "app-debug-enabled";
+                        }
+                    }
+
+                    SettingsRow {
+                        label: "Directory";
+                        // The path is the longest thing on this tab and the one row that cannot be shortened
+                        // by rewording.
+                        ValueText {
+                            text: root.debug-directory;
+                            value-id: "app-debug-directory";
+                            max-width: 340px;
+                        }
+                        Button { text: "Choose"; accessible-id: "app-debug-directory-choose"; }
+                    }
+
+                    // Somebody asked to send their trace in presses Reveal in Finder and the file is selected
+                    // in front of them. Clear is beside them because it belongs to the same gesture: empty the
+                    // trace, then reproduce the fault, so what gets sent is the fault and not a fortnight of
+                    // everything else.
+                    SettingsRow {
+                        label: "Trace file";
+                        HorizontalLayout {
+                            spacing: Metrics.heading-spacing;
+                            Button {
+                                text: "Reveal in Finder";
+                                enabled: root.has-debug-trace;
+                                accessible-id: "app-debug-reveal";
+                            }
+                            Button {
+                                text: "Save a copy";
+                                enabled: root.has-debug-trace;
+                                accessible-id: "app-debug-copy";
+                            }
+                            Button {
+                                text: "Clear";
+                                enabled: root.has-debug-trace;
+                                accessible-id: "app-debug-clear";
+                            }
+                        }
+                    }
+
+                    // **Inside the panel rather than under it**, unlike the Google footnote: this one has no
+                    // reason to outlive its section, so being a row of the list is the whole of making it fold.
+                    Footnote {
+                        note-id: "app-debug-note";
+                        text: "Logging starts and stops as this is switched, and is kept in a file called "
+                            + "debug.sqlite in this folder. A folder chosen here is used from the next time "
+                            + "Facet starts.";
+                    }
+                }
+            }
+        }
+    }
+}

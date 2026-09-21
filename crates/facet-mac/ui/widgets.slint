@@ -1,0 +1,170 @@
+// The pieces every Settings tab is built out of.
+//
+// **The shapes are the Swift app's**, kept because they are what the window already looked like and because two
+// tabs drawn at different rhythms read as two windows. What they are here is Slint rather than AppKit; the
+// measurements they draw at all come from `Metrics`.
+//
+// Every control a check must reach carries accessible-id AND accessible-role, because Slint refuses the id
+// without the role, and anything pressable answers accessible-action-default. A bare TouchArea is invisible to
+// an accessibility press and reports success anyway, which is the silent pass CLAUDE.md has a section about.
+
+import { Palette } from "std-widgets.slint";
+import { Metrics } from "metrics.slint";
+
+// A heading that folds what is under it, drawn as the first row of the panel it sits on.
+//
+// **The whole line is the target, not just the triangle.** CLAUDE.md states it as a rule and the Swift app paid
+// for it twice: a triangle is a small target for a gesture the words beside it are obviously about.
+export component SectionHeading inherits Rectangle {
+    in property <string> title;
+    in property <string> heading-id;
+    in-out property <bool> expanded: true;
+
+    callback toggled(bool);
+
+    min-height: Metrics.row-height;
+    accessible-role: button;
+    accessible-id: root.heading-id;
+    accessible-label: root.title;
+    accessible-action-default => { root.flip(); }
+
+    function flip() {
+        root.expanded = !root.expanded;
+        root.toggled(root.expanded);
+    }
+
+    HorizontalLayout {
+        spacing: Metrics.title-spacing;
+        alignment: start;
+
+        Text {
+            text: root.expanded ? "▾" : "▸";
+            vertical-alignment: center;
+            color: Palette.foreground;
+            opacity: 0.7;
+            width: 12px;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: root.title;
+            font-size: Metrics.heading-font-size;
+            font-weight: 700;
+            vertical-alignment: center;
+            color: Palette.foreground;
+        }
+    }
+
+    // Behind nothing and over everything, so the words, the triangle and the space after them all press. It is
+    // declared last deliberately: Slint hit-tests the later sibling first.
+    TouchArea {
+        clicked => { root.flip(); }
+    }
+}
+
+// The tinted rounded box a group of settings sits on. Its heading goes inside it, as the first row, because a
+// heading that operates a panel belongs to it rather than floating above it as a caption.
+export component Panel inherits Rectangle {
+    in property <string> panel-id;
+    in property <string> label;
+
+    accessible-role: groupbox;
+    accessible-id: root.panel-id;
+    accessible-label: root.label;
+
+    background: Palette.alternate-background;
+    border-radius: Metrics.corner-radius;
+
+    VerticalLayout {
+        padding: Metrics.panel-padding;
+        spacing: Metrics.heading-spacing;
+        @children
+    }
+}
+
+// The label-and-value row the App and Device tabs are both made of: words on the left, the control or the
+// reading pinned to the right-hand edge.
+//
+// **The control is pinned rather than following the label**, which is what lines every answer up down the
+// right-hand side however long the words in front of it are. **No inset of its own**: the panel insets the
+// list, so a row that inset itself as well would indent every row twice over.
+export component SettingsRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> dimmed: false;
+
+    min-height: Metrics.row-height;
+
+    HorizontalLayout {
+        spacing: Metrics.column-spacing;
+
+        Text {
+            text: root.label;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Palette.foreground;
+            opacity: root.dimmed ? 0.45 : 1.0;
+        }
+
+        // The label gives way before the control does: a window too narrow for both shortens the words rather
+        // than the answer.
+        Rectangle { horizontal-stretch: 1; }
+
+        @children
+    }
+}
+
+// A reading: the right-hand half of a row that states something rather than offering a control.
+export component ValueText inherits Text {
+    in property <string> value-id;
+    text: "";
+    vertical-alignment: center;
+    horizontal-alignment: right;
+    overflow: elide;
+    color: Palette.foreground;
+    accessible-role: text;
+    accessible-id: root.value-id;
+    accessible-label: root.text;
+}
+
+// A footnote under a panel or at the end of a list: smaller, quieter, and allowed to wrap.
+export component Footnote inherits Text {
+    in property <string> note-id;
+    font-size: Metrics.footnote-font-size;
+    wrap: word-wrap;
+    color: Palette.foreground;
+    opacity: 0.6;
+    accessible-role: text;
+    accessible-id: root.note-id;
+    accessible-label: root.text;
+}
+
+// A hairline. The Swift app draws these between a question and its answer, never between rows.
+export component Divider inherits Rectangle {
+    height: 1px;
+    background: Palette.border;
+}
+
+// A category's colour, with its icon slot on it. The Swift app draws the real icon here; **this app ships no
+// activity icons** (they are TimeFlip's copyrighted set and the permission does not travel with the code, see
+// NOTICE), so the slot is drawn empty at the size the icon will occupy.
+export component Swatch inherits Rectangle {
+    in property <color> colour;
+    in property <length> size: 28px;
+    in property <length> radius: 6px;
+    in property <length> icon-size: 20px;
+
+    width: root.size;
+    height: root.size;
+    background: root.colour;
+    border-radius: root.radius;
+    border-width: 1px;
+    border-color: #00000033;
+
+    Rectangle {
+        width: root.icon-size;
+        height: root.icon-size;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: #ffffff66;
+    }
+}
