@@ -210,14 +210,16 @@ export component Divider inherits Rectangle {
     background: Palette.border;
 }
 
-// A category's colour, with its icon slot on it. The Swift app draws the real icon here; **this app ships no
-// activity icons** (they are TimeFlip's copyrighted set and the permission does not travel with the code, see
-// NOTICE), so the slot is drawn empty at the size the icon will occupy.
+// A category's colour. The Swift app draws the category's icon on it; **this app ships no activity icons**,
+// they being TimeFlip's copyrighted set whose permission does not travel with the code (see NOTICE), so the
+// swatch is the colour alone. Nothing stands in for the icon: an outline where one will go reads as a control,
+// which is what it did on the Categories tab.
+//
+// The outline is what keeps a pale colour from disappearing into the row behind it.
 export component Swatch inherits Rectangle {
     in property <color> colour;
     in property <length> size: 28px;
     in property <length> radius: 6px;
-    in property <length> icon-size: 20px;
 
     width: root.size;
     height: root.size;
@@ -225,12 +227,4 @@ export component Swatch inherits Rectangle {
     border-radius: root.radius;
     border-width: 1px;
     border-color: #00000033;
-
-    Rectangle {
-        width: root.icon-size;
-        height: root.icon-size;
-        border-radius: 3px;
-        border-width: 1px;
-        border-color: #ffffff66;
-    }
 }
