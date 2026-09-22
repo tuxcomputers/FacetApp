@@ -37,5 +37,51 @@ for something is to write it down where the other will look.
 
 ---
 
-**Nothing is being asked of the Mac.** Which is the finished state, not an oversight: the numbering starts
-again from 1 in this repository, the Swift tree's items having gone with the Swift tree.
+## 1. Confirm `facet-mac` still builds after the status icon moved
+
+**The only thing being asked, and it is a build rather than a decision.** The menu bar icon is now
+`facet_ui::status_icon`, shared, because Linux needed the same pixels and a second copy is how two trays
+start disagreeing about what paused looks like. **This box cannot compile `facet-mac`**, so the change was
+made without ever being built.
+
+**What moved, and it moved unchanged**: `Showing`, `Rendered`, `render`, the three glyph functions and all
+six tests, from `crates/facet-mac/src/status_icon.rs` into `crates/facet-ui/src/status_icon.rs`. The six
+tests pass here. Nothing about the drawing was touched, which is deliberate: the move should be reviewable
+as a move.
+
+**What stayed**: `crates/facet-mac/src/status_icon.rs` still exists and still has `draw`, because handing
+the buffer to tray-icon as an `Icon` is the one genuinely macOS-facing line. It re-exports the three names
+above, so **`main.rs` needed no edit at all** and `status_icon::draw`, `status_icon::Showing` and
+`status_icon::render` all still resolve.
+
+**One real edit, in `examples/draw-status-icons.rs`.** It used to pull the file in with
+`#[path = "../src/status_icon.rs"] mod status_icon;`, which existed only because `facet-mac` is a binary
+crate and an example cannot import from one. The drawing is in a library now, so it takes it the ordinary
+way: `use facet_ui::status_icon::{self, Showing};`. **That line is the most likely thing to be wrong**,
+and `cargo run -p facet-mac --example draw-status-icons` is the check.
+
+So: `cargo build -p facet-mac`, the example, and a look at the menu bar to confirm the icon is what it was.
+`with_icon_as_template(false)` still has to stay and is still in `main.rs`; the shared tests assert the
+colours are in the buffer, and only that flag makes them survive.
+
+**If it does not build, say so in this item rather than reverting the share.** Linux depends on that
+module now, and the fix is almost certainly a line in the example.
+
+## 2. Not a task: `cargo fmt` is not a gate, and this box cannot make it one alone
+
+**Flagged rather than asked, because it is a decision and not work.** `cargo fmt --check` fails on this
+tree. Measured on a clean checkout on 2026-09-22, so **it predates the Linux work and is not something
+that arrived with it**.
+
+**It is not a formatting lapse.** There is no `rustfmt.toml`, and the house style is wider than rustfmt's
+defaults: compact struct literals such as `Showing { paused: false, locked: false }` are on one line
+throughout, and rustfmt's `struct_lit_width` of 18 would explode every one. Running `cargo fmt` would
+rewrite most of the codebase into a style nobody chose, which is why nobody has run it here.
+
+**The Mac cannot check this at all**, rustfmt not being installed there: `docs/system-mac.md` records it,
+and it is why no commit from that side has ever been formatted-checked. **So the honest position is that
+the project has no formatting standard it enforces**, and making one means agreeing a `rustfmt.toml` first
+and reformatting once, deliberately.
+
+`cargo clippy` is the gate that is actually ready: installed here, exit 0 on `facet-core`, `facet-ui` and
+`facet-linux`. It is **not** installed on the Mac either, and CI gates on neither.
