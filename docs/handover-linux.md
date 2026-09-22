@@ -51,63 +51,14 @@ shorter list and one that empties.
 
 **A recommendation rather than a rule**, and what it is really saying is which items unblock the most.
 
-1. **2 first**, and it is the only one with nothing in front of it. It needs no window, no radio and no
-   decisions, and finishing it means every later item can say what it did in a way this machine can read
-   back.
-2. **Then 3**, which is the first thing that puts Facet on screen here at all.
-3. **4 and 6 are cheap and answer questions that are currently blocking nobody but will block everybody**,
+1. **3 first**, which is the first thing that puts Facet on screen here at all. The trace it will record
+   into is already open: item 2 did that, so anything 3 does can say what it did in a way this machine
+   can read back.
+2. **4 and 6 are cheap and answer questions that are currently blocking nobody but will block everybody**,
    so take them whenever the machine is in front of you.
-4. **5 is not a task.** It is what is not proven yet.
+3. **5 is not a task.** It is what is not proven yet.
 
 ---
-
-## 2. The composition root for Linux: the data directory, the database, and the trace
-
-**`crates/facet-linux/src/main.rs` is five lines and prints that it is not implemented.** This is the item
-that changes that, and it is deliberately the one with nothing in front of it: no window, no radio, no
-decisions left open.
-
-**The core half is already done and is platform-blind.** `facet_core::database::open` takes a path and a DDL
-list, `facet_core::setting::debug_trace` reads whether the trace is wanted, and
-`facet_core::debug_log::DebugLog` prints and records. None of them knows what platform it is on, and none of
-them should learn.
-
-**What this machine has to supply is the paths**, which is the half that is genuinely a platform fact:
-
-| | |
-|---|---|
-| Data directory | `~/.local/share/Facet`, from `$HOME` rather than from a library call, so it is the same answer `Tests/Scripted/platform.sh` gives |
-| The app database | `appdata.sqlite` in it, usually a symlink, opened by name so sqlite resolves which physical file it is |
-| The trace | `debug.sqlite`, in the folder the `debug` setting names, or beside the app database when that setting is empty |
-
-`crates/facet-mac/src/main.rs` has the working version of all of this in `data_directory`, `open_databases`
-and `expand_home`. **Read it as a worked example, not as something to import**: the only line in it that is
-really about macOS is the directory.
-
-**Two things to check on the way through, both cheap and both able to waste an afternoon if they are wrong:**
-
-- **The three `5xx` DDL files are symlinks** (`500_timezone.sql`, `502_timezone_alias.sql`,
-  `503_timezone_lookup.sql`), committed as mode `120000`. `include_str!` follows them, so the trace schema
-  compiles in correctly, but a clone made with `core.symlinks=false` would embed the string `002_timezone.sql`
-  as SQL instead. Confirm `ls -la` shows arrows before assuming anything else is wrong.
-- **`rusqlite` is compiled in with its `bundled` feature**, so `cc` runs on every clean build and nothing
-  links the system SQLite. That is measured as working on this box (gcc 13.3.0, see
-  [system-linux.md](system-linux.md)); it is noted here because it is the first time the workspace has
-  actually pulled a C dependency in rather than merely listing one.
-
-**How to know it worked.** `scripts/switch-database.sh test -clean` builds a test database from the same DDL,
-then turn the trace on in it and launch:
-
-```sh
-sqlite3 ~/.local/share/Facet/test.sqlite \
-  "UPDATE setting SET setting_value = json_set(setting_value, '$.enabled', json('true')) \
-   WHERE setting_name = 'debug';"
-scripts/run.sh
-sqlite3 ~/.local/share/Facet/debug.sqlite "SELECT logged_at, tag, message FROM debug_log;"
-```
-
-Two rows on the Mac: the trace opening, and the launch. **Leave production alone**, which is the seeded
-value and what a fresh install should be.
 
 ## 3. The tray, through `ksni` and not `tray-icon`
 
