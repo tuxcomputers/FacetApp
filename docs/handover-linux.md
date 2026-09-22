@@ -73,11 +73,14 @@ and a read afterwards answering `NoEntry` rather than an error -- which is the p
 needing to tell a first run from a broken store. **`libsecret-1-dev` turned out not to be load-bearing**:
 the binary links `libc` and `libgcc_s` and nothing else, the path being pure Rust over zbus.
 
-**It stays open because the Mac half is still inference**, which is what this item exists to prevent, and
-because two things came out of the probe that are decisions rather than measurements:
+**It stays open because the Mac half is still inference**, which is what this item exists to prevent. What
+came out of the probe beyond the round trip:
 
-- **The locked keyring is still untested** and the probe deliberately does not force it: the only
-  collection here is `login`, which holds the `gh` token, so it needs a person who has agreed to it.
+- **The locked keyring is now measured** (2026-09-22, with the owner present) and the answer is worse
+  than either option this item's neighbours had written down. A locked collection does not error: **the
+  read blocks indefinitely** on a GUI prompt, and the prompt outlives the process that raised it. A
+  background Facet would hang rather than fall back, so a stored secret needs its own timeout and must
+  not be read on the launch path. In [port-findings.md](port-findings.md).
 - **`keyring` may be the wrong crate.** Its own docs say an application choosing its store per platform
   *"should not be linking to this library at all"* and should take `keyring-core` plus a specific store.
   That describes this app. A question for the port, not a change to make now.

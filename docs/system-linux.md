@@ -364,14 +364,26 @@ load-bearing for it. Keeping the package costs nothing; believing it was require
 there, target-gated, so the Keychain *should* come from the same dependency line. That is
 [handover-mac.md](handover-mac.md) item 3.
 
-**Untested, and it matters**: what happens when the keyring is **locked**. The failure arrives as a
-prompt to the user, or as a D-Bus error if there is nobody to prompt, and which one a background app
-gets has not been measured.
+**Measured 2026-09-22, and the answer is neither of the two this file expected.** A locked keyring does
+not prompt-and-continue and does not return an error: **the read blocks, for as long as it is given**.
+`probe/keyring-secret-service` was killed at a 25 second cap having returned nothing, exit 124, with a
+GNOME **Unlock Login Keyring** dialog on screen. **The dialog outlived the process that raised it.**
 
-**The probe deliberately does not force it.** The only collection here is `login`, which holds the `gh`
-token this repository pushes with, so locking it interrupts real work and may put a dialog in front of
-whoever is at the screen. **That one needs a person who has agreed to it**, in the way the tray check
-did. The probe prints the gap on its way out rather than leaving it silent.
+| | |
+|---|---|
+| Locked read | blocks indefinitely, no error |
+| What appears | an Unlock Login Keyring dialog |
+| When the caller dies | the dialog stays up, orphaned |
+| After unlocking | the secret reads back intact, the cycle costing nothing |
+
+**So a background Facet on a locked keyring hangs rather than degrades**, and on a machine with no
+prompter it hangs with nothing on screen to say why. Any read of a stored PIN needs **its own timeout and
+its own fallback**, and must not sit on the launch path. See
+[port-findings.md](port-findings.md); the constraint belongs to the secret store port rather than to this
+machine.
+
+**Done with the owner present, and it is not a thing to repeat casually**: locking `login` takes the `gh`
+token with it and puts a password dialog in front of whoever is at the screen.
 
 ---
 

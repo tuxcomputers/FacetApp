@@ -349,6 +349,43 @@ app rather than at the driver.
 **The first two failed loudly and exited non-zero**, which is the rule in CLAUDE.md doing its job: a
 driver that had returned success against a tray it never found would have made the suite green on nothing.
 
+## A locked secret store blocks rather than failing, and that is a design constraint
+
+**Measured 2026-09-22 on the Linux box with the owner present**, by `probe/keyring-secret-service`. The
+question was recorded as *a prompt to the user, or a D-Bus error if there is nobody to prompt*. **It is
+neither.** The read simply does not return.
+
+| | |
+|---|---|
+| `get_password` against a locked collection | **blocked indefinitely.** Killed at a 25s cap, exit 124 |
+| What happened instead | a GNOME **Unlock Login Keyring** dialog appeared |
+| When the caller was killed | **the dialog stayed on screen**, orphaned from the dead process |
+| After unlocking | the secret read back intact; the lock cycle destroyed nothing |
+
+**The code path explains it and would not have predicted the severity.** Every operation in
+`zbus-secret-service-keyring-store` calls `ensure_unlocked` first; `secret-service`'s `ensure_unlocked`
+runs `exec_prompt` and awaits it. There *is* a `ServiceError::Locked => no_access` mapping, which is what
+makes reading the source reassuring, **but it is only reached once a prompt has been refused.** While one
+is pending there is no error to map, and nothing times out on the app's behalf.
+
+**Three things follow for the secret store port, and the third is the one that is easy to miss:**
+
+- **Reading a stored secret needs its own timeout.** The store will not supply one. A read that can take
+  unbounded time is not a read a launch can depend on.
+- **It must not sit on the launch path.** A background Facet on a locked keyring hangs before it has a
+  window or a tray to say so from, which is indistinguishable from a crash. The PIN is wanted when
+  connecting to the cube, not when starting up, so this is a natural shape rather than a compromise.
+- **A headless machine is the worst case and is the one CI runs on.** With no prompter there is nothing to
+  dismiss and nothing on screen to explain the wait. Anything that reads a secret in a scripted run needs
+  the collection unlocked first, the same way the accessibility checks need `toolkit-accessibility`.
+
+**This is not a fault in `keyring` and would be the same through `keyring-core`**, the blocking being the
+Secret Service's own prompt mechanism rather than a wrapper's choice. It is a property of the platform the
+port has to hold rather than something a different crate avoids.
+
+**The macOS half is unmeasured and should not be assumed to match.** A locked Keychain prompts too, but
+whether the API blocks the caller the same way is a separate question for whoever runs the probe there.
+
 ## Design rules that follow from all of the above
 
 Short list, all of them enforceable from the first commit.

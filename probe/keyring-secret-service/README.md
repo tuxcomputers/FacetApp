@@ -44,14 +44,45 @@ It is the mirror of the `btleplug` result, which genuinely does link `libdbus-1.
 system library and the other never did, and neither was knowable without building them. Slint's AccessKit
 bridge reaches AT-SPI the same pure-Rust way.
 
-## What it did not do, and why
+## A locked collection blocks. It does not fail
 
-**It does not lock the keyring.** What a background process gets from a *locked* collection -- a prompt, or
-a D-Bus error with nobody there to prompt -- is recorded in `system-linux.md` as untested and as mattering.
-The only collection on this box is `login`, which holds the `gh` token this repository pushes with, so
-locking it interrupts real work and may throw a dialog at whoever is at the screen. **That measurement
-needs a person who has agreed to it**, not a probe that surprises them. The probe says so on the way out
-rather than leaving the gap silent.
+**Measured 2026-09-22 with the owner present**, and it is the third of the three answers that were on the
+table rather than either of the two `system-linux.md` had anticipated.
+
+```sh
+cargo run -- store                                  # while unlocked
+dbus-send --session --dest=org.freedesktop.secrets --print-reply --type=method_call \
+  /org/freedesktop/secrets org.freedesktop.Secret.Service.Lock \
+  array:objpath:/org/freedesktop/secrets/collection/login
+cargo run -- read                                   # the measurement
+# unlock by typing the password into the dialog, then:
+cargo run -- delete
+```
+
+| | |
+|---|---|
+| What `read` did against a locked collection | **Nothing, for as long as it was given.** Killed at a 25s cap, exit `124` |
+| What appeared instead | A GNOME **Unlock Login Keyring** dialog |
+| After the caller was killed | **The dialog stayed on screen**, orphaned from the process that raised it |
+| After unlocking | `read` returned `000000` -- the secret survived the cycle intact |
+
+**The expectation was a prompt *or* an error, and the real answer is neither.** It waits. Every operation
+in `zbus-secret-service-keyring-store` calls `ensure_unlocked` first, and `secret-service`'s
+`ensure_unlocked` runs `exec_prompt` and awaits it. The `ServiceError::Locked => no_access` mapping in that
+crate is real but only reached once a prompt has been **refused**; while one is pending there is no error
+to map.
+
+**So a background Facet on a locked keyring hangs rather than degrades**, and on a headless machine with no
+prompter it would hang with nothing on screen to explain why. **Any read of a stored PIN needs its own
+timeout and its own fallback**, and must not sit on the launch path waiting. That is a constraint on the
+secret store port rather than a bug in anything here, and it is in
+[`port-findings.md`](../../docs/port-findings.md).
+
+**It stays a manual exercise rather than a mode of this probe.** Locking `login` takes the `gh` token out
+with it and puts a password dialog in front of whoever is at the screen. A probe should not do that to
+somebody who ran it to check a round trip.
+
+## What it did not do, and why
 
 **It measures nothing about macOS.** The same `v1` default selects `apple-native-keyring-store/keychain`
 there, target-gated, so the Mac should get the Keychain from the same dependency line -- but *should* is

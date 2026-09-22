@@ -24,13 +24,26 @@
 // do; but a PIN is a secret rather than a word, and if the store round-trips arbitrary bytes then nothing
 // later has to care whether a future secret is text.
 //
-// **What this deliberately does not do: lock the keyring.** What a background process gets from a *locked*
-// collection -- a prompt, or a D-Bus error with nobody to prompt -- is recorded as untested and it matters,
-// but the only collection here is `login`, which holds the `gh` token this repository pushes with. Locking
-// it interrupts real work and may throw a dialog at whoever is at the screen. That measurement needs a
-// person who has agreed to it, not a probe that surprises them.
+// **What this does not do on its own: lock the keyring.** That measurement was taken on 2026-09-22 with the
+// owner present, and the answer is the third of the three that were on the table. A locked collection does
+// not return an error and does not fail: **it blocks, indefinitely, on a GUI prompt**, and the prompt
+// outlives the process that caused it. So a background Facet with nobody at the screen would hang rather
+// than fall back. See `docs/port-findings.md`.
 //
-//     cargo run
+// **It stays a manual exercise rather than a mode of this probe**, because locking `login` takes the `gh`
+// token out with it and puts a password dialog in front of whoever is there. `store`, lock by hand, `read`,
+// unlock, `delete` is the sequence, and the README has it.
+//
+//     cargo run                 # the full round trip, and cleans up after itself
+//     cargo run -- store        # write the secret and leave it
+//     cargo run -- read         # read it and report exactly what came back
+//     cargo run -- delete       # remove it
+//
+// **The three separate modes exist for the locked-collection measurement**, which cannot be done in one
+// process: something has to lock the keyring between the write and the read, and that something is not
+// this program. `store`, then lock the collection by hand, then `read`, is the shape. `read` is the one
+// that matters there, and it names the error variant rather than just printing it, because the whole
+// question is *which* error a locked store gives.
 //
 // It writes only under its own service name, and deletes what it wrote.
 
@@ -50,7 +63,17 @@ const PASSWORD: &str = "000000";
 const SECRET: &[u8] = &[0x00, 0x01, 0xFE, 0xFF, 0x42];
 
 fn main() -> std::process::ExitCode {
-    match run() {
+    let mode = std::env::args().nth(1).unwrap_or_else(|| "roundtrip".to_string());
+    let outcome = match mode.as_str() {
+        "roundtrip" => run(),
+        "store" => store_only(),
+        "read" => read_only(),
+        "delete" => delete_only(),
+        other => Err(format!(
+            "unknown mode {other}. Use one of: store, read, delete, or no argument for the round trip"
+        )),
+    };
+    match outcome {
         Ok(()) => {
             println!("\nAll checks passed.");
             std::process::ExitCode::SUCCESS
@@ -148,9 +171,89 @@ fn run() -> Result<(), String> {
         }
     }
 
-    println!("\nStill unmeasured, and it needs a person rather than a probe:");
-    println!("  what a background process gets from a LOCKED collection. The only collection here is");
-    println!("  login, which holds the gh token this repository pushes with, so locking it interrupts");
-    println!("  real work. See docs/system-linux.md.");
+    println!("\nMeasured separately, 2026-09-22, and not repeated here because it needs a person:");
+    println!("  a LOCKED collection does not error. The read blocks on a GUI prompt and waits, and the");
+    println!("  prompt outlives the process that caused it. A background app would hang, not fall back.");
+    println!("  Reproduce with: store, lock login by hand, read, unlock, delete. See the README.");
     Ok(())
+}
+
+/// Writes the secret and leaves it there.
+///
+/// **Half of the locked measurement.** The write has to happen while the collection is still unlocked, or
+/// what the later read runs into is a missing entry rather than a locked one, and those are the two answers
+/// the exercise exists to tell apart.
+fn store_only() -> Result<(), String> {
+    let entry = Entry::new(SERVICE, ACCOUNT)
+        .map_err(|error| format!("the entry could not be constructed: {error}"))?;
+    entry
+        .set_password(PASSWORD)
+        .map_err(|error| format!("the password could not be stored: {error}"))?;
+    println!("stored {PASSWORD} under service={SERVICE} account={ACCOUNT}");
+    println!("It is still there. Run `cargo run -- delete` when finished with it.");
+    Ok(())
+}
+
+/// Reads the secret and says exactly what came back, error variant included.
+///
+/// **Naming the variant is the point, not printing the message.** An app has to branch on this: `NoEntry`
+/// means no PIN was ever stored and is an ordinary first run, and anything else means the store could not
+/// answer and must not be treated as one. A message is for a human; the variant is what the code sees.
+fn read_only() -> Result<(), String> {
+    let entry = Entry::new(SERVICE, ACCOUNT)
+        .map_err(|error| format!("the entry could not be constructed: {error}"))?;
+    match entry.get_password() {
+        Ok(value) => {
+            println!("read back: {value}");
+            println!("variant:   Ok");
+            Ok(())
+        }
+        Err(Error::NoEntry) => {
+            println!("variant:   NoEntry");
+            println!("An app reads this as: no secret has ever been stored. An ordinary first run.");
+            Ok(())
+        }
+        Err(error) => {
+            // **Not a failure of the probe.** Reporting which error a locked store gives *is* the
+            // measurement, so this prints the answer and exits 0; what would be a failure is not knowing.
+            println!("variant:   {}", variant_of(&error));
+            println!("message:   {error}");
+            println!("An app reads this as: the store could not answer. NOT a first run.");
+            Ok(())
+        }
+    }
+}
+
+/// Removes the secret, and treats an already-absent one as done rather than as an error.
+fn delete_only() -> Result<(), String> {
+    let entry = Entry::new(SERVICE, ACCOUNT)
+        .map_err(|error| format!("the entry could not be constructed: {error}"))?;
+    match entry.delete_credential() {
+        Ok(()) => {
+            println!("deleted");
+            Ok(())
+        }
+        Err(Error::NoEntry) => {
+            println!("nothing to delete, which is the wanted end state either way");
+            Ok(())
+        }
+        Err(error) => Err(format!("the credential could not be deleted: {error}")),
+    }
+}
+
+/// The name of an error's variant, for reporting what an app would branch on.
+///
+/// **Spelled out rather than taken from `Debug`**, because `Debug` on some variants prints the payload too
+/// and the payload is the part that differs between machines. The name is the part that does not.
+fn variant_of(error: &Error) -> &'static str {
+    match error {
+        Error::NoEntry => "NoEntry",
+        Error::NoStorageAccess(_) => "NoStorageAccess",
+        Error::BadEncoding(_) => "BadEncoding",
+        Error::TooLong(_, _) => "TooLong",
+        Error::Invalid(_, _) => "Invalid",
+        Error::Ambiguous(_) => "Ambiguous",
+        Error::PlatformFailure(_) => "PlatformFailure",
+        _ => "an unrecognised variant, which means keyring has gained one",
+    }
 }

@@ -110,6 +110,14 @@ about `libsecret-1-dev` on this box turned out to be wrong in the direction nobo
 Security.framework would be the expected answer and is worth writing down, in
 [system-mac.md](system-mac.md) beside the other toolchain facts.
 
+**One more thing worth knowing, and it is the part most likely to differ.** A **locked** collection here
+does not return an error: the read **blocks indefinitely** on a GUI prompt, and the prompt outlives the
+process that raised it, so a background Facet would hang rather than fall back. Measured 2026-09-22 and
+written up in [port-findings.md](port-findings.md). **Whether a locked Keychain does the same to a caller
+on macOS is a separate question and should not be assumed to match** -- it decides whether the timeout
+that constraint implies is a Linux workaround or a rule for the port. `security lock-keychain` and a
+`cargo run -- read` is the shape; the probe has `store`, `read` and `delete` modes for exactly this.
+
 **Also worth your view, and it is a design question rather than a build one.** `keyring`'s own `lib.rs`
 says an application that wants to choose its store per platform *"should not be linking to this library
 at all"* and should take `keyring-core` plus a specific store. **That describes this app**: CLAUDE.md
