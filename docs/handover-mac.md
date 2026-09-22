@@ -85,27 +85,3 @@ and reformatting once, deliberately.
 
 `cargo clippy` is the gate that is actually ready: installed here, exit 0 on `facet-core`, `facet-ui` and
 `facet-linux`. It is **not** installed on the Mac either, and CI gates on neither.
-
-## 3. Run the keyring probe, and say what the Mac gets
-
-**The round trip is done and this item is now only its last paragraph.** Answered 2026-09-22 on the Mac:
-`probe/keyring-secret-service` runs unchanged and passes every check. `keyring` 4.2.0 resolves to
-`apple-native-keyring-store` 1.0.2 there, from the same dependency line that gives this box the zbus one,
-and the binary links **`Security.framework`** and `CoreFoundation` and nothing third-party. No prompt
-appeared on a first write and read back, the writing process being the reading one. The facts are in
-[system-mac.md](system-mac.md#the-keychain-through-keyring) and the cross-reference is in
-[port-findings.md](port-findings.md#a-locked-secret-store-blocks-rather-than-failing-and-that-is-a-design-constraint),
-which was carrying the Linux half alone.
-
-**What is left is the locked Keychain, and it stays here because it needs the owner rather than a test
-run.** `security lock-keychain` locks the login keychain for everything on the machine, so the next
-password field in any application is a dialog somebody has to answer, and this is somebody's working
-laptop. It was not something to do unannounced in the middle of a batch of other work.
-
-**It is worth doing, and here is why it is not merely symmetry.** On the Linux box a locked collection does
-not error: the read blocks indefinitely on a prompt that outlives the caller. Three rules were written from
-that, including that reading a secret must not sit on the launch path. **If macOS returns an error instead,
-those three are a Linux workaround. If it blocks too, they are rules for the port.** That is the difference
-the measurement makes, and nothing about the two APIs says which way it goes.
-
-`store`, lock by hand, `read`, unlock, `delete` is the sequence; the probe has all three modes for it.
