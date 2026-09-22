@@ -383,8 +383,13 @@ is pending there is no error to map, and nothing times out on the app's behalf.
 Secret Service's own prompt mechanism rather than a wrapper's choice. It is a property of the platform the
 port has to hold rather than something a different crate avoids.
 
-**The macOS half is unmeasured and should not be assumed to match.** A locked Keychain prompts too, but
-whether the API blocks the caller the same way is a separate question for whoever runs the probe there.
+**The macOS half of the round trip is measured and the locked half is not.** The same probe, unchanged,
+passes every check on the Mac against an unlocked Keychain: `keyring` 4.2.0 resolves to
+`apple-native-keyring-store` there and links `Security.framework`, with no prompt on a first write and read
+back. See [system-mac.md](system-mac.md#the-keychain-through-keyring). **What a locked Keychain does to a
+caller is still unmeasured**, and should not be assumed to match: it decides whether the timeout above is a
+Linux workaround or a rule for the port. Measuring it means locking the login keychain by hand, which
+prompts every other application on that machine, so it waits for the owner rather than for a test run.
 
 ## Design rules that follow from all of the above
 

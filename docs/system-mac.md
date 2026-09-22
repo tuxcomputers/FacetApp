@@ -96,22 +96,48 @@ rendering quality.
 ### The commands
 
 ```sh
-cargo build                 # facet-core alone, by default-members
+cargo build                 # facet-core and facet-ui, by default-members
 cargo test                  # the hermetic suite
 cargo build -p facet-mac    # the native binary
 ```
 
-**A bare build is the core only**, because the other three crates are each buildable on exactly one
-platform and this machine cannot compile the BlueZ or WinRT adapters.
+**A bare build is the two crates that compile anywhere**, because the three platform crates are each
+buildable on exactly one machine and this one cannot compile the BlueZ or WinRT adapters.
 
 **The probes are excluded from the workspace** and resolve their own dependencies:
 
 ```sh
-(cd probe/timeflip-btleplug && cargo run)     # needs the cube
-(cd probe/slint-editable-table && cargo run)  # opens a window
+(cd probe/timeflip-btleplug && cargo run)        # needs the cube
+(cd probe/slint-editable-table && cargo run)     # opens a window
+(cd probe/keyring-secret-service && cargo run)   # touches the login keychain, and cleans up
 ```
 
-Both built on 2026-09-20, on btleplug 0.13.1 and slint 1.18.0.
+The first two built on 2026-09-20, on btleplug 0.13.1 and slint 1.18.0; the third on 2026-09-22.
+
+### The Keychain, through `keyring`
+
+**Measured 2026-09-22 by running `probe/keyring-secret-service`, which was written on the Linux box and
+is unchanged here.** Every check passed: store status available, absent before writing, `set_password`
+and `get_password` round-tripping, `set_secret` and `get_secret` byte-clean over 5 bytes including a
+non-UTF-8 pair, delete, and `NoEntry` afterwards. **That last one is what the app depends on**, needing to
+tell *no PIN has ever been stored* from *the secret store is broken*.
+
+| | |
+|---|---|
+| Crate | `keyring` 4.2.0 at its defaults, the version the workspace pins |
+| Store selected | `apple-native-keyring-store` 1.0.2, target-gated in from the same dependency line that gives the Linux box `zbus-secret-service-keyring-store` |
+| Links | **`Security.framework`** and `CoreFoundation`, plus `libiconv` and `libSystem`. No third-party library and nothing to install |
+| Prompt on a first write and read back | **none**, the writing process being the reading one |
+
+**So the one dependency line serves both machines**, which was read off a manifest before it was run and
+is now measured. It was worth running anyway: the equivalent inference about `libsecret-1-dev` on the
+Linux box turned out to be wrong in the direction nobody expected.
+
+**What a locked Keychain does to a caller here is still unmeasured**, and
+[port-findings.md](port-findings.md#a-locked-secret-store-blocks-rather-than-failing-and-that-is-a-design-constraint)
+says why it matters: on Linux the read blocks indefinitely on a prompt that outlives the caller. Finding
+out here means locking the login keychain by hand, which prompts every other application on the machine,
+so it needs the owner rather than a test run.
 
 ---
 

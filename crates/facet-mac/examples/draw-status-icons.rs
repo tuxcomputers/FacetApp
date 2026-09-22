@@ -6,6 +6,10 @@
 //!
 //!     cargo run -p facet-mac --example draw-status-icons [output-directory]
 //!
+//! Writes into `target/status-icons/` unless told otherwise, which is where `draw-settings-tabs` puts its
+//! own output and, more to the point, somewhere git ignores. It defaulted to the working directory until
+//! 2026-09-22 and left four untracked PNGs in the repository root every time it ran.
+//!
 //! Scaled up, because the point is to see the shape: the real icon is 32px and unreadable at that size
 //! on a page.
 
@@ -17,7 +21,7 @@ use facet_ui::status_icon::{self, Showing};
 const SCALE: usize = 6;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let out = std::env::args().nth(1).unwrap_or_else(|| ".".into());
+    let out = std::env::args().nth(1).unwrap_or_else(|| "target/status-icons".into());
     let dir = std::path::Path::new(&out);
     std::fs::create_dir_all(dir)?;
 

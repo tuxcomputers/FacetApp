@@ -13,11 +13,16 @@
 
 use tray_icon::Icon;
 
-/// Re-exported so `main.rs` and `examples/draw-status-icons.rs` keep naming one module for the icon.
+/// Re-exported so `main.rs` names one module for the icon rather than reaching into `facet_ui` for the
+/// state and this module for the wrapper, which is two imports for one thing.
 ///
-/// The alternative is every caller reaching into `facet_ui` for the shape and this module for the wrapper,
-/// which is two imports for one thing and an invitation to let them drift.
-pub use facet_ui::status_icon::{Rendered, Showing, render};
+/// **`examples/draw-status-icons.rs` cannot come this way and does not try.** An example is a separate
+/// crate and `facet-mac` is a binary, so there is nothing for it to import from; it takes
+/// `facet_ui::status_icon` directly, which it can, having no need for the `Icon` wrapper at all.
+pub use facet_ui::status_icon::Showing;
+
+/// Not re-exported: nothing outside this module names it, and [`draw`] is the only caller.
+use facet_ui::status_icon::render;
 
 /// Draws the icon for `showing`, as something the menu bar will take.
 ///
