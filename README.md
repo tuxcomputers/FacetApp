@@ -73,6 +73,9 @@ app needs. Every other concern has many cross-platform answers; the radio has al
   on it
 - [`system-linux.md`](docs/system-linux.md): the Linux box, and everything needed to build and
   drive Facet on it
+- [`handover-mac.md`](docs/handover-mac.md) and [`handover-linux.md`](docs/handover-linux.md): what
+  each machine is asking the other for. Each is written by one machine and acted on by the other, and
+  both are meant to empty
 
 ---
 

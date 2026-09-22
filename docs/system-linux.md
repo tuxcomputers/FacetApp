@@ -1,6 +1,6 @@
 # The Linux box
 
-[← Back to README](../README.md) · [The Mac →](system-mac.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Port findings →](port-findings.md)
+[← Back to README](../README.md) · [The Mac →](system-mac.md) · [What is being asked of this machine →](handover-linux.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Port findings →](port-findings.md)
 
 **What this machine is, and everything needed to build and drive Facet on it.** This is the second
 platform, and the only place BlueZ and MATE can be exercised.

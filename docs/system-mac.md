@@ -1,6 +1,6 @@
 # The Mac
 
-[← Back to README](../README.md) · [The Linux box →](system-linux.md) · [Port findings →](port-findings.md)
+[← Back to README](../README.md) · [The Linux box →](system-linux.md) · [What is being asked of this machine →](handover-mac.md) · [Port findings →](port-findings.md)
 
 **What this machine is, and everything needed to build and drive Facet on it.** The Mac is where the app
 is built and where the cube normally lives.
