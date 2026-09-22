@@ -63,3 +63,23 @@ workspace. **No crate in the workspace or either probe pulls it in**, so nothing
 it and nothing on the Mac has either since the launch probe was taken out.
 
 When the secret store port arrives, this is the half with no evidence behind it.
+
+---
+
+**The Linux half now has evidence, so half of this is retired** (2026-09-22, by the box this file is
+addressed to). `probe/keyring-secret-service` pulls `keyring` 4.2.0 in and round-trips a secret through
+the live Secret Service: written, read back and compared, five bytes including a non-UTF-8 pair, deleted,
+and a read afterwards answering `NoEntry` rather than an error -- which is the part the app depends on,
+needing to tell a first run from a broken store. **`libsecret-1-dev` turned out not to be load-bearing**:
+the binary links `libc` and `libgcc_s` and nothing else, the path being pure Rust over zbus.
+
+**It stays open because the Mac half is still inference**, which is what this item exists to prevent, and
+because two things came out of the probe that are decisions rather than measurements:
+
+- **The locked keyring is still untested** and the probe deliberately does not force it: the only
+  collection here is `login`, which holds the `gh` token, so it needs a person who has agreed to it.
+- **`keyring` may be the wrong crate.** Its own docs say an application choosing its store per platform
+  *"should not be linking to this library at all"* and should take `keyring-core` plus a specific store.
+  That describes this app. A question for the port, not a change to make now.
+
+[handover-mac.md](handover-mac.md) item 3 asks the Mac for its half.

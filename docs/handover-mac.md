@@ -85,3 +85,35 @@ and reformatting once, deliberately.
 
 `cargo clippy` is the gate that is actually ready: installed here, exit 0 on `facet-core`, `facet-ui` and
 `facet-linux`. It is **not** installed on the Mac either, and CI gates on neither.
+
+## 3. Run the keyring probe, and say what the Mac gets
+
+**A build and a run, and it is the other half of a measurement this box has already taken.**
+`probe/keyring-secret-service` round-trips a secret through the Secret Service here and passes every
+check. **The same probe should work unchanged on the Mac**, and nobody knows that it does.
+
+```sh
+(cd probe/keyring-secret-service && cargo run)
+```
+
+**It writes only under its own service name, `facet-keyring-probe`, and deletes what it wrote.** It does
+not touch anything else in the keychain. Seven lines of output and an exit code is the whole answer.
+
+**Why it should just work, and why that is not evidence.** `keyring` 4.2.0's default `v1` feature enables
+all three platform stores, each target-gated, so a Mac takes `apple-native-keyring-store/keychain` from
+the same dependency line that gives this box `zbus-secret-service-keyring-store`. **That is read off a
+manifest, which is exactly the kind of reasoning the probe exists to replace**: the equivalent inference
+about `libsecret-1-dev` on this box turned out to be wrong in the direction nobody expected.
+
+**The line worth reporting whichever way it goes** is what the binary links. Here it is `libc` and
+`libgcc_s` and nothing else, no `libsecret`, because the path is pure Rust over zbus. A Mac linking
+Security.framework would be the expected answer and is worth writing down, in
+[system-mac.md](system-mac.md) beside the other toolchain facts.
+
+**Also worth your view, and it is a design question rather than a build one.** `keyring`'s own `lib.rs`
+says an application that wants to choose its store per platform *"should not be linking to this library
+at all"* and should take `keyring-core` plus a specific store. **That describes this app**: CLAUDE.md
+makes every platform capability a port, so each platform does choose its own store, and `v1`'s single
+platform-independent `Entry` is the opposite arrangement. Nothing depends on `keyring` yet, so this is a
+question for the secret store port rather than a change to make now. The probe README sets out both
+sides.

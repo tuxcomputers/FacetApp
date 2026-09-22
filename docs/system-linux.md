@@ -137,17 +137,25 @@ libbrotlidec.so.1   libbrotlicommon.so.1  libbz2.so.1.0  libz.so.1  libc/libm/li
 runtime `libfontconfig1`. That is a measurement, not a recommendation: a machine built from scratch may
 still want the dev package, and nobody has tested one.
 
-### The two unverified crate questions, one of them now answered
+### The two unverified crate questions, both now answered
 
-Both were open in the previous revision. One is settled and the other is not:
+Both were open when this file was first written, and each was settled by building the crate rather than
+by reading about it. **They came out opposite ways**, which is the reason neither was guessable:
 
 - **`btleplug` does need `libdbus-1-dev`.** It is not pure Rust on this path. The probe binary links
   `/lib/x86_64-linux-gnu/libdbus-1.so.3`, by way of `dbus` 0.9.12 → `dbus-tokio` 0.7.6 →
   `bluez-generated` 0.4.0 → `bluez-async` 0.8.2 → `btleplug` 0.13.1. **So `libdbus-1-dev` is
   load-bearing and must go in any build instructions.**
-- **`keyring` and the Secret Service remain unbuilt against.** `libsecret-1-dev` 0.21.4 is installed
-  and the service is live (below), but no crate in the workspace or either probe pulls `keyring` in
-  yet, so nothing here has exercised it. **Still unverified**, and honestly so.
+- **`keyring` does *not* need `libsecret-1-dev`**, which is the opposite of what this file assumed.
+  Built and run 2026-09-22 by `probe/keyring-secret-service`: the binary links **`libc` and `libgcc_s`
+  and nothing else**. `keyring`'s default `v1` feature selects `zbus-secret-service-keyring-store` on
+  Linux, reaching the Secret Service over zbus in pure Rust through `secret-service` 5.2.0. The
+  `dbus-secret-service-keyring-store` that *would* use the C library is not enabled.
+
+**One needed the system library and the other never did**, and no amount of reading either crate's
+description would have said which. Slint's AccessKit bridge reaches AT-SPI the same pure-Rust way, so
+of the three D-Bus users in this app only `btleplug` links a C library. **`libsecret-1-dev` stays
+installed and is not load-bearing**; `libdbus-1-dev` is.
 
 ### The commands, and what they cost cold
 
@@ -343,13 +351,27 @@ building against it: `gh auth login` put its token there rather than in a file, 
 back, and `git push` has been driven from it. So the store works, unprompted, for a background process
 on this desktop.
 
-**Still unbuilt against.** The `keyring` crate is pinned at 4.2.0 in the workspace manifest but no crate
-depends on it yet, so nothing has compiled against `libsecret` here. The Mac's keychain adapter is in
-the same position.
+**Now built against, and it works.** `probe/keyring-secret-service` ran the full round trip on
+2026-09-22: a password written, read back and compared; five bytes including a non-UTF-8 pair
+round-tripped; the credential deleted; and a read afterwards answering **`NoEntry`** rather than an
+error. **That last part is what the app depends on**, needing to tell *no PIN has ever been stored*
+from *the store is broken*, because the first is an ordinary first run.
+
+**It reaches the service in pure Rust and links no system library**, so `libsecret-1-dev` is not
+load-bearing for it. Keeping the package costs nothing; believing it was required would have.
+
+**The Mac half is still unmeasured.** The same `v1` default selects `apple-native-keyring-store/keychain`
+there, target-gated, so the Keychain *should* come from the same dependency line. That is
+[handover-mac.md](handover-mac.md) item 3.
 
 **Untested, and it matters**: what happens when the keyring is **locked**. The failure arrives as a
 prompt to the user, or as a D-Bus error if there is nobody to prompt, and which one a background app
 gets has not been measured.
+
+**The probe deliberately does not force it.** The only collection here is `login`, which holds the `gh`
+token this repository pushes with, so locking it interrupts real work and may put a dialog in front of
+whoever is at the screen. **That one needs a person who has agreed to it**, in the way the tray check
+did. The probe prints the gap on its way out rather than leaving it silent.
 
 ---
 

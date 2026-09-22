@@ -28,7 +28,7 @@ app needs. Every other concern has many cross-platform answers; the radio has al
 |---|---|
 | [`docs/`](docs/) | The vendor protocol, what the hardware actually does, the schema, the architecture, and what the Swift port measured |
 | [`crates/`](crates/) | `facet-core`, the shared `facet-ui`, and one composition root per platform |
-| [`probe/`](probe/) | Two Rust programs that answered a question and can be re-run |
+| [`probe/`](probe/) | Three Rust programs that answered a question and can be re-run |
 | [`scripts/`](scripts/) | The accessibility drivers for both platforms, the BLE probe, and the database tooling |
 | [`Tests/Scripted/`](Tests/Scripted/) | The harness that drives a running app against a real cube |
 
@@ -125,14 +125,15 @@ broken `.slint` file breaks everywhere, and a bare build on any machine should b
 
 **The probes are excluded from the workspace on purpose** and resolve their own dependencies, so
 re-running one reproduces the transcript in its README rather than whatever the app is pinned to today.
-Both build as of 2026-09-20:
+All three build; the first two as of 2026-09-20 and the third 2026-09-22:
 
 ```sh
-(cd probe/timeflip-btleplug && cargo run)     # needs the cube
-(cd probe/slint-editable-table && cargo run)  # opens a window
+(cd probe/timeflip-btleplug && cargo run)      # needs the cube
+(cd probe/slint-editable-table && cargo run)   # opens a window
+(cd probe/keyring-secret-service && cargo run) # writes to the keyring, and cleans up after itself
 ```
 
-They are the evidence behind the two largest decisions and are worth running first.
+They are the evidence behind the largest decisions and are worth running first.
 
 ---
 

@@ -1,0 +1,9 @@
+[package]
+name = "keyring-probe"
+version = "0.1.0"
+edition = "2021"
+
+# The version pinned in the workspace, taken at its defaults on purpose: the question is what the app
+# would get if it depended on what it already says it depends on.
+[dependencies]
+keyring = "4.2.0"

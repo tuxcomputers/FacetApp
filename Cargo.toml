@@ -20,9 +20,9 @@ default-members = ["crates/facet-core", "crates/facet-ui"]
 # The probes are standalone programs, kept because a measurement is worth more with the thing that
 # produced it beside it. They resolve their own dependencies rather than the app's, so a re-run is not
 # tied to whatever the app is pinned to. Their lockfiles are gitignored, so a re-run resolves fresh and
-# may not use the versions the transcript in each README was produced with; both last built on
-# 2026-09-20 with btleplug 0.13.1 and slint 1.18.0.
-exclude = ["probe/timeflip-btleplug", "probe/slint-editable-table"]
+# may not use the versions the transcript in each README was produced with. btleplug 0.13.1 and slint
+# 1.18.0 last built 2026-09-20; keyring 4.2.0 built and run 2026-09-22.
+exclude = ["probe/timeflip-btleplug", "probe/slint-editable-table", "probe/keyring-secret-service"]
 
 [workspace.package]
 version = "0.1.0"
@@ -61,5 +61,10 @@ tray-icon = "0.24.2"   # not 0.25: it wants muda 0.20 while slint pins 0.19, and
 # features across the graph, so taking the default here enables both async backends at once and ksni
 # refuses to compile. facet-linux names the two features it wants. Measured 2026-09-22.
 ksni = { version = "0.3.6", default-features = false }
+# **Measured, and it raises a question the port has to answer.** probe/keyring-secret-service round-trips
+# a secret through the live Secret Service with this version. It also records what keyring's own docs say:
+# an application that wants to choose its store per platform "should not be linking to this library at
+# all" and should take keyring-core plus a specific store instead. That is a description of this app, so
+# the secret store port decides whether this line stays. Nothing depends on it yet.
 keyring = "4.2.0"
 sha2 = "0.11.0"
