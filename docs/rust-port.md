@@ -429,6 +429,16 @@ Each of these is a thing to run, not a thing to think about further.
 5. ~~**Editable tables in Slint.**~~ **Answered 2026-09-20: they work.** See *The tables, measured* below.
    What is still untested is sorting, a row leaving the list mid-edit, and the icon grid.
 
+6. **Whether the secret store should go through `keyring` or through `keyring-core` and one store per
+   platform.** `keyring` 4.2.0 is what the workspace pins and it works on both machines, measured
+   2026-09-22 by [`probe/keyring-secret-service`](../probe/keyring-secret-service/): the same dependency
+   line resolves to `apple-native-keyring-store` on the Mac and `zbus-secret-service-keyring-store` on
+   Linux. **So this is not a question about whether it works.** It is that `keyring`'s own documentation
+   says an application choosing its store per platform *"should not be linking to this library at all"*
+   and should take `keyring-core` plus the store it wants, and that describes this app: the core states a
+   port and each composition root injects the thing that performs it, which is the same shape by another
+   name. Deciding it needs the port to exist first, so it is recorded rather than acted on.
+
 ---
 
 ## The scratch work

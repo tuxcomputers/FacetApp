@@ -51,38 +51,47 @@ shorter list and one that empties.
 
 **A recommendation rather than a rule**, and what it is really saying is which items unblock the most.
 
-1. **5 is not a task.** It is what is not proven yet, and it is all that is left.
+1. **7 is the only one**, and it is blocked on the Mac until the renderer moves. Nothing else is
+   outstanding: this file emptied of work on 2026-09-22.
 
 ---
 
-## 5. Not a task: `keyring` has never been built against anything
+## 7. Does the shared Settings window actually look the same on MATE?
 
-**Flagged so nobody reports the secret store as working on both platforms.** `libsecret-1-dev` 0.21.4 is
-installed here and the Secret Service is live, both measured, and `keyring` 4.2.0 is pinned in the
-workspace. **No crate in the workspace or either probe pulls it in**, so nothing on this box has exercised
-it and nothing on the Mac has either since the launch probe was taken out.
+**Nobody has looked, and it is the requirement the language choice rests on.** Requirement 4 in
+[rust-port.md](rust-port.md#the-requirements) is a single shared UI, and requirement 3 is that it looks and
+operates the same on all three platforms. `facet-ui` now makes that structurally true: one set of `.slint`
+sources, one `build.rs` choosing cupertino, compiled into both composition roots. **Structurally true is
+not the same as true**, and the window has been on screen on both machines without the two ever being put
+side by side.
 
-When the secret store port arrives, this is the half with no evidence behind it.
+**What is likely to differ, and none of it would fail a build:**
 
----
+- **Fonts.** Cupertino is a Slint style rather than a native toolkit, so the widgets should match, but the
+  text is rendered by whatever fontconfig serves on that box against whatever Core Text serves here. Every
+  width in the Settings window is fixed except the labels, so a wider font wraps or elides rather than
+  resizing anything, and elided labels are the thing to look for.
+- **The 640 width.** `min-width` and `max-width` pin it here because the Mac windowing layer treated a
+  plain `width` as a hint and gave an 800pt window. Whether the same pinning holds under MATE is unknown.
+- **The stepped fields.** They were the one control that had to be told not to stretch, and they carry a
+  hard 110px box and a 34px unit slot. A different default font size inside a `SpinBox` would break that
+  alignment without breaking anything else.
+- **The calendars on the Report tab.** Every size there is derived from the day cell, which is derived
+  from the tab width rounded down. It should therefore be identical, and if it is not then the derivation
+  has an assumption in it that nobody has found.
 
-**The Linux half now has evidence, so half of this is retired** (2026-09-22, by the box this file is
-addressed to). `probe/keyring-secret-service` pulls `keyring` 4.2.0 in and round-trips a secret through
-the live Secret Service: written, read back and compared, five bytes including a non-UTF-8 pair, deleted,
-and a read afterwards answering `NoEntry` rather than an error -- which is the part the app depends on,
-needing to tell a first run from a broken store. **`libsecret-1-dev` turned out not to be load-bearing**:
-the binary links `libc` and `libgcc_s` and nothing else, the path being pure Rust over zbus.
+**The Mac owes you the tool first, and this item is blocked until then.** The headless renderer is
+`crates/facet-mac/examples/draw-settings-tabs.rs`, which draws all six tabs through Slint's software
+renderer into `target/settings-tabs/` with no window and no tray. **It is in the wrong crate**, for exactly
+the reason the status icon was: nothing in it is about macOS, it only lives there because that is where the
+UI used to live. It moves to `facet-ui` and then both machines run the same command and produce comparable
+images. That is the Mac's to do and this item says so rather than asking you to work around it.
 
-**It stays open because the Mac half is still inference**, which is what this item exists to prevent. What
-came out of the probe beyond the round trip:
+**Software rendering is the point, not a limitation.** It takes the platform's window server out of the
+comparison entirely, so a difference in the output is a difference in the layout rather than in how a
+compositor drew it. Worth running the real window afterwards as well, since fonts are the likeliest
+difference and the renderer rasterises those itself.
 
-- **The locked keyring is now measured** (2026-09-22, with the owner present) and the answer is worse
-  than either option this item's neighbours had written down. A locked collection does not error: **the
-  read blocks indefinitely** on a GUI prompt, and the prompt outlives the process that raised it. A
-  background Facet would hang rather than fall back, so a stored secret needs its own timeout and must
-  not be read on the launch path. In [port-findings.md](port-findings.md).
-- **`keyring` may be the wrong crate.** Its own docs say an application choosing its store per platform
-  *"should not be linking to this library at all"* and should take `keyring-core` plus a specific store.
-  That describes this app. A question for the port, not a change to make now.
-
-[handover-mac.md](handover-mac.md) item 3 asks the Mac for its half.
+**Where the answer goes**: a real difference is a port finding and belongs in
+[port-findings.md](port-findings.md); no difference is worth one line in the same place, because
+*measured identical* is a fact somebody will otherwise pay to establish twice.
