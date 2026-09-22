@@ -417,18 +417,36 @@ connect regardless, so a handover exercises existing mechanisms rather than need
 and it goes through D-Bus because **tray items are addressed by label on Linux, no identifier surviving
 the trip**.
 
-**The accessibility bus is running but toolkit accessibility is switched off.** Turning it on is one
-`gsettings set`. Note that a GTK3 app loaded the bridge anyway with this setting false, measured
-2026-09-08, so the setting is not the gate it looks like; see [port-findings.md](port-findings.md).
+**The accessibility bus is running but toolkit accessibility is switched off**, and **for Slint that is
+the gate**. Turning it on is one `gsettings set`. A GTK3 app loaded the bridge anyway with this setting
+false, measured 2026-09-08, which is why this file used to say the setting is not the gate it looks
+like. **That holds for GTK and not for Slint**, measured 2026-09-22 with the real app on screen: with
+the setting false Facet was not on the bus at all, and setting it true put the whole window there
+immediately with no restart. See [port-findings.md](port-findings.md).
+
+| | |
+|---|---|
+| `org.a11y.Status` `IsEnabled` | **false** while `toolkit-accessibility` is false |
+| `ScreenReaderEnabled` | false |
+| What turns it on | `gsettings set org.gnome.desktop.interface toolkit-accessibility true` |
+
+**So anything driving this app through AT-SPI has to set that first and put it back after.** A run that
+forgets finds no application, and every check then fails exactly as it would against a window that never
+opened.
 
 **Slint ships its own AT-SPI bridge, and it is in the graph.** Measured 2026-09-20 from the Slint
 probe's build: `accesskit` 0.24.1, `accesskit_unix` 0.22.1, `accesskit_atspi_common` 0.19.1 and
 `atspi` 0.29.0 all compile as part of `i-slint-backend-winit`. **So a Slint window does not depend on
 `libatk-adaptor` the way a GTK app does**: it speaks AT-SPI over zbus in pure Rust, linking no system
-D-Bus library, which is why the probe binary links no `libdbus` while the btleplug one does.
+D-Bus library, which is why the probe binary links no `libdbus` while the btleplug one does. AccessKit's
+Unix adapter stays dormant until an assistive technology is active, which is the mechanism behind the
+gate above rather than a separate fact.
 
-**Whether a Slint window actually appears on the accessibility bus is still unknown**, because the
-probe was built and not run. That is the next thing to measure, and it needs the owner's screen.
+**A Slint window does appear on the bus, and can be driven.** `scripts/at-press.py --app facet-linux
+About` pressed a real tab and the app recorded `Settings tab selected: About`, so the path is proven end
+to end. **`at-press.py --tab` does not work against it**: Slint presents `page tab` children directly
+under the frame where GTK presents a `page tab list`, so the notebook lookup finds nothing. Press tabs by
+name.
 
 ---
 
@@ -459,6 +477,13 @@ applet with the open click bug. It is not, and never was.
 
 **What that costs in reach**: a click result from here is a result about the XApp watcher, which Linux
 Mint ships and plain MATE does not. It generalises to Mint, not to every MATE install.
+
+**Confirmed with the app itself on 2026-09-22.** Facet registered as
+`org.kde.StatusNotifierItem-<pid>-1/StatusNotifierItem`, appeared in the watcher's
+`RegisteredStatusNotifierItems` beside blueman and solaar, and left it again when the app quit. The item
+published `Title=Facet`, `Status=Active`, `Category=ApplicationStatus`, its menu at `/MenuBar`, and an
+`IconPixmap` of 32x32 that became **70x32** when the padlock was added, so this host takes a non-square
+icon.
 
 ---
 

@@ -182,7 +182,7 @@ at runtime everywhere, but what it is allowed to be differs, and the difference 
 |---|---|---|
 | **macOS** | Sets the `NSStatusItem` button's image and re-measures the item | **Yes.** tray-icon asks for an 18 point tall image and derives the width from the aspect, so the item widens to fit |
 | **Windows** | `Shell_NotifyIcon` with `NIF_ICON` | **No.** The icon is an `HICON` drawn into the shell's own square slot, so a 2:1 image is squashed rather than given room |
-| **Linux** | Depends entirely on the backend, below | **Untested.** ksni's `icon_pixmap` carries its own width and height and the specification permits non-square |
+| **Linux** | Depends entirely on the backend, below | **Yes**, measured 2026-09-22. ksni's `icon_pixmap` carries its own width and height, and the host took 32x32 unlocked and 70x32 locked from the running app |
 
 **So a row of same-size glyphs is a macOS and Linux shape, and Windows needs another answer.** Facet shows
 Play or Pause, with a padlock beside it at the same size when the cube is locked. On Windows both have to
@@ -197,6 +197,17 @@ feature list is `gtk` plus `libappindicator` and nothing else. [`rust-port.md`](
 ruled AppIndicator out because it emits no click events, so Linux uses ksni directly, and ksni is the
 richest of the three: raw pixels through `icon_pixmap`, and `overlay_icon_pixmap` for a second image drawn
 on top of the first.
+
+**The Linux half is no longer untested.** Facet was put on a real MATE panel on 2026-09-22 and the host
+read back `IconPixmap` as 32 by 32 with one glyph and **70 by 32** with the padlock beside it, the icon
+widening rather than being squashed or clipped. So the row-of-glyphs shape holds on two of the three
+platforms and Windows remains the one that needs another answer.
+
+**One conversion, and it is the kind that cannot fail loudly.** `facet_ui::status_icon::render` produces
+RGBA, which macOS and Windows take unchanged. The StatusNotifier specification wants **ARGB32 in network
+byte order**, so the alpha moves to the front of every pixel. Get it wrong and the icon still draws, in
+the wrong colours, which reads as a drawing fault rather than a byte order one. `facet-linux` has three
+tests on that conversion for exactly that reason.
 
 **A template image throws the colours away, and that is not a bug.** macOS draws a template in the menu
 bar's own ink, black on a light bar and white on a dark one, so an icon built with colours in it comes out
@@ -278,6 +289,65 @@ in the error is one the manifest does name and the feature in the error is one t
 `i-slint-core` holds the dependency, but nothing tray-shaped is re-exported from `slint`'s public API at
 1.18. If a later version does expose one, it is worth a look: a tray that came from the same crate as the
 window would serve requirement 4 better than one crate per platform. That is a thing to check, not a plan.
+
+## A Slint window reaches the accessibility bus, but only once an AT is enabled
+
+**Measured 2026-09-22 on the Linux box, with the real app on screen.** This was the most load-bearing
+unknown for the scripted suite here, and the answer is yes with a condition that is the whole finding.
+
+**With `toolkit-accessibility` false, Facet is not on the bus at all.** Twenty-seven applications were
+listed and none of them was it. **Setting it true put the window on the bus immediately**, no restart, and
+the tree is complete:
+
+```
+[application] 'facet-linux'
+  [frame] 'Facet Settings'
+    [page tab] 'Faces' ... 'Categories' ... 'Report' ... 'App' ... 'Device' ... 'About'
+    [scroll pane] 'Faces'
+      [push button] 'Play'   [list box] 'Categories'   [push button] 'Meeting' ...
+```
+
+**This is the opposite of the GTK3 result and both are measured.** A GTK3 app loaded the bridge anyway
+with the setting false, 2026-09-08, which is why this file previously said the setting was not the gate it
+looks like. **For Slint it is the gate.** AccessKit's Unix adapter stays dormant until an assistive
+technology is active, which it learns from `org.a11y.Status`: `IsEnabled` and `ScreenReaderEnabled` were
+both false, and `toolkit-accessibility` is what turns the first of them on.
+
+**So the scripted suite must enable it before it drives anything**, and must put it back afterwards. A run
+that forgets finds no application, and every check that presses a control fails identically to a window
+that never opened, which is the wrong diagnosis for a missing gsetting.
+
+**It is a real press, not just a visible tree.** `scripts/at-press.py --app facet-linux About` reported
+`pressed 'About' (page tab)` and the app recorded `Settings tab selected: About` in `debug_log`. The
+accessibility path is proven end to end rather than inferred from the tree being present.
+
+**The About tab's Slint attribution is readable from the bus too**, which matters because its presence is
+a licence condition rather than a design choice: `Made with Slint`, `#MadeWithSlint`, the version and the
+licence sentence all come back as labels. A scripted check can assert the condition instead of it quietly
+lapsing.
+
+## Three driver faults, found the first time the suite met the Rust app
+
+**All three on 2026-09-22, and none of them in the app.** Worth recording together because they share a
+shape: each was written against something the Swift app did, and each failed in a way that pointed at the
+app rather than at the driver.
+
+1. **`tray-menu.py` looked for the wrong process.** It ran `pgrep -f FacetLinux`, which is the Swift
+   binary; the Rust one is `facet-linux`, so it matched nothing and reported **facet is not running**
+   against a running app with a visible tray icon. That is indistinguishable from the app having failed to
+   start. Fixed to `pgrep -x facet-linux`, the spelling `Tests/Scripted/platform.sh` already uses.
+2. **It used libappindicator's object paths.** `/org/ayatana/NotificationItem/facet` was the Swift app's
+   AppIndicator layout; ksni publishes the item at `/StatusNotifierItem` and its menu at `/MenuBar`, and
+   the old path answered `UnknownObject`. **Fixed by reading the `Menu` property off the item** rather
+   than hardcoding a second guess, which is what the specification puts that property there for and what
+   will survive the next backend.
+3. **`at-press.py --tab` finds no notebook.** It answers *nothing in the tree matches a notebook*, because
+   Slint presents `page tab` children directly under the frame where GTK presents a `page tab list`.
+   **Not fixed**, because it is a choice rather than a repair: either `--tab` grows a Slint path, or checks
+   press tabs by name, which already works and is what proved the item above.
+
+**The first two failed loudly and exited non-zero**, which is the rule in CLAUDE.md doing its job: a
+driver that had returned success against a tray it never found would have made the suite green on nothing.
 
 ## Design rules that follow from all of the above
 

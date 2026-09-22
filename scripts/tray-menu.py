@@ -31,13 +31,17 @@ except ImportError as exc:
     print("install with: sudo apt install python3-dbus", file=sys.stderr)
     sys.exit(2)
 
-MENU_PATH = "/org/ayatana/NotificationItem/facet/Menu"
 MENU_IFACE = "com.canonical.dbusmenu"
 
 # The indicator itself, which is a different object from its menu and carries the words the status
 # item shows. `--label` reads these, and it is the Linux answer to `status_item` in `lib.sh`: on the
 # Mac that line comes out of the accessibility tree, and here the tray is not in the tree at all.
-ITEM_PATH = "/org/ayatana/NotificationItem/facet"
+#
+# **`/StatusNotifierItem`, which is where ksni publishes**, and not the Ayatana layout this file was
+# written against. `/org/ayatana/NotificationItem/facet` was libayatana-appindicator's path, used by the
+# Swift app; the Rust app registers through ksni and the object is at the spec's own path. Corrected
+# 2026-09-22 against the running app, the old path answering `UnknownObject`.
+ITEM_PATH = "/StatusNotifierItem"
 ITEM_IFACE = "org.kde.StatusNotifierItem"
 PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
 
@@ -49,7 +53,15 @@ def facet_connection(bus):
     menu object blocks on any client that does not answer, for the full 25s reply timeout -- a hang
     in the harness that reads exactly like a hang in the app.
     """
-    found = subprocess.run(["pgrep", "-f", "FacetLinux"], capture_output=True, text=True)
+    # **`facet-linux`, matched exactly, and the name is the Rust binary's.** This read `-f FacetLinux`
+    # until 2026-09-22, which was the Swift app and is a name nothing has ever answered to in this
+    # repository -- so the driver reported *facet is not running* against a running app, which is the
+    # same shape as the app having no tray at all. `Tests/Scripted/platform.sh` calls it `facet-linux`
+    # and that is the spelling to keep in step with.
+    #
+    # `-x` rather than `-f`: an exact match on the process name cannot also match some other command
+    # line that happens to contain these words, this transcript included.
+    found = subprocess.run(["pgrep", "-x", "facet-linux"], capture_output=True, text=True)
     pids = {int(line) for line in found.stdout.split()}
     if not pids:
         raise SystemExit("facet is not running")
@@ -86,8 +98,20 @@ def lines(node, depth=0, out=None):
 
 
 def menu_of(bus):
+    """The item's menu object, at whatever path the item says it is.
+
+    **Asked for rather than assumed**, because the path is the implementation's choice and this file has
+    already been wrong about it once: ksni answers `/MenuBar` where libayatana-appindicator answered
+    `/org/ayatana/NotificationItem/facet/Menu`. The StatusNotifierItem specification makes `Menu` a
+    property of the item for exactly this reason, so reading it survives the next backend too.
+    """
     name = facet_connection(bus)
-    obj = bus.get_object(name, MENU_PATH, introspect=False)
+    properties = dbus.Interface(bus.get_object(name, ITEM_PATH), PROPERTIES_IFACE)
+    try:
+        path = str(properties.Get(ITEM_IFACE, "Menu"))
+    except dbus.DBusException as exc:
+        raise SystemExit(f"the tray item publishes no Menu property, so its menu cannot be found: {exc}")
+    obj = bus.get_object(name, path, introspect=False)
     return dbus.Interface(obj, MENU_IFACE)
 
 
