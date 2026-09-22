@@ -88,40 +88,24 @@ and reformatting once, deliberately.
 
 ## 3. Run the keyring probe, and say what the Mac gets
 
-**A build and a run, and it is the other half of a measurement this box has already taken.**
-`probe/keyring-secret-service` round-trips a secret through the Secret Service here and passes every
-check. **The same probe should work unchanged on the Mac**, and nobody knows that it does.
+**The round trip is done and this item is now only its last paragraph.** Answered 2026-09-22 on the Mac:
+`probe/keyring-secret-service` runs unchanged and passes every check. `keyring` 4.2.0 resolves to
+`apple-native-keyring-store` 1.0.2 there, from the same dependency line that gives this box the zbus one,
+and the binary links **`Security.framework`** and `CoreFoundation` and nothing third-party. No prompt
+appeared on a first write and read back, the writing process being the reading one. The facts are in
+[system-mac.md](system-mac.md#the-keychain-through-keyring) and the cross-reference is in
+[port-findings.md](port-findings.md#a-locked-secret-store-blocks-rather-than-failing-and-that-is-a-design-constraint),
+which was carrying the Linux half alone.
 
-```sh
-(cd probe/keyring-secret-service && cargo run)
-```
+**What is left is the locked Keychain, and it stays here because it needs the owner rather than a test
+run.** `security lock-keychain` locks the login keychain for everything on the machine, so the next
+password field in any application is a dialog somebody has to answer, and this is somebody's working
+laptop. It was not something to do unannounced in the middle of a batch of other work.
 
-**It writes only under its own service name, `facet-keyring-probe`, and deletes what it wrote.** It does
-not touch anything else in the keychain. Seven lines of output and an exit code is the whole answer.
+**It is worth doing, and here is why it is not merely symmetry.** On the Linux box a locked collection does
+not error: the read blocks indefinitely on a prompt that outlives the caller. Three rules were written from
+that, including that reading a secret must not sit on the launch path. **If macOS returns an error instead,
+those three are a Linux workaround. If it blocks too, they are rules for the port.** That is the difference
+the measurement makes, and nothing about the two APIs says which way it goes.
 
-**Why it should just work, and why that is not evidence.** `keyring` 4.2.0's default `v1` feature enables
-all three platform stores, each target-gated, so a Mac takes `apple-native-keyring-store/keychain` from
-the same dependency line that gives this box `zbus-secret-service-keyring-store`. **That is read off a
-manifest, which is exactly the kind of reasoning the probe exists to replace**: the equivalent inference
-about `libsecret-1-dev` on this box turned out to be wrong in the direction nobody expected.
-
-**The line worth reporting whichever way it goes** is what the binary links. Here it is `libc` and
-`libgcc_s` and nothing else, no `libsecret`, because the path is pure Rust over zbus. A Mac linking
-Security.framework would be the expected answer and is worth writing down, in
-[system-mac.md](system-mac.md) beside the other toolchain facts.
-
-**One more thing worth knowing, and it is the part most likely to differ.** A **locked** collection here
-does not return an error: the read **blocks indefinitely** on a GUI prompt, and the prompt outlives the
-process that raised it, so a background Facet would hang rather than fall back. Measured 2026-09-22 and
-written up in [port-findings.md](port-findings.md). **Whether a locked Keychain does the same to a caller
-on macOS is a separate question and should not be assumed to match** -- it decides whether the timeout
-that constraint implies is a Linux workaround or a rule for the port. `security lock-keychain` and a
-`cargo run -- read` is the shape; the probe has `store`, `read` and `delete` modes for exactly this.
-
-**Also worth your view, and it is a design question rather than a build one.** `keyring`'s own `lib.rs`
-says an application that wants to choose its store per platform *"should not be linking to this library
-at all"* and should take `keyring-core` plus a specific store. **That describes this app**: CLAUDE.md
-makes every platform capability a port, so each platform does choose its own store, and `v1`'s single
-platform-independent `Entry` is the opposite arrangement. Nothing depends on `keyring` yet, so this is a
-question for the secret store port rather than a change to make now. The probe README sets out both
-sides.
+`store`, lock by hand, `read`, unlock, `delete` is the sequence; the probe has all three modes for it.
