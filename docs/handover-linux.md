@@ -57,24 +57,9 @@ shorter list and one that empties.
 2. **Then 3**, which is the first thing that puts Facet on screen here at all.
 3. **4 and 6 are cheap and answer questions that are currently blocking nobody but will block everybody**,
    so take them whenever the machine is in front of you.
-4. **1 and 5 are not tasks.** They are what is not ready for you, and what is not proven yet.
+4. **5 is not a task.** It is what is not proven yet.
 
 ---
-
-## 1. Not a task: the Settings window is still inside `facet-mac`, and cannot be shared yet
-
-**Do not start a Slint window here.** Every `.slint` file lives in `crates/facet-mac/ui/` and is compiled by
-that crate's own `build.rs`, so today the Settings window is a macOS-only thing. Building a second one here
-would be the opposite of what the port is for: requirement 4 in [rust-port.md](rust-port.md) is a single
-shared UI, and it is the requirement the whole language choice rests on.
-
-**The Mac will lift it out**, into somewhere both composition roots can compile, and this item goes when
-that has happened. Until then the tabs, the pill bar, the metrics and the widgets are all read-only from
-here: they are worth reading, since they are what this machine will draw too, but a change to them made
-here would be a change to a file the Mac is about to move.
-
-**What is not blocked by this**: everything in item 2, and the whole of item 3. The tray is not the window,
-and the composition root does not need a window to bring up a database and start recording.
 
 ## 2. The composition root for Linux: the data directory, the database, and the trace
 
@@ -186,5 +171,6 @@ the btleplug one does.
 every accessibility id in the Settings window is a promise rather than a fact, and
 `scripts/at-press.py` has nothing proven to press.
 
-**This one is blocked by item 1**, there being no window here to put on the bus, unless you run the Slint
-probe in `probe/` instead. That is the cheaper route and answers the same question.
+**Nothing blocks this any more.** `facet-ui` is the shared Settings window and it compiles on this machine
+as part of a bare `cargo build`, so item 2 gets a window on screen here as soon as it opens one. The Slint
+probe in `probe/` answers the same question and is cheaper, if you would rather not wait for that.
