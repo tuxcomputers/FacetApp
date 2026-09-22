@@ -319,17 +319,37 @@ in the tray and printed every event with its button and state. What came back:
 for the menu. macOS and Windows give the app both clicks; MATE gives it the left one and handles the right
 one itself, which amounts to the same behaviour by a different route.
 
-**What was not recorded is which applet it ran in**, and that is the one gap. The paragraph below is why it
-matters: a result from the Notification Area applet generalises, and one from the Indicator Applet is a result
-about an applet with an open left/right click bug that happened not to bite. The behaviour observed was the
-correct one either way, so this is a question about how far the finding travels rather than about whether it
-holds on that machine.
+**Which applet it ran in is now answered, and it is neither of the two this section had been weighing.**
+Measured on the Linux box 2026-09-22: **`xapp-sn-watcher`**, from `libxapp1`, forwarding to the
+**`mate-xapp-status-applet`** on the panel. Not the Notification Area applet and not the Indicator Applet.
 
-**The Linux box is already running the wrong applet for this.** `linux-port.md` on `feature/linuxPort` records it as Linux Mint 22.3
-on MATE 1.26.1 under X11, with `libayatana-appindicator3` and **`mate-indicator-applet`** present. That is the
-Indicator Applet, which is precisely the one whose left and right click bug is still open, rather than the
-Notification Area applet whose bugs are closed and which also speaks XEmbed. **Any test of click behaviour has
-to say which applet it ran against**, or it measures the wrong thing and answers the wrong question.
+**The route is forced rather than chosen, which is what makes the answer solid.** `ksni` publishes a
+StatusNotifierItem on the session bus, so the host is whoever owns `org.kde.StatusNotifierWatcher`, and on
+that box the sole owner is `xapp-sn-watcher`. The two candidates are both excluded for reasons that are
+structural rather than circumstantial:
+
+- **The Notification Area applet is not doing SNI at all**: `org.mate.panel enable-sni-support` reads
+  **false** there. So it is the XEmbed half only, and an SNI item cannot reach it. The paragraph above is
+  right that the applet can do both; the switch is simply off.
+- **The Indicator Applet has never been on that panel.** It is installed, which is what the earlier reading
+  of `linux-port.md` picked up, but installed is not running: it is absent from
+  `/org/mate/panel/general/object-id-list`, absent from every object under it, and `dconf` holds no stale key
+  mentioning it anywhere. **Installed and running are different questions, and the earlier note confused
+  them.**
+
+**So the open `mate-indicator-applet` #33 bug never applied to that measurement**, and the worry that the
+result came from an applet that happened not to bite is retired.
+
+**How far it travels is a different question, and the honest answer is narrower than "MATE".** The result is
+about the XApp SNI watcher, which Linux Mint ships and plain MATE does not, so it generalises to Mint and to
+anything else running `xapp-sn-watcher` rather than to every MATE install. A box with
+`enable-sni-support` true, or with the Indicator Applet actually on the panel, is a different host and an
+untested one.
+
+**One caveat, stated rather than glossed.** This was measured four days after the probe, and the desktop
+session began 2026-09-20, so these are not the same processes that hosted it. What carries across is the
+panel configuration, which is persistent `dconf` state and holds no indicator applet and no trace of one,
+and the structural point that an SNI item has nowhere else on that box to go.
 
 **Measured 2026-09-18 and it works**, which the section above sets out. This paragraph used to say it was the
 open question that mattered most, and it was; the probe that settled it is described there.
@@ -381,9 +401,10 @@ known end date.** It is recorded here because the option is open now and closes 
 
 Each of these is a thing to run, not a thing to think about further.
 
-1. ~~**What MATE actually does with a left click.**~~ **Answered 2026-09-18: the design works.** See *The menu
-   bar on MATE, measured* above. The applet it ran in was not recorded, which is the one thing still worth
-   knowing.
+1. ~~**What MATE actually does with a left click.**~~ **Answered 2026-09-18: the design works**, and
+   **2026-09-22 for the applet it ran in**: `xapp-sn-watcher` feeding `mate-xapp-status-applet`, which is
+   neither of the two that question was between. See *The menu bar on MATE, measured* above. Nothing is left
+   open here.
 2. ~~**Whether `btleplug` can drive this cube.**~~ **Answered 2026-09-20: it can.** See *The radio, measured*
    below. This was the one that mattered and it is no longer open.
 3. ~~**Driving a Slint window from a script.**~~ **Answered 2026-09-20: the suite's own mechanisms work.**

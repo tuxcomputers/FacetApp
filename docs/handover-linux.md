@@ -54,8 +54,8 @@ shorter list and one that empties.
 1. **3 first**, which is the first thing that puts Facet on screen here at all. The trace it will record
    into is already open: item 2 did that, so anything 3 does can say what it did in a way this machine
    can read back.
-2. **4 and 6 are cheap and answer questions that are currently blocking nobody but will block everybody**,
-   so take them whenever the machine is in front of you.
+2. **6 is cheap and answers a question that is currently blocking nobody but will block everybody**, so
+   take it whenever the machine is in front of you.
 3. **5 is not a task.** It is what is not proven yet.
 
 ---
@@ -83,20 +83,6 @@ are about geometry rather than about macOS. **Whether a non-square icon survives
 untested**: `icon_pixmap` carries its own width and height and the specification permits it, which is not the
 same as the applet honouring it. That answer belongs in
 [port-findings.md](port-findings.md) when you have it, beside the macOS and Windows ones.
-
-## 4. Say which applet the tray probe ran in
-
-**Cheap, and it decides how far the 2026-09-18 measurement travels.** That probe got exactly the click split
-the design wants, but nothing recorded which applet was showing it, and this box has
-**`mate-indicator-applet` 1.26.0** installed: the Indicator Applet, whose left and right click bug
-[is still open](https://github.com/mate-desktop/mate-indicator-applet/issues/33), rather than the
-Notification Area applet whose bugs are closed and which also speaks XEmbed.
-
-**The behaviour observed was the correct one either way**, so this is not a doubt about that machine. It is
-that a result from the Notification Area applet generalises to other MATE installs and a result from the
-Indicator Applet is a result about an applet that happened not to bite.
-
-Write the answer into [rust-port.md](rust-port.md), in the paragraph that currently says it was not recorded.
 
 ## 5. Not a task: `keyring` has never been built against anything
 

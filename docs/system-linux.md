@@ -422,6 +422,36 @@ probe was built and not run. That is the next thing to measure, and it needs the
 
 ---
 
+## What hosts a tray icon here
+
+**Measured 2026-09-22.** This decides where a `ksni` status item actually lands, and the answer is not
+either of the two applets the question is usually between.
+
+| | |
+|---|---|
+| Panel | `mate-panel`, with `notification-area` and `xapp-status` both on it |
+| `org.kde.StatusNotifierWatcher` | **owned by `xapp-sn-watcher`**, from `libxapp1`, at `/usr/lib/x86_64-linux-gnu/xapps/` |
+| What displays the item | `mate-xapp-status-applet` |
+| `org.mate.panel enable-sni-support` | **false** |
+| `mate-indicator-applet` | **installed, and not on the panel** |
+| Already registered | `blueman` and `indicator_solaar`, so the path is carrying real items |
+
+**A StatusNotifierItem has exactly one place to go on this box**, and the app does not choose it: `ksni`
+publishes on the session bus and the host is whoever owns `org.kde.StatusNotifierWatcher`. That is
+`xapp-sn-watcher` and nothing else, one process being able to own a bus name.
+
+**The Notification Area applet can speak SNI and here it is not**, `enable-sni-support` reading false, so
+it is the XEmbed half only and an SNI item cannot reach it. **The Indicator Applet is installed but has
+never been on this panel**: absent from `/org/mate/panel/general/object-id-list`, absent from every object
+under it, and `dconf` holds no stale key naming it. **Installed and running are different questions**, and
+an earlier note in [rust-port.md](rust-port.md) confused them and concluded this box was running the
+applet with the open click bug. It is not, and never was.
+
+**What that costs in reach**: a click result from here is a result about the XApp watcher, which Linux
+Mint ships and plain MATE does not. It generalises to Mint, not to every MATE install.
+
+---
+
 ## The schema applies under this box's SQLite
 
 **Measured 2026-09-07.** Every DDL file applied to a fresh database in file order, each with
