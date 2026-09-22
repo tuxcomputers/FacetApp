@@ -6,6 +6,14 @@ use std::path::Path;
 /// on a Retina display; 512 is the usual size an app bundle ships and leaves room above both.
 const ICON_SIDE: u32 = 512;
 
+/// How much of that square the drawing fills, leaving the rest as margin.
+///
+/// **Every icon in the Dock is inset, and one that is not looks bigger than its neighbours rather than
+/// closer.** Facet.svg fills its own viewBox to the edges, so drawn at full size the ring sat flush against
+/// the tile and the arrowhead was clipped by it. Apple's own grid gives a round mark about 88% of the
+/// canvas; this is a shade under that, the ring being the outermost thing in the drawing.
+const ICON_FILL: f32 = 0.86;
+
 fn main() {
     // The style is chosen at build time, not at runtime, so one build looks the same everywhere.
     // docs/rust-port.md explains why that serves the uniformity requirement rather than fighting it.
@@ -33,11 +41,13 @@ fn draw_dock_icon() {
     let mut pixmap = resvg::tiny_skia::Pixmap::new(ICON_SIDE, ICON_SIDE)
         .expect("a square pixmap of a fixed size is always allocatable");
     // The drawing is square, so one scale serves both axes. Taken from the tree rather than assumed, so a
-    // redrawn logo at another size still fills the icon.
-    let scale = ICON_SIDE as f32 / tree.size().width();
+    // redrawn logo at another size still fills the icon the same way.
+    let scale = (ICON_SIDE as f32 * ICON_FILL) / tree.size().width();
+    // Centred in what is left, so the margin is even on all four sides.
+    let margin = (ICON_SIDE as f32 * (1.0 - ICON_FILL)) / 2.0;
     resvg::render(
         &tree,
-        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        resvg::tiny_skia::Transform::from_translate(margin, margin).pre_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
 

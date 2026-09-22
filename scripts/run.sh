@@ -84,14 +84,16 @@ USAGE
 
 # Delete the local databases, after showing exactly what would go and asking.
 #
-# **Read this before making it more convenient.** It carries over from the Swift app's run.sh, where
-# the repository and the app were the same thing. They are not any more: this app writes nothing to
-# that directory yet, and everything in it belongs to the Swift Facet, production.sqlite included,
-# which holds real recorded time. So today this can only destroy the other app's data and can gain
-# nothing. It exists ready for when this app has a database of its own, and is loud until then.
+# **These are Facet's own now.** They were TimeFlip's when this script was written, back when the two
+# apps shared a directory; the rename gave Facet `~/Library/Application Support/Facet` and left TimeFlip
+# its own, so nothing here can reach the other app's data any more. What it *can* reach is
+# production.sqlite, which is where this app's real recorded time will land, so the asking stays.
+#
+# It guards on Facet rather than on TimeFlip for the same reason: the process that has these files open
+# is this one.
 clean_databases() {
-    if pgrep -x "$swift_process" >/dev/null 2>&1; then
-        echo "error: $swift_process is running and these are its databases. Quit it first." >&2
+    if pgrep -x "$crate" >/dev/null 2>&1; then
+        echo "error: $crate is running and has these databases open. Quit it first." >&2
         exit 1
     fi
 
@@ -113,9 +115,9 @@ clean_databases() {
         printf '    %8s  %s\n' "$(du -h "$data_dir/$f" | cut -f1)" "$f"
     done
     echo
-    echo "WARNING: this app writes nothing there yet. Everything above belongs to the Swift Facet,"
-    echo "         and production.sqlite is real recorded time. Deleting it loses that time."
-    echo "         The backup/ directory beside them is left alone."
+    echo "WARNING: production.sqlite is where this app records real time. Deleting it loses that time."
+    echo "         debug.sqlite is only the trace and costs nothing; test.sqlite is rebuilt by"
+    echo "         scripts/switch-database.sh test -clean. The backup/ directory is left alone."
     printf 'Continue? [y/N] '
 
     # The terminal where there is one, because stdin may be the script itself. Falling back to stdin
@@ -195,11 +197,12 @@ if pgrep -x "$crate" >/dev/null 2>&1; then
     fi
 fi
 
-# The Swift app owns the data directory and the real recorded time in it. This one writes nothing
-# yet, so the warning is about the menu bar rather than about the data, for now.
+# **Two menu bars, two directories, and only the first is a problem.** Since the rename the two apps keep
+# separate data, so the warning is about the menu bar being confusing rather than about anything being at
+# risk. TimeFlip still owns the time that has actually been recorded, this app not being able to track any.
 if pgrep -x "$swift_process" >/dev/null 2>&1; then
     echo "note: $swift_process is running too, so there will be two icons in the menu bar."
-    echo "      That one owns the real recorded time; this one writes nothing yet."
+    echo "      They keep separate databases; that one owns the time recorded so far."
 fi
 
 echo "==> Building $crate ($profile)"

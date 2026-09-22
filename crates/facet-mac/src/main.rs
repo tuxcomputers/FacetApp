@@ -47,7 +47,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // that is what creates the application object, and again from inside the event loop below, because
     // the windowing layer sets its own policy on the way up.
     show_in_dock(false, &log);
-    wear_the_facet_logo(&log);
 
     let tab_log = Rc::clone(&log);
     ui.on_tab_selected(move |tab| {
@@ -262,6 +261,14 @@ fn show_in_dock(wanted: bool, log: &Option<DebugLog>) {
         log.record_failure(Tag::Launch, || {
             "macOS refused the activation policy, so the Dock icon is not what it should be".to_string()
         });
+        return;
+    }
+
+    // **After the policy, never before.** The tile does not exist while the app is Accessory, so an icon set
+    // at launch is set on nothing: the tile macOS then creates on the way to Regular comes up wearing the
+    // generic executable placeholder instead. Measured by doing exactly that.
+    if wanted {
+        wear_the_facet_logo(mtm, log);
     }
 }
 
@@ -433,21 +440,17 @@ fn expand_home(stored: &str) -> PathBuf {
 ///
 /// The image is the same `Facet.svg` the rest of the project uses, rasterised at build time: one drawing,
 /// and no PNG in the repository that can drift from it.
+///
+/// No stub for the other platforms: a Dock is a macOS object, and the only caller is the macOS half of
+/// [`show_in_dock`].
 #[cfg(target_os = "macos")]
-fn wear_the_facet_logo(log: &Option<DebugLog>) {
-    use objc2::MainThreadMarker;
+fn wear_the_facet_logo(mtm: objc2::MainThreadMarker, log: &Option<DebugLog>) {
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::NSData;
 
     /// Rasterised from Facet.svg by build.rs.
     const LOGO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dock-icon.png"));
 
-    let Some(mtm) = MainThreadMarker::new() else {
-        log.record_failure(Tag::Launch, || {
-            "Not on the main thread, so the Dock icon was left as it was".to_string()
-        });
-        return;
-    };
     let data = NSData::with_bytes(LOGO);
     let Some(image) = NSImage::initWithData(objc2::AllocAnyThread::alloc(), &data) else {
         log.record_failure(Tag::Launch, || {
@@ -463,5 +466,3 @@ fn wear_the_facet_logo(log: &Option<DebugLog>) {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn wear_the_facet_logo(_log: &Option<DebugLog>) {}
