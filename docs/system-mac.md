@@ -133,11 +133,16 @@ tell *no PIN has ever been stored* from *the secret store is broken*.
 is now measured. It was worth running anyway: the equivalent inference about `libsecret-1-dev` on the
 Linux box turned out to be wrong in the direction nobody expected.
 
-**What a locked Keychain does to a caller here is still unmeasured**, and
-[port-findings.md](port-findings.md#a-locked-secret-store-blocks-rather-than-failing-and-that-is-a-design-constraint)
-says why it matters: on Linux the read blocks indefinitely on a prompt that outlives the caller. Finding
-out here means locking the login keychain by hand, which prompts every other application on the machine,
-so it needs the owner rather than a test run.
+**A locked Keychain blocks the caller, the same as Linux.** Measured 2026-09-22: with `login.keychain-db`
+locked by `security lock-keychain`, `get_password` did not return and was killed at a 25 second cap, a
+`SecurityAgent` dialog appeared, and **the dialog stayed on screen after the caller was killed**. So a
+stored secret needs its own timeout and must not be read on the launch path, on this machine as much as on
+the other one. See
+[port-findings.md](port-findings.md#macos-does-the-same-thing-so-these-are-rules-for-the-port).
+
+**`security show-keychain-info` is not a safe way to check the lock state**, which cost one invalid
+measurement here: against a locked keychain it raises a password dialog of its own, and answering that
+unlocks the keychain. Watch for the `SecurityAgent` process instead.
 
 ---
 

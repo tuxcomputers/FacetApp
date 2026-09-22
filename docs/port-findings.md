@@ -383,13 +383,32 @@ is pending there is no error to map, and nothing times out on the app's behalf.
 Secret Service's own prompt mechanism rather than a wrapper's choice. It is a property of the platform the
 port has to hold rather than something a different crate avoids.
 
-**The macOS half of the round trip is measured and the locked half is not.** The same probe, unchanged,
-passes every check on the Mac against an unlocked Keychain: `keyring` 4.2.0 resolves to
-`apple-native-keyring-store` there and links `Security.framework`, with no prompt on a first write and read
-back. See [system-mac.md](system-mac.md#the-keychain-through-keyring). **What a locked Keychain does to a
-caller is still unmeasured**, and should not be assumed to match: it decides whether the timeout above is a
-Linux workaround or a rule for the port. Measuring it means locking the login keychain by hand, which
-prompts every other application on that machine, so it waits for the owner rather than for a test run.
+### macOS does the same thing, so these are rules for the port
+
+**Measured 2026-09-22 on the Mac with the owner present**, by the same probe, and the answer is that the
+platforms agree. This was written down as the question that decided whether the three rules above were a
+Linux workaround or a constraint of the design. **They are a constraint of the design.**
+
+| | macOS | Linux |
+|---|---|---|
+| `get_password` against a locked store | **blocked.** Killed at a 25s cap | **blocked.** Killed at a 25s cap |
+| What appeared instead | a `SecurityAgent` password dialog | a GNOME **Unlock Login Keyring** dialog |
+| When the caller was killed | **the dialog stayed on screen**, orphaned | **the dialog stayed on screen**, orphaned |
+| Unlocked round trip | every check passes | every check passes |
+
+**The item really was in the keychain that was locked**, which is worth stating because it is the
+explanation that would have made this measurement worthless. `keyring` 4.2.0 on macOS could reasonably have
+used the data protection keychain, which `security lock-keychain` does not touch;
+`security find-generic-password -s facet-keyring-probe` found it in `login.keychain-db` by name, so the
+lock and the read were about the same store.
+
+**The first attempt at this measured nothing and looked like a clean pass**, which is the part worth
+carrying. A `security show-keychain-info` run to confirm the lock had itself raised a password dialog, and
+answering that dialog unlocked the keychain before the probe ever read from it. The read then returned in
+one second with the right value. **Two commands that both look like inspection are not**: `show-keychain-info`
+against a locked keychain prompts and can unlock it, so it cannot be used to check the state a test depends
+on. What settled it instead was watching for the `SecurityAgent` process during the read, which needs
+nobody to report what they saw.
 
 ## Design rules that follow from all of the above
 
