@@ -51,9 +51,7 @@ shorter list and one that empties.
 
 **A recommendation rather than a rule**, and what it is really saying is which items unblock the most.
 
-1. **6 is cheap and answers a question that is currently blocking nobody but will block everybody**, so
-   take it whenever the machine is in front of you.
-2. **5 is not a task.** It is what is not proven yet.
+1. **5 is not a task.** It is what is not proven yet, and it is all that is left.
 
 ---
 
@@ -65,22 +63,3 @@ workspace. **No crate in the workspace or either probe pulls it in**, so nothing
 it and nothing on the Mac has either since the launch probe was taken out.
 
 When the secret store port arrives, this is the half with no evidence behind it.
-
-## 6. Does a Slint window appear on the accessibility bus?
-
-**The single most load-bearing unknown for the scripted suite here**, and it needs the owner's screen, so
-ask rather than launching.
-
-**What is known**: Slint ships its own AT-SPI bridge and it is in the graph, measured 2026-09-20 from the
-probe's build. `accesskit` 0.24.1, `accesskit_unix` 0.22.1, `accesskit_atspi_common` 0.19.1 and `atspi` 0.29.0
-all compile as part of `i-slint-backend-winit`. So a Slint window does not need `libatk-adaptor` the way a
-GTK app does: it speaks AT-SPI over zbus in pure Rust, which is why the Slint probe links no `libdbus` while
-the btleplug one does.
-
-**What is not known is whether any of that reaches the bus.** The probe was built and never run. Until it is,
-every accessibility id in the Settings window is a promise rather than a fact, and
-`scripts/at-press.py` has nothing proven to press.
-
-**Nothing blocks this any more.** `facet-ui` is the shared Settings window and it compiles on this machine
-as part of a bare `cargo build`, so item 2 gets a window on screen here as soon as it opens one. The Slint
-probe in `probe/` answers the same question and is cheaper, if you would rather not wait for that.
