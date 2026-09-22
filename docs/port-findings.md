@@ -216,7 +216,7 @@ plausible until it was drawn.
 `Text` with `wrap: word-wrap` reports the height of the sentence on one line, is given that height, and then
 wraps to two inside it. The second line of the App tab's Debug footnote sat outside the panel it belongs to.
 The fix is to set the width first and take the height from the result, which is what `Footnote` in
-`crates/facet-mac/ui/widgets.slint` is a box around a text for:
+`crates/facet-ui/ui/widgets.slint` is a box around a text for:
 
 ```slint
 Rectangle {

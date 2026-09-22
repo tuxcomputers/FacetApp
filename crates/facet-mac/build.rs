@@ -1,4 +1,7 @@
-//! Compiles the Settings window, and draws the Dock icon.
+//! Draws the Dock icon.
+//!
+//! The Settings window is not compiled here. It is `facet-ui`'s, so that one drawing of it serves all
+//! three platforms; this crate only supplies what is about the Mac, and a Dock is exactly that.
 
 use std::path::Path;
 
@@ -15,11 +18,6 @@ const ICON_SIDE: u32 = 512;
 const ICON_FILL: f32 = 0.86;
 
 fn main() {
-    // The style is chosen at build time, not at runtime, so one build looks the same everywhere.
-    // docs/rust-port.md explains why that serves the uniformity requirement rather than fighting it.
-    let config = slint_build::CompilerConfiguration::new().with_style("cupertino".into());
-    slint_build::compile_with_config("ui/settings.slint", config).expect("the Settings window failed to compile");
-
     draw_dock_icon();
 }
 

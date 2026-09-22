@@ -16,14 +16,13 @@ use std::time::Duration;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
+use facet_ui::{ComponentHandle, SettingsWindow};
 use tray_icon::{
     TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 
 mod status_icon;
-
-slint::include_modules!();
 
 /// How often the tray's event channels are drained, on the UI thread.
 ///

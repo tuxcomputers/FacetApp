@@ -8,15 +8,17 @@ repository.workspace = true
 
 [dependencies]
 facet-core.workspace = true
+facet-ui.workspace = true
 # renderer-software is not for the app: it is what examples/draw-settings-tabs.rs uses to draw the Settings
 # tabs into a buffer, so a layout can be looked at without putting a window on the owner's screen.
 slint = { workspace = true, features = ["renderer-software"] }
 tray-icon.workspace = true
 
 [build-dependencies]
-slint-build.workspace = true
 # Rasterises Facet.svg into the Dock icon at build time, so there is one drawing and no generated PNG in
 # the repository to drift from it. Already in the tree: it is the renderer Slint uses for SVG images.
+#
+# No slint-build here any more: the Settings window is facet-ui's, compiled once for every platform.
 resvg = "0.48.1"
 
 # Matching the versions tray-icon already pins, so no second copy of either is pulled in.

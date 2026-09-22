@@ -23,9 +23,8 @@ use std::rc::Rc;
 
 use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor, TargetPixel};
 use slint::platform::{Platform, WindowAdapter};
+use facet_ui::{ComponentHandle, SettingsWindow};
 use slint::{LogicalSize, PhysicalSize, PlatformError};
-
-slint::include_modules!();
 
 /// How tall each tab is rendered. **The height the window opens at**, so a tab that does not fit is cut here
 /// exactly where the scroll view cuts it in the app. FACET_TAB_HEIGHT overrides it.

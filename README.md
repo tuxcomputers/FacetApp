@@ -27,7 +27,7 @@ app needs. Every other concern has many cross-platform answers; the radio has al
 | | |
 |---|---|
 | [`docs/`](docs/) | The vendor protocol, what the hardware actually does, the schema, the architecture, and what the Swift port measured |
-| [`crates/`](crates/) | `facet-core` plus one crate per platform. Nothing implemented yet |
+| [`crates/`](crates/) | `facet-core`, the shared `facet-ui`, and one composition root per platform |
 | [`probe/`](probe/) | Two Rust programs that answered a question and can be re-run |
 | [`scripts/`](scripts/) | The accessibility drivers for both platforms, the BLE probe, and the database tooling |
 | [`Tests/Scripted/`](Tests/Scripted/) | The harness that drives a running app against a real cube |
@@ -110,14 +110,18 @@ not found* even though the toolchain is fine. Measured 2026-09-20: cargo 1.98.1,
 . "$HOME/.cargo/env"        # or: export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-**A bare build builds the core only.** The three platform crates are each buildable on exactly one
-machine, so `default-members` is the core and the native one is named explicitly:
+**A bare build builds the two crates that compile anywhere.** The three platform crates are each buildable
+on exactly one machine, so `default-members` is `facet-core` and `facet-ui`, and the native one is named
+explicitly:
 
 ```sh
-cargo build                 # facet-core
-cargo test                  # facet-core, the hermetic suite
+cargo build                 # facet-core and facet-ui
+cargo test                  # the hermetic suite
 cargo build -p facet-mac    # or facet-linux, or facet-windows, on that machine
 ```
+
+`facet-ui` is in the default set on purpose: it is the one Settings window all three platforms draw, so a
+broken `.slint` file breaks everywhere, and a bare build on any machine should be what catches it.
 
 **The probes are excluded from the workspace on purpose** and resolve their own dependencies, so
 re-running one reproduces the transcript in its README rather than whatever the app is pinned to today.

@@ -1,0 +1,13 @@
+[package]
+name = "facet-ui"
+description = "The Settings window. One drawing of it, compiled once, used by every composition root."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+slint.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true

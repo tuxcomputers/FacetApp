@@ -23,6 +23,8 @@ crates/
     src/
     tests/
     resources/database/     the DDL, compiled in
+  facet-ui/                 the Settings window, compiled once and drawn by all three
+    ui/                     the .slint sources
   facet-mac/                composition root + adapters for macOS
   facet-linux/              composition root + adapters for Linux (MATE)
   facet-windows/            composition root + adapters for Windows
@@ -31,8 +33,22 @@ probe/                      throwaway programs that answered a question, kept be
 scripts/                    the accessibility drivers and the database tooling
 ```
 
-`facet-core` is a library. The three platform crates are binaries, and each one is a **composition root**:
-the only place in the program that knows both a port and the thing that performs it.
+`facet-core` and `facet-ui` are libraries. The three platform crates are binaries, and each one is a
+**composition root**: the only place in the program that knows both a port and the thing that performs it.
+
+**`facet-ui` is the second platform-blind crate, and it is blind for a different reason.** The core must not
+know what it is running on because a capability has to be swappable. The UI must not know because
+[requirement 4](rust-port.md#the-requirements) says there is one of it: uniformity across the three
+platforms matters and fidelity to any one of them does not, which is the pair the language choice rests on.
+So the `.slint` sources and the style they compile with live in one crate, and a composition root takes the
+window rather than building one.
+
+**It lived inside `facet-mac` until 2026-09-22**, which made it a macOS window by accident of where the file
+sat: that crate's `build.rs` compiled it, so a second composition root had no way to reach it. Moving it cost
+nothing but the move, and the rendered tabs are identical either side of it.
+
+**The two libraries do not know about each other.** `facet-core` says what the app is, `facet-ui` says what
+it looks like, and nothing in the workspace depends on both except a composition root.
 
 ---
 

@@ -1204,14 +1204,22 @@ name = "facet-mac"
 version = "0.1.0"
 dependencies = [
  "facet-core",
+ "facet-ui",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "png",
  "resvg",
  "slint",
- "slint-build",
  "tray-icon",
+]
+
+[[package]]
+name = "facet-ui"
+version = "0.1.0"
+dependencies = [
+ "slint",
+ "slint-build",
 ]
 
 [[package]]
