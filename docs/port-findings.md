@@ -241,6 +241,44 @@ rather than about appearance: the fonts are rasterised by Slint and not by the p
 
 ---
 
+## Slint already depends on ksni, and the two must agree on an async backend
+
+**Measured 2026-09-22 on the Linux box, building `facet-linux`'s tray.** Taking `ksni` at its default and
+adding it beside `slint` does not compile:
+
+```
+error: Features "tokio" and "async-io" cannot be enabled at the same time.
+ --> ksni-0.3.6/src/compat.rs:5:1
+```
+
+**Nothing in this workspace asked for `async-io`. Slint did.** `slint` 1.18 has `system-tray` in its
+**default** features, which enables `i-slint-core/system-tray`, which on
+`cfg(unix, not(apple), not(android))` pulls this same `ksni` with `ksni/async-io` and `ksni/blocking`.
+Cargo unifies features across the graph, so a second dependant asking for `ksni`'s default `tokio` turns
+both async backends on at once and `ksni` refuses outright.
+
+**It fails at compile time, which is the good case and worth saying.** The two backends are mutually
+exclusive and the crate says so with a `compile_error!` rather than picking one, so this cannot ship as a
+runtime fault. What it can do is look like a broken lockfile or a bad version pin, because the crate named
+in the error is one the manifest does name and the feature in the error is one the manifest does not.
+
+**Three things follow, and the third is the one that generalises:**
+
+- **`facet-linux` takes `default-features = false` with `async-io` and `blocking`**, matching what Slint
+  has already forced. `blocking` is the reason there is no async runtime and no tokio in the crate at all:
+  `ksni::blocking::TrayMethods::spawn` is an ordinary call returning a handle.
+- **The `default-features = false` lives in the workspace manifest, not the member**, because cargo refuses
+  to let a member turn a workspace dependency's defaults off. The member names the two features it wants.
+- **A dependency's default features are part of what a UI toolkit brings in**, and Slint brings in more
+  than a renderer. Before adding any crate that a desktop shell might also provide -- a tray, a
+  notification, a portal, a clipboard -- check whether Slint is already carrying it, because the collision
+  arrives as a feature error naming a crate nobody thought they had two of.
+
+**Not yet answered: whether Slint means to expose a tray of its own.** The feature is on by default and
+`i-slint-core` holds the dependency, but nothing tray-shaped is re-exported from `slint`'s public API at
+1.18. If a later version does expose one, it is worth a look: a tray that came from the same crate as the
+window would serve requirement 4 better than one crate per platform. That is a thing to check, not a plan.
+
 ## Design rules that follow from all of the above
 
 Short list, all of them enforceable from the first commit.

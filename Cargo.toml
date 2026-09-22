@@ -53,6 +53,13 @@ slint-build = "1.18.0"
 # chosen in docs/rust-port.md, not yet built against
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 tray-icon = "0.24.2"   # not 0.25: it wants muda 0.20 while slint pins 0.19, and two mudas means two ObjC classes of the same name
-ksni = "0.3.6"          # the Linux tray backend: AppIndicator emits no click events at all
+# The Linux tray backend: AppIndicator emits no click events at all.
+#
+# **`default-features = false` is load-bearing and is here rather than in facet-linux**, because a member
+# cannot turn a workspace dependency's defaults off. ksni's default is `tokio`; slint 1.18 enables
+# `system-tray` by default, which pulls this same crate with `async-io` and `blocking`; and cargo unifies
+# features across the graph, so taking the default here enables both async backends at once and ksni
+# refuses to compile. facet-linux names the two features it wants. Measured 2026-09-22.
+ksni = { version = "0.3.6", default-features = false }
 keyring = "4.2.0"
 sha2 = "0.11.0"

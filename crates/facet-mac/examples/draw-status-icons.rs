@@ -9,10 +9,10 @@
 //! Scaled up, because the point is to see the shape: the real icon is 32px and unreadable at that size
 //! on a page.
 
-#[path = "../src/status_icon.rs"]
-mod status_icon;
-
-use status_icon::Showing;
+// **Straight from the library now.** This used to include ../src/status_icon.rs by path, because
+// facet-mac is a binary crate and an example cannot import from one. The drawing has moved to facet-ui,
+// which is a library, so the example takes it the ordinary way and there is no second compilation of it.
+use facet_ui::status_icon::{self, Showing};
 
 const SCALE: usize = 6;
 

@@ -163,13 +163,23 @@ platform and this machine cannot compile the CoreBluetooth or WinRT adapters.
 | Command | Cold | Notes |
 |---|---|---|
 | `cargo build` | **15.93s** | 19 rlibs, `libsqlite3-sys` 0.30.1 and `rusqlite` 0.32.1 among them |
-| `cargo build -p facet-linux` | 0.15s | Incremental on the above; the crate is a stub today |
-| `cargo test` | 0.21s | **0 tests.** The hermetic suite does not exist yet |
-| `cargo clippy` | 5.34s | Exit 0, no warnings |
-| `cargo fmt --check` | instant | Exit 0, no diff |
+| `cargo build -p facet-linux` | 5.11s | On top of the above, once the crate had a tray in it |
+| `cargo test` | 30s | 19 tests, the slow one being `facet-ui` compiling Slint |
+| `cargo clippy` | 5.34s | Exit 0 |
+| `cargo fmt --check` | instant | **Exit 1, and see below** |
 
-**`cargo test` reporting 0 passed is the true state of the tree, not a broken invocation.** The 2,063
-behaviours in [behaviour-inventory.md](behaviour-inventory.md) are what has to land there.
+Measured 2026-09-20 and re-measured 2026-09-22, the workspace having gained `facet-ui` and a Linux tray
+in between. The 15.93s is still a true cold figure; the rest are what they cost from a warm `target/`.
+
+**`cargo fmt --check` fails on this tree and that is not a thing to fix by running `cargo fmt`.** There
+is **no `rustfmt.toml`**, and the house style is wider than rustfmt's defaults: compact struct literals
+like `Showing { paused: false, locked: false }` sit on one line throughout, and rustfmt's
+`struct_lit_width` of 18 would explode every one of them. Running it would rewrite most of the codebase
+into a style nobody chose. **Measured on a clean checkout, so it predates any of this work**, and it is
+not surprising: the Mac has no rustfmt installed at all, so no commit from there has ever been checked.
+
+**So rustfmt is not a gate today and should not be made one without first agreeing a `rustfmt.toml`.**
+`cargo clippy` is the one that is ready: it is installed here, it exits 0, and CI gates on neither.
 
 **The probes are excluded from the workspace** and resolve their own dependencies:
 

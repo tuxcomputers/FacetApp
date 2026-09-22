@@ -15,8 +15,15 @@
 //!
 //! Everything the `.slint` files export arrives through `include_modules!` and is re-exported, so a caller
 //! writes `use facet_ui::SettingsWindow;` and never names this crate's internals.
+//!
+//! **The tray icon is here for the same reason the window is**, in [`status_icon`]: there is one of it, and
+//! the pixels and the geometry are not a platform question. What differs is the tray API each composition
+//! root hands the result to, and that stays with the root. The window is Slint and the icon is a byte
+//! buffer, which is a difference in how they are drawn rather than in who they belong to.
 
 slint::include_modules!();
+
+pub mod status_icon;
 
 /// Re-exported because every generated component needs it and nothing else about it is interesting.
 ///

@@ -1197,6 +1197,9 @@ name = "facet-linux"
 version = "0.1.0"
 dependencies = [
  "facet-core",
+ "facet-ui",
+ "ksni",
+ "slint",
 ]
 
 [[package]]
