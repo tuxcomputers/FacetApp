@@ -51,38 +51,11 @@ shorter list and one that empties.
 
 **A recommendation rather than a rule**, and what it is really saying is which items unblock the most.
 
-1. **3 first**, which is the first thing that puts Facet on screen here at all. The trace it will record
-   into is already open: item 2 did that, so anything 3 does can say what it did in a way this machine
-   can read back.
-2. **6 is cheap and answers a question that is currently blocking nobody but will block everybody**, so
+1. **6 is cheap and answers a question that is currently blocking nobody but will block everybody**, so
    take it whenever the machine is in front of you.
-3. **5 is not a task.** It is what is not proven yet.
+2. **5 is not a task.** It is what is not proven yet.
 
 ---
-
-## 3. The tray, through `ksni` and not `tray-icon`
-
-**`tray-icon` cannot do this on Linux and the reason is not a preference.** Its Linux backend is
-libappindicator, which emits no click events at all, and it offers no `ksni` option: the feature list is
-`gtk` plus `libappindicator` and nothing else. See
-[port-findings.md](port-findings.md#the-tray-icon-is-a-different-kind-of-object-on-each-platform).
-
-`ksni` 0.3.6 is pinned in the workspace and **has never been built against**. It is the richest of the three
-platforms' tray APIs: raw pixels through `icon_pixmap`, which carries its own width and height, and
-`overlay_icon_pixmap` for a second image drawn on top of the first.
-
-**The shape to build is the one measured on this box on 2026-09-18** and written up in
-[rust-port.md](rust-port.md#the-menu-bar-on-mate-measured): left click reaches the app, right click makes the
-host show the menu and the app never sees the event. So **nothing may live behind a left click that has no
-menu equivalent**, and Pause goes first on the menu because left click is its accelerator rather than its
-mechanism.
-
-**The icon itself is `crates/facet-mac/src/status_icon.rs`**, which is worth reading before writing a second
-one. It composes Play, Pause and Lock as a variable-width RGBA image, 32 pixels per cell, and its six tests
-are about geometry rather than about macOS. **Whether a non-square icon survives on this platform is
-untested**: `icon_pixmap` carries its own width and height and the specification permits it, which is not the
-same as the applet honouring it. That answer belongs in
-[port-findings.md](port-findings.md) when you have it, beside the macOS and Windows ones.
 
 ## 5. Not a task: `keyring` has never been built against anything
 
