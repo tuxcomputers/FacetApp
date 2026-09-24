@@ -11,3 +11,11 @@ slint.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true
+
+# Only for examples/draw-settings-tabs.rs, which renders the Settings tabs to files so a layout can be
+# looked at without putting a window on anybody's screen.
+#
+# **No `renderer-software` feature is needed alongside it**: slint enables that by default, so the plain
+# dependency above already has it. facet-mac used to name it explicitly and did not have to.
+[dev-dependencies]
+png = "0.18"

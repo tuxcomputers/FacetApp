@@ -95,3 +95,31 @@ difference and the renderer rasterises those itself.
 **Where the answer goes**: a real difference is a port finding and belongs in
 [port-findings.md](port-findings.md); no difference is worth one line in the same place, because
 *measured identical* is a fact somebody will otherwise pay to establish twice.
+
+---
+
+**The Linux half is done, and the tool was moved here rather than waited for** (2026-09-25). Nothing in
+`draw-settings-tabs.rs` was about macOS, so this box moved it to `facet-ui`, verified it by running it,
+and left `facet-mac` compiling as it was. **That was the Mac's to do and it had emptied its handover
+without doing it**, so waiting would have blocked this on something nobody was tracking. `facet-ui`
+needed only a `png` dev-dependency: `renderer-software` is a slint default, so the explicit one on
+`facet-mac` was always redundant.
+
+**What this box produced**, measured off the images rather than eyeballed:
+
+| | Linux |
+|---|---|
+| Every tab | **640 x 680**, all six, so the width pins under MATE as it does on the Mac |
+| Tab bar rule | y = **44**, all six |
+| Panel box, App tab | x **22** to **618** |
+| Stepper arrows, all three App rows | x **537-568**, identical to the pixel |
+| Checkbox, Show seconds row | x **596-609** |
+
+**Nothing elided on any tab**, and the Report tab's two calendars came out identical to each other, so
+the derivation from the day cell holds here. **The stepper alignment, which this item named as the thing
+that would break quietly, is intact**: `AM`, `min` and `secs` all line up.
+
+**It stays open because one machine cannot answer it.** The question is whether the two *match*, and
+that needs the Mac to run the same command now that it can. [handover-mac.md](handover-mac.md) item 4
+asks for it and carries these numbers to check against. Nothing goes in
+[port-findings.md](port-findings.md) until there is a comparison to record, in either direction.

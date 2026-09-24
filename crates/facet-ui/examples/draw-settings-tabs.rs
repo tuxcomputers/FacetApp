@@ -5,11 +5,17 @@
 //! looking at is answered here instead: Slint's software renderer draws the same widget tree into a buffer.
 //!
 //! It is not a substitute for looking at the running app. The software renderer draws the same layout, but
-//! font rasterisation and the native window chrome are not what the Mac backend produces, so a pixel here is
+//! font rasterisation and the native window chrome are not what either backend produces, so a pixel here is
 //! evidence about arrangement rather than about appearance.
 //!
-//!     cargo run -p facet-mac --example draw-settings-tabs
-//!     FACET_TAB_HEIGHT=1200 cargo run -p facet-mac --example draw-settings-tabs
+//! **It lives in `facet-ui` because nothing in it is about a platform**, which is also why it can answer
+//! whether the shared window is really shared: both machines run the same command against the same sources
+//! and the images are comparable. Taking the window server out of the comparison is the point rather than a
+//! limitation, so a difference in the output is a difference in the layout. It was in `facet-mac` until
+//! 2026-09-25 for the same reason the status icon was: that is where the UI used to live.
+//!
+//!     cargo run -p facet-ui --example draw-settings-tabs
+//!     FACET_TAB_HEIGHT=1200 cargo run -p facet-ui --example draw-settings-tabs
 //!
 //! Writes target/settings-tabs/<tab>.png, one per tab. The default height is the one the window opens at, so
 //! what it draws is what somebody opening Settings sees; FACET_TAB_HEIGHT draws a taller one, which is how to

@@ -9,8 +9,10 @@ repository.workspace = true
 [dependencies]
 facet-core.workspace = true
 facet-ui.workspace = true
-# renderer-software is not for the app: it is what examples/draw-settings-tabs.rs uses to draw the Settings
-# tabs into a buffer, so a layout can be looked at without putting a window on the owner's screen.
+# **`renderer-software` here is redundant and always was**: slint enables it by default. It was named for
+# examples/draw-settings-tabs.rs, which moved to facet-ui on 2026-09-25 because nothing in it is about
+# macOS. Left on the line rather than removed, the Linux box being unable to compile this crate to check
+# that taking it off changes nothing; it is safe to simplify to `slint.workspace = true` from the Mac.
 slint = { workspace = true, features = ["renderer-software"] }
 tray-icon.workspace = true
 

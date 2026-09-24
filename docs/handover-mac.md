@@ -55,3 +55,50 @@ and reformatting once, deliberately.
 
 `cargo clippy` is the gate that is actually ready: installed here, exit 0 on `facet-core`, `facet-ui` and
 `facet-linux`. It is **not** installed on the Mac either, and CI gates on neither.
+
+## 4. Render the Settings tabs here and compare them with these numbers
+
+**The other half of [handover-linux.md](handover-linux.md) item 7, which cannot be answered from one
+machine.** The renderer has moved to `facet-ui`, so both boxes run the same command against the same
+sources:
+
+```sh
+cargo run -p facet-ui --example draw-settings-tabs
+```
+
+**The move is done and needs nothing from you.** `crates/facet-mac/examples/draw-settings-tabs.rs` is now
+`crates/facet-ui/examples/draw-settings-tabs.rs`, unchanged apart from the two usage lines naming the new
+crate. Nothing in it was ever about macOS. `facet-ui` gained `png` as a dev-dependency and needed no
+`renderer-software` feature, that being a slint default all along -- which also means the explicit one on
+`facet-mac`'s `slint` line was always redundant. **It is left on that line**, this box not being able to
+compile the crate to prove that taking it off changes nothing; simplifying it to `slint.workspace = true`
+is safe to do from there.
+
+**What Linux produced, 2026-09-25**, measured off the PNGs rather than eyeballed:
+
+| | Linux |
+|---|---|
+| Every tab | **640 x 680**, all six |
+| Tab bar rule | y = **44**, all six |
+| Panel box, App tab | x **22** to **618** |
+| Stepper arrows, all three App rows | x **537-568** |
+| Those three rows | y 148-161, 180-193, 212-225, so **32px apart** |
+| Checkbox, Show seconds row | x **596-609** |
+
+**The stepper alignment is the one item 7 said would break quietly**, a different default `SpinBox` font
+size moving the 110px box and the 34px unit slot without breaking a build. Here all three sit on the same
+x to the pixel, and `AM`, `min` and `secs` line up. If the Mac's three do not agree with each other, that
+is the fault; if they agree with each other but not with 537-568, that is a font metric difference and
+still worth knowing.
+
+**Nothing was elided on any tab**, which was the other named risk. The Report tab's two calendars came out
+identical to each other, so the derivation from the day cell holds on this box.
+
+**The images are not committed**, `target/` being ignored, so this is the comparison: run it there and
+check the numbers. **If they match, that is one line in [port-findings.md](port-findings.md)** saying the
+shared window is measured identical, because *measured identical* is a fact somebody would otherwise pay
+to establish twice. If they do not, the difference is the finding.
+
+**Worth opening the real window afterwards as well.** The software renderer rasterises its own fonts, so
+it takes the window server out of the comparison deliberately -- which is the point, and also means it
+cannot answer what fontconfig against Core Text does to the running app.
