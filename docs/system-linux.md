@@ -62,17 +62,18 @@ is, and it is the same version as the Mac's.
 | Toolchains | One: `stable-x86_64-unknown-linux-gnu`. No nightly |
 | Targets | One: `x86_64-unknown-linux-gnu`. **Nothing here cross-compiles** |
 | Installed by | rustup, into `~/.cargo` and `~/.rustup` |
-| `clippy` | **Installed**, 0.1.98. `cargo clippy` runs clean on the workspace |
-| `rustfmt` | **Installed**, 1.9.0-stable. `cargo fmt --check` is clean |
+| `clippy` | **Installed**, 0.1.98. `cargo clippy` exits 0 on the crates this box builds |
+| `rustfmt` | **Installed**, 1.9.0-stable (`48a229ceae`). **`cargo fmt --check` exits 1**, and see below |
 
 **The toolchain versions match the Mac exactly**, which is worth stating rather than assuming: both are
 on cargo and rustc 1.98.1 with the same commit hashes, so a compiler-version difference is not
 available as an explanation when the two machines disagree about something.
 
-**`clippy` and `rustfmt` are installed here and are not on the Mac.** That is the one toolchain
-difference between the machines, and it points the same way for CI: **the lint and format gates can be
-run from this box today**, and adding them would make the Mac the machine that needs work, not this
-one.
+**Both machines now have `clippy` and `rustfmt`, at the same versions.** That was not true when this
+file was first written: neither was on the Mac, which is why no commit from there had ever been
+format-checked. **The Mac installed both on 2026-09-23**, so the toolchains no longer differ at all and
+either box can run either gate. A `rust-toolchain.toml` pinning 1.98.1 with both as components is
+planned, so they cannot drift apart again.
 
 **The PATH behaves the opposite way to the Mac's, and both need knowing.** Here `~/.cargo/env` *is*
 sourced, by both `.bashrc` (line 118) and `.profile` (line 28), so an ordinary shell finds `cargo`
@@ -179,15 +180,46 @@ platform and this machine cannot compile the CoreBluetooth or WinRT adapters.
 Measured 2026-09-20 and re-measured 2026-09-22, the workspace having gained `facet-ui` and a Linux tray
 in between. The 15.93s is still a true cold figure; the rest are what they cost from a warm `target/`.
 
-**`cargo fmt --check` fails on this tree and that is not a thing to fix by running `cargo fmt`.** There
-is **no `rustfmt.toml`**, and the house style is wider than rustfmt's defaults: compact struct literals
-like `Showing { paused: false, locked: false }` sit on one line throughout, and rustfmt's
-`struct_lit_width` of 18 would explode every one of them. Running it would rewrite most of the codebase
-into a style nobody chose. **Measured on a clean checkout, so it predates any of this work**, and it is
-not surprising: the Mac has no rustfmt installed at all, so no commit from there has ever been checked.
+**`cargo fmt --check` exits 1, and that is a reformat waiting to happen rather than a standard nobody
+agreed.** There **is** a `rustfmt.toml` now, adopted 2026-09-25, and it is written to the style the tree
+already has rather than against it:
 
-**So rustfmt is not a gate today and should not be made one without first agreeing a `rustfmt.toml`.**
-`cargo clippy` is the one that is ready: it is installed here, it exits 0, and CI gates on neither.
+```toml
+max_width = 110
+use_small_heuristics = "Max"
+```
+
+**`Max` is the load-bearing line.** It gives every width heuristic the full 110, so
+`Showing { paused: false, locked: false }` stays on one line. Under rustfmt's defaults
+`struct_lit_width` is 18 and every compact literal in the tree would be exploded, which is why running
+`cargo fmt` was the wrong answer while there was no config.
+
+**Measured here 2026-09-25 with rustfmt 1.9.0-stable (`48a229ceae`): 26 files-worth of diffs**, against
+55 under the defaults. The Mac reported 27 on the same commit. **The difference is entirely
+`facet-mac/src/main.rs`**, 8 here against 9 there, that file being uncommitted work on the Mac when it
+measured; **the other 18 agree exactly**, which is the answer to whether the two machines format alike.
+They do.
+
+| File | Diffs |
+|---|---|
+| `crates/facet-mac/src/main.rs` | 8 |
+| `crates/facet-linux/src/main.rs` | 6 |
+| `crates/facet-ui/src/status_icon.rs` | 4 |
+| `crates/facet-core/src/database.rs` | 4 |
+| `crates/facet-ui/examples/draw-settings-tabs.rs` | 3 |
+| `crates/facet-core/src/setting.rs` | 1 |
+
+**Most of the 26 re-join lines an earlier default-width format had split**, so the config is pulling the
+tree back towards its own style rather than fighting it. The one real departure is the `Error` enum in
+`facet-core/src/database.rs`, whose struct variants get exploded one field per line whatever the
+heuristics say.
+
+**Do not run `cargo fmt` here.** The reformat lands as one commit containing nothing else, from the Mac.
+
+**`cargo clippy` is the gate that is already green**: exit 0 across `facet-core`, `facet-ui` and
+`facet-linux` with all targets, carrying two warnings, both `manual Range::contains` in
+`facet-ui/src/status_icon.rs`. Those are in code moved verbatim from `facet-mac` and were left alone so
+the move stayed reviewable as a move. **CI gates on neither yet.**
 
 **The probes are excluded from the workspace** and resolve their own dependencies:
 
