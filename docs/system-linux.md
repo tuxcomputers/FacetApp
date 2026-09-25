@@ -305,7 +305,8 @@ costs nothing to build.
 
 | | |
 |---|---|
-| Repository | `/home/harry/harry.git/FacetApp` (the Swift one is at `.../TimeFlipApp`) |
+| Repository | `/home/harry/harry.git/FacetApp` |
+| The Swift reference | `/home/harry/harry.git/TimeFlipApp`, on `feature/linuxPort`. **There is no `TimeFlipLinux` here** |
 | Remote | `https://github.com/tuxcomputers/FacetApp.git` (**HTTPS**, matching the Mac) |
 | Git identity | Harry Phillips `<harry@tux.com.au>`, the same identity as the Mac |
 | App data directory | `/home/harry/.local/share/Facet` |
@@ -327,6 +328,14 @@ machine**: a push touching `.github/workflows/**` is refused without it, and `gh
 different token rather than adding a scope to one. Fixed with `gh auth refresh -h github.com -s
 workflow`, which needs a person at a browser. Expect it again only if the token is revoked or somebody
 runs a fresh `gh auth login`.
+
+**The Swift app is read from `TimeFlipApp` on this box, not from `TimeFlipLinux`.** CLAUDE.md names
+`~/harry.git/TimeFlipLinux` as the reference tree, a worktree pinned to `feature/linuxPort`, and says
+`TimeFlipApp` sits on `renameToTimeFlip`. Both describe the Mac. Checked 2026-09-25: this box has no
+`TimeFlipLinux`, and its `TimeFlipApp` is checked out on `feature/linuxPort` with no other worktree. That
+is the same branch the Mac pins, so what it holds is the same reference, just at a different path. Read it
+as ordinary files and never commit to it, as on the Mac. Nothing runs the Swift app here, so it is not a
+tree somebody is using day to day.
 
 **The production/test split has been made here** (2026-09-20), so the previous revision's note that a
 plain `appdata.sqlite` stops the scripted suite starting no longer applies. The directory now holds

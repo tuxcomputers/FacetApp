@@ -139,5 +139,11 @@ give the Swift window's answer on macOS.
 5. **Then run `Tests/Scripted/run.sh`** and say what came back. Commit the stamp **before** running again
    (README), so it records a clean tree.
 
+6. **Say whether AX reports the Faces tab's play/pause glyph disabled** while a daily limit is spent, which
+   `12` leaves it (`ax-dump.py` prints `disabled` when it is). On Linux it draws greyed and AT-SPI still
+   says `enabled` and `sensitive`, although Slint 1.18's bridge calls `set_disabled` for
+   `accessible-enabled`. A `disabled` here puts the loss in `accesskit_unix` rather than Slint, and tells
+   the Linux box where to look.
+
 `docs/port-findings.md` has the four AT-SPI facts, and the tray hang that answers nothing on about one
 Linux launch in fifteen. Say if the Mac's tray ever does the same.
