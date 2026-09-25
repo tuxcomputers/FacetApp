@@ -744,16 +744,17 @@ platform_build_app() {
 
 # **Starts it detached**, so the suite keeps its own terminal and the app outlives the shell that began it.
 platform_launch_app() {
-    case "$PLATFORM" in
-        mac) open "$APP" ;;
-        linux)
-            # Its console copy goes to a file rather than to the run log: every line it prints is also a
-            # `debug_log` row, which is what the checks read, but a crash on the way up prints there and
-            # nowhere else.
-            mkdir -p logs
-            nohup "$BINARY" >> logs/app.log 2>&1 &
-            ;;
-    esac
+    # **The binary itself on both platforms while there is no bundle**: `open ""` starts nothing, which is what
+    # the first macOS run of the Rust app met (2026-09-25). `open "$APP"` returns when there is a bundle.
+    #
+    # Its console copy goes to a file rather than to the run log: every line it prints is also a `debug_log`
+    # row, which is what the checks read, but a crash on the way up prints there and nowhere else.
+    if [ -n "$APP" ]; then
+        open "$APP"
+    else
+        mkdir -p logs
+        nohup "$BINARY" >> logs/app.log 2>&1 &
+    fi
 }
 
 # **A warning that only one platform can earn.** Ad-hoc signing makes every build a different application
