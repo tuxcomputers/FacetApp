@@ -14,14 +14,14 @@ Then copy the six files into the folder for the machine you are on.
 | | |
 |---|---|
 | [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11. Rendered 2026-09-25 at `cf58ebd` |
-| [`mac/`](mac/) | macOS 26.6, Apple silicon. Rendered 2026-09-25 at `2bc9721` |
-| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them |
+| [`mac/`](mac/) | macOS 26.6.2, Apple silicon. Rendered 2026-09-25 at `26b9f40`, **with Inter packaged** |
+| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. **Stale**: both halves predate Inter, and it is rebuilt once `linux/` is re-rendered |
 
 **These are Slint's software renderer, not screenshots of the running app.** It draws into a buffer with
 no window server involved, so window chrome and compositing are out of the comparison.
 
 **Fonts are not.** The renderer rasterises the glyphs itself but takes the typeface from the system's font
-stack, unless the UI packages its own. So a difference between two folders is a difference in layout *or*
+stack, unless the UI packages its own, which it now does: `facet-ui` compiles Inter into the binary. So a difference between two folders is a difference in layout *or*
 in the font each machine supplied, and `compare/` shows which.
 
 **What they cannot answer**: how the real window looks. Window chrome is the platform's, so running the
@@ -83,3 +83,8 @@ taller. The height difference accumulates down a tab, so panel boxes finish lowe
 
 **So the layout is shared and the font is not.** The fix is packaging a font with `facet-ui`, after which
 the two folders should come out identical.
+
+**Inter is now packaged** (`26b9f40`) and `mac/` is re-rendered with it. Horizontal positions are
+unchanged; the last panel on each tab now ends at Report y 405, Device y 514, Categories y 386 and App
+y 448, between the two old sets. The measurements above describe the pre-Inter renders and stay as the
+record of why the font was packaged.
