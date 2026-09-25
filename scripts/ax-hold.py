@@ -19,6 +19,7 @@ what `ax-dump.py --frames` already does and is known to work on this app.
 
 import re
 import subprocess
+import os
 import sys
 import time
 
@@ -60,7 +61,7 @@ def main():
     if len(sys.argv) < 3:
         sys.exit("usage: ax-hold.py <identifier> <seconds> [--app Facet]")
     identifier, seconds = sys.argv[1], float(sys.argv[2])
-    app_name = sys.argv[4] if len(sys.argv) > 4 else "Facet"
+    app_name = sys.argv[4] if len(sys.argv) > 4 else os.environ.get("FACET_APP_NAME", "Facet")
 
     pid = next(
         (a.processIdentifier() for a in NSWorkspace.sharedWorkspace().runningApplications()

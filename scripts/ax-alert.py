@@ -18,6 +18,7 @@ its own -- `AXWindows` alone does not always list it, so the search walks into e
 """
 
 import argparse
+import os
 import sys
 
 from AppKit import NSWorkspace
@@ -58,7 +59,7 @@ def pid_of(app_name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--app", default="Facet", help="the running app (default: Facet)")
+    parser.add_argument("--app", default=os.environ.get("FACET_APP_NAME", "Facet"), help="the running app (default: $FACET_APP_NAME, else Facet)")
     parser.add_argument(
         "--message", action="store_true", help="print the alert's text rather than its buttons"
     )

@@ -18,6 +18,7 @@ tree comes back empty rather than erroring.
 """
 
 import argparse
+import os
 import sys
 
 from AppKit import NSWorkspace
@@ -81,7 +82,7 @@ def pid_of(app_name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--app", default="Facet", help="the running app to dump (default: Facet)")
+    parser.add_argument("--app", default=os.environ.get("FACET_APP_NAME", "Facet"), help="the running app to dump (default: $FACET_APP_NAME, else Facet)")
     parser.add_argument("--frames", action="store_true", help="also print each element's position and size")
     parser.add_argument(
         "--menu-bar",

@@ -74,6 +74,9 @@ case "$PLATFORM" in
         CRATE="facet-mac"
         BINARY="target/debug/$CRATE"
         PROCESS_NAME="$CRATE"
+        # What macOS calls the running app, which is the binary's name while there is no bundle. Every
+        # `scripts/ax-*.py` and `status-item-click.py` looks the app up by it.
+        export FACET_APP_NAME="$PROCESS_NAME"
         # The Swift app, which is still the one recording real time. It was renamed to TimeFlip on
         # 2026-09-21 so that this one could take the Facet name, its directory and its identifier.
         # Here so that anything warning about two icons in the menu bar does not grow a platform case
@@ -150,11 +153,9 @@ platform_kill_app() {
 platform_quit_app() {
     case "$PLATFORM" in
         mac)
-            python3 scripts/status-item-click.py 2>&1 \
-                || echo "  the status item would not click; falling back to a kill"
-            sleep 0.5
-            python3 scripts/ax-press.py quit-app 2>&1 \
-                || echo "  quit-app would not press; falling back to a kill"
+            # A menu item takes an accessibility press with the menu closed, so no click is needed.
+            python3 scripts/ax-press.py --title "Quit Facet" 2>&1 \
+                || echo "  Quit Facet would not press; falling back to a kill"
             ;;
         linux)
             # **One call where the Mac needs two**, and that is the whole of the difference between the
@@ -237,7 +238,8 @@ platform_press_sheet() {
 # `Tests/Methods.md` Method 20.
 platform_select_tab() {
     case "$PLATFORM" in
-        mac)   python3 scripts/ax-press.py --desc "$1" 2>&1 ;;
+        # The Slint tab is a radio button carrying `settings-tab-<name in lower case>`.
+        mac)   python3 scripts/ax-press.py "settings-tab-$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" 2>&1 ;;
         linux) python3 scripts/at-press.py --tab "$1" 2>&1 ;;
     esac
 }
@@ -342,15 +344,15 @@ platform_status_item() {
 # `com.canonical.dbusmenu` object whose items can be read and chosen without it ever being opened, so
 # there is nothing to open: `platform_menu_press` below works whether or not this was called.
 platform_open_menu() {
-    case "$PLATFORM" in
-        mac)   python3 scripts/status-item-click.py 2>&1 ;;
-        linux) return 0 ;;
-    esac
+    # A no-op on macOS too: the menu's items are in the accessibility tree and take a press with the menu
+    # closed (measured 2026-09-25 against facet-mac).
+    return 0
 }
 
-# **The titles a menu identifier can be showing on Linux**, printed one per line.
+# **The titles a menu identifier can be showing**, printed one per line.
 #
-# Nothing carries the identifier to the tray: `com.canonical.dbusmenu` answers with the label and `enabled`,
+# **On macOS too**: tray-icon gives every menu item the same `AXIdentifier`, `fireMenuItemAction:` (measured
+# 2026-09-25), so the identifier reaches nothing there either. On Linux nothing carries the identifier to the tray: `com.canonical.dbusmenu` answers with the label and `enabled`,
 # and the numeric ids it gives out are libdbusmenu's own and are reassigned whenever the menu is rebuilt
 # (measured 2026-09-13, see `scripts/tray-menu.py`). So this side maps the identifier to the words.
 #
@@ -383,11 +385,22 @@ platform_menu_titles() {
 # identifier is what `AXIdentifier` carries and the press is by name; on Linux it goes through the mapping above
 # and whichever title the menu is currently showing is the one pressed.
 platform_menu_press() {
+    local titles output
+    titles=$(platform_menu_titles "$1") || return 1
     case "$PLATFORM" in
-        mac) python3 scripts/ax-press.py "$1" 2>&1 ;;
+        mac)
+            while IFS= read -r title; do
+                [ -z "$title" ] && continue
+                output=$(python3 scripts/ax-press.py --title "$title" 2>&1) && {
+                    printf '%s\n' "$output"
+                    return 0
+                }
+            done <<EOF
+$titles
+EOF
+            echo "  no menu item matching $1${output:+: $output}" >&2
+            return 1 ;;
         linux)
-            local titles output
-            titles=$(platform_menu_titles "$1") || return 1
             while IFS= read -r title; do
                 [ -z "$title" ] && continue
                 output=$(python3 scripts/tray-menu.py --press "$title" 2>&1) && {
@@ -445,7 +458,18 @@ platform_menu_tree() {
 # `(insensitive)` that `tray-menu.py` prints, which is what a check asking whether the line is dead reads.
 platform_menu_item() {
     case "$PLATFORM" in
-        mac) python3 scripts/ax-dump.py --menu-bar 2>/dev/null | grep -m1 "id=$1" || true ;;
+        mac)
+            local titles menu
+            titles=$(platform_menu_titles "$1") || return 1
+            menu=$(python3 scripts/ax-dump.py --menu-bar 2>/dev/null) || true
+            while IFS= read -r title; do
+                [ -z "$title" ] && continue
+                # The title followed by two spaces or the end of the line, so that `Lock` cannot match `Unlock`.
+                printf '%s\n' "$menu" | grep -m1 -E "title=$title(  |\$)" && return 0
+            done <<EOF
+$titles
+EOF
+            return 0 ;;
         linux)
             local titles menu
             titles=$(platform_menu_titles "$1") || return 1

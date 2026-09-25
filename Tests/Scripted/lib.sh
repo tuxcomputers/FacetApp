@@ -1598,8 +1598,16 @@ element() { tree | grep -m1 -E "id=$1($|[[:space:]])" || true; }
 window_width() {
     # **The Slint window carries no identifier**, only its title, so on Linux the frame line at the top of
     # the dump is the window: `frame  id=Facet Settings  ...  size=w:640 h:680`.
+    #
+    # **Nor on macOS**, where the dump's window line is `AXWindow  title=Facet Settings  ...  size=w:640 h:712`
+    # (measured 2026-09-25). The height there includes the title bar; the width is the window's.
     local pattern="id=$1 "
-    [ "$PLATFORM" = "linux" ] && [ "$1" = "settings-window" ] && pattern="^frame "
+    if [ "$1" = "settings-window" ]; then
+        case "$PLATFORM" in
+            linux) pattern="^frame " ;;
+            mac)   pattern="^AXWindow  title=Facet Settings" ;;
+        esac
+    fi
     platform_tree_frames \
         | grep -m1 -E "$pattern" \
         | sed -n 's/.*size=w:\([0-9]*\)\.*[0-9]* .*/\1/p'
@@ -1630,8 +1638,11 @@ tree_has() {
 # On Linux that is the window manager, not the accessibility tree. **A hidden Slint window stays on the bus
 # whole**, frame reporting `showing` and `visible`, panes and all, and its controls can even be pressed
 # (measured 2026-09-25: a run pressed Create on a window nobody had opened). `wmctrl -l` lists only mapped
-# windows, so the title being there is the window being up. The Swift window's `close-settings` control is
-# still the macOS answer until the Mac says otherwise.
+# windows, so the title being there is the window being up.
+#
+# **On macOS the tree is the answer.** A hidden Slint window leaves the accessibility tree entirely: the dump
+# reports the app running with no windows open (measured 2026-09-25), so the Faces tab button being in the
+# tree is the window being up.
 settings_is_open() {
     case "$PLATFORM" in
         linux)
@@ -1646,7 +1657,7 @@ settings_is_open() {
                 *" Facet Settings"*) return 0 ;;
                 *) return 1 ;;
             esac ;;
-        *) tree_has "close-settings" ;;
+        *) tree_has "id=settings-tab-faces" ;;
     esac
 }
 
@@ -1669,8 +1680,8 @@ wait_for_element() {
 
 open_settings() {
     settings_is_open && return 0
-    click_left || return 1
-    sleep 0.5
+    # No click first on either platform: the menu's items take a press with the menu closed. On macOS a left
+    # click would toggle the clock, which is Pause's accelerator in the Rust app.
     menu_press open-settings
     sleep 1
     settings_is_open
@@ -1678,8 +1689,9 @@ open_settings() {
 
 close_settings() {
     settings_is_open || return 0
-    # **The Slint window has no close control of its own**, so on Linux it is closed the way the window
-    # manager closes it. `wmctrl -c` asks the window to close, which the app answers by hiding it.
+    # **The Slint window has no close control of its own**, so it is closed the way the window manager
+    # closes it: `wmctrl -c` on Linux, and the title bar's close button on macOS. The app answers either by
+    # hiding the window.
     case "$PLATFORM" in
         linux)
             local output status
@@ -1687,7 +1699,12 @@ close_settings() {
             status=$?
             [ "$status" -ne 0 ] && red "  closing Settings failed (exit $status)${output:+: $output}"
             ;;
-        *) press close-settings ;;
+        *)
+            local output status
+            output=$(python3 scripts/ax-press.py --close-window "Facet Settings" 2>&1)
+            status=$?
+            [ "$status" -ne 0 ] && red "  closing Settings failed (exit $status)${output:+: $output}"
+            ;;
     esac
     sleep 0.5
 }

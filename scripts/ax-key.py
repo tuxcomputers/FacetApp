@@ -21,6 +21,7 @@ nobody can name -- rather than posting nothing and saying it worked.
 """
 
 import subprocess
+import os
 import sys
 import time
 
@@ -76,7 +77,7 @@ def main():
         sys.exit(f"no key code for {key!r}; known keys are {', '.join(sorted(KEYS))}")
 
     arguments = sys.argv[2:]
-    app_name = "Facet"
+    app_name = os.environ.get("FACET_APP_NAME", "Facet")
     if "--app" in arguments:
         index = arguments.index("--app")
         if index + 1 >= len(arguments):
