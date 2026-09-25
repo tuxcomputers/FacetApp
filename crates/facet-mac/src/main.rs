@@ -17,6 +17,7 @@ use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
 use facet_ui::faces::Faces;
+use facet_ui::notice::Notice;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use tray_icon::{
     MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -43,8 +44,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui = SettingsWindow::new()?;
 
+    // One notice for the whole window, shared by every tab that raises one.
+    let notice = Notice::attach(&ui);
+
     // `true` for has_given_up_on_cube: this build has no radio, so it never waits for a cube.
-    let faces = Faces::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log), true);
+    let faces = Faces::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        Rc::clone(&log),
+        true,
+        Rc::clone(&notice),
+    );
 
     // A menu bar app owns no dock icon. This has to happen after Slint has built its backend, because
     // that is what creates the application object, and again from inside the event loop below, because

@@ -22,8 +22,9 @@ import { AppPane } from "app-settings.slint";
 import { DevicePane } from "device.slint";
 import { CategoriesPane } from "categories.slint";
 import { FacesPane, FacesData, FaceCategory } from "faces.slint";
+import { NoticeOverlay, NoticeData } from "notice.slint";
 
-export { FacesData, FaceCategory }
+export { FacesData, FaceCategory, NoticeData }
 import { ReportPane } from "report.slint";
 
 component TabPill inherits Rectangle {
@@ -270,6 +271,12 @@ export component SettingsWindow inherits Window {
                         }
                     }
                 }
+            }
+
+            // Over whichever pane is showing, while a notice is up.
+            if NoticeData.title != "": NoticeOverlay {
+                width: parent.width;
+                height: parent.height;
             }
         }
     }

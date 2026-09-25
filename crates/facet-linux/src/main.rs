@@ -25,6 +25,7 @@ use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
 use facet_ui::faces::Faces;
+use facet_ui::notice::Notice;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use ksni::blocking::{Handle, TrayMethods};
 
@@ -49,8 +50,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui = SettingsWindow::new()?;
 
+    // One notice for the whole window, shared by every tab that raises one.
+    let notice = Notice::attach(&ui);
+
     // `true` for has_given_up_on_cube: this build has no radio, so it never waits for a cube.
-    let faces = Faces::attach(&ui, data_directory().join("appdata.sqlite"), std::rc::Rc::clone(&log), true);
+    let faces = Faces::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        std::rc::Rc::clone(&log),
+        true,
+        std::rc::Rc::clone(&notice),
+    );
 
     let tab_log = std::rc::Rc::clone(&log);
     let tab_faces = std::rc::Rc::clone(&faces);

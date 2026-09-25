@@ -1,0 +1,66 @@
+// A question or a statement drawn over the Settings window's pane, with one button per choice.
+//
+// Shown while `NoticeData.title` is not empty. Rust sets the three properties and hears the answer through
+// `chosen`, with the index of the button pressed. Everything under it is covered and ignores clicks.
+
+import { Palette, Button } from "std-widgets.slint";
+import { Metrics } from "metrics.slint";
+
+export global NoticeData {
+    in property <string> title;
+    in property <string> message;
+    in property <[string]> choices;
+    callback chosen(int);
+}
+
+export component NoticeOverlay inherits Rectangle {
+    background: #00000040;
+
+    accessible-role: groupbox;
+    accessible-id: "notice";
+    accessible-label: NoticeData.title;
+
+    // Takes clicks on the backdrop so nothing under the notice can be pressed.
+    TouchArea { }
+
+    Rectangle {
+        width: min(root.width - 80px, 420px);
+        height: box.preferred-height;
+        background: Palette.background;
+        border-radius: Metrics.corner-radius;
+        border-width: 1px;
+        border-color: Palette.border;
+
+        box := VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+
+            Text {
+                text: NoticeData.title;
+                font-weight: 700;
+                wrap: word-wrap;
+                color: Palette.foreground;
+                accessible-role: AccessibleRole.text;
+                accessible-id: "notice-title";
+                accessible-label: NoticeData.title;
+            }
+            if NoticeData.message != "": Text {
+                text: NoticeData.message;
+                wrap: word-wrap;
+                color: Palette.foreground;
+                accessible-role: AccessibleRole.text;
+                accessible-id: "notice-message";
+                accessible-label: NoticeData.message;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                for choice[index] in NoticeData.choices: Button {
+                    text: choice;
+                    accessible-id: "notice-choice-" + index;
+                    clicked => { NoticeData.chosen(index); }
+                }
+            }
+        }
+    }
+}

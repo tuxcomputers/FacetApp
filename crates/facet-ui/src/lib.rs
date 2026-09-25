@@ -24,8 +24,10 @@
 
 slint::include_modules!();
 
+pub mod create;
 pub mod faces;
 pub mod icons;
+pub mod notice;
 pub mod status_icon;
 
 /// Re-exported because every generated component needs it and nothing else about it is interesting.

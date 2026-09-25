@@ -89,8 +89,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let width = 640u32;
     let ui = SettingsWindow::new()?;
-    let faces = std::env::var_os("FACET_DATABASE")
-        .map(|path| facet_ui::faces::Faces::attach(&ui, path.into(), Rc::new(None), true));
+    let faces = std::env::var_os("FACET_DATABASE").map(|path| {
+        let notice = facet_ui::notice::Notice::attach(&ui);
+        facet_ui::faces::Faces::attach(&ui, path.into(), Rc::new(None), true, notice)
+    });
     ui.window().set_size(LogicalSize::new(width as f32, height as f32));
     window.set_size(PhysicalSize::new(width, height));
     ui.show()?;
