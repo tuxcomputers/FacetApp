@@ -15,7 +15,9 @@
 //! pump below acts on them on the UI thread. That is the same arrangement the Mac arrives at from the
 //! other direction, its crate delivering events on a channel that something has to drain.
 
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
@@ -78,7 +80,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // **Held for the life of the process.** The service stops when its handle is dropped, so binding it
     // here is what keeps the item on the panel; dropping it at the end of this statement would put the
     // icon up and take it straight back down. The Mac's `_tray` exists for the same reason.
-    let _tray = start_the_tray(to_ui, &log);
+    let tray = start_the_tray(to_ui, &log);
+
+    // **The status item follows the clock, and the clock is `faces`.** Pushed after every re-read `faces`
+    // makes, which is every toggle from here or the tab, every click on the tab and every tick while the
+    // figure moves, and once now so the first thing on the panel is the database's answer rather than the
+    // tray's starting guess. Weak, because `faces` holds this closure and would otherwise hold itself.
+    let follow = follow_the_clock(Rc::downgrade(&faces), tray, Rc::clone(&log));
+    follow();
+    faces.set_on_timing_changed(follow);
 
     let ui_weak = ui.as_weak();
     let pump_log = std::rc::Rc::clone(&log);
@@ -113,24 +123,21 @@ fn drain(
 ) {
     while let Ok(message) = from_tray.try_recv() {
         match message {
-            FromTray::Activated(showing) => {
-                log.record(Tag::Tray, || {
-                    format!(
-                        "Status item left clicked, now showing paused={} locked={}",
-                        showing.paused, showing.locked
-                    )
-                });
+            // **The same call as the Faces tab's glyph, for both routes**, so the three cannot disagree, and
+            // left click stays an accelerator for the first menu item rather than a mechanism of its own.
+            FromTray::Activated => {
+                log.record(Tag::Tray, || "Status item left clicked".to_string());
+                faces.toggle_pause();
             }
             FromTray::SecondaryActivated => {
                 log.record(Tag::Tray, || "Status item middle clicked".to_string());
             }
-            FromTray::Changed(showing) => {
-                log.record(Tag::Tray, || {
-                    format!(
-                        "Status item now shows paused={} locked={}",
-                        showing.paused, showing.locked
-                    )
-                });
+            FromTray::PausePressed => {
+                log.record(Tag::Tray, || "Status item Pause pressed".to_string());
+                faces.toggle_pause();
+            }
+            FromTray::LockChanged(showing) => {
+                log.record(Tag::Tray, || format!("Status item now shows locked={}", showing.locked));
             }
             FromTray::OpenSettings => {
                 if let Some(ui) = ui_weak.upgrade() {
@@ -155,6 +162,42 @@ fn drain(
                     });
                 }
             }
+        }
+    }
+}
+
+/// What pushes the clock's state into the tray, for `faces` to call after every re-read.
+///
+/// **Read at the point of use**: each call asks `faces` for the menu bar's timing, which reads the database
+/// there and then, and hands that to the tray thread. Nothing is kept on this side to compare against; the
+/// tray says whether what it was handed differs from what it was drawing, and only a difference is traced,
+/// so a tick that changes nothing costs a read and no row.
+///
+/// **A tray that has stopped is reported once, not once a tick.** It means the service ended with the app
+/// still running, so the panel shows a clock that is no longer being followed, and a row per second would
+/// bury the one that matters.
+fn follow_the_clock(
+    faces: std::rc::Weak<Faces>,
+    tray: Option<Handle<FacetTray>>,
+    log: Rc<Option<DebugLog>>,
+) -> impl Fn() + 'static {
+    let has_reported_stopping = Cell::new(false);
+    move || {
+        // No tray means start_the_tray has already said why, and there is nothing to follow into.
+        let Some(tray) = tray.as_ref() else { return };
+        let Some(timing) = faces.upgrade().and_then(|faces| faces.menu_bar_timing()) else { return };
+        match tray.update(|tray| tray.follow_clock(timing.is_paused, timing.pause_title, timing.is_clickable)) {
+            Some(true) => log.record(Tag::Tray, || {
+                format!(
+                    "Status item follows the clock, paused={} item={} enabled={}",
+                    timing.is_paused, timing.pause_title, timing.is_clickable
+                )
+            }),
+            Some(false) => {}
+            None if !has_reported_stopping.replace(true) => log.record_failure(Tag::Tray, || {
+                "The tray service has stopped, so the status item no longer follows the clock".to_string()
+            }),
+            None => {}
         }
     }
 }
