@@ -20,9 +20,9 @@ reproduce.
 
 | | |
 |---|---|
-| [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11, `x86_64`. Rendered 2026-09-25 at `759684b`, **with Inter packaged** |
+| [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11, `x86_64`. Rendered 2026-09-25 on `feature/faceTab` at `b9991f5`, against a clean test database |
 | [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-25 on `feature/faceTab` at `030f2ce`, against a clean test database |
-| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-25; every diff panel was empty. **Stale for `faces.png`**: the Faces tab has changed since, and `linux/` has not been re-rendered with it |
+| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-25 from Mac `3c2ac11` and Linux `b9991f5`; every diff panel is empty, and all six PNGs, `faces.png` with its rasterised SVG icons included, are byte-identical across the two machines |
 
 **These are Slint's software renderer, not screenshots of the running app.** It draws into a buffer with
 no window server involved, so window chrome and compositing are out of the comparison.

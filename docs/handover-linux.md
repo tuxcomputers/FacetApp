@@ -71,30 +71,3 @@ from the tray there changes the icon and times nothing.
 
 **It also needs building there at all.** `feature/faceTab` wires `Faces` into `facet-linux/src/main.rs` and
 the Mac could not compile that crate, so the first thing is `cargo build -p facet-linux` on this branch.
-
-## 11. Re-render the Settings tabs against a clean test database, and rebuild the comparison
-
-**On `feature/faceTab`.** The Faces tab now reads the database, so a render of it depends on what the
-database holds. The Mac has rendered all six tabs against a freshly built test database (`3c2ac11`), and
-[settings-tabs/README.md](settings-tabs/README.md) now gives the commands. Only `faces.png` changed on the
-Mac; the other five came out byte-identical to the set already compared.
-
-**What is wanted:**
-
-1. **Rebuild the test database from the DDL**, then render with the Faces tab filled from it:
-   ```sh
-   scripts/switch-database.sh test -clean
-   FACET_DATABASE="$HOME/.local/share/Facet/appdata.sqlite" cargo run -p facet-ui --example draw-settings-tabs
-   cp target/settings-tabs/*.png docs/settings-tabs/linux/
-   ```
-   `-clean` resets the `debug` setting to off along with everything else, so turn it back on afterwards
-   if this box wants a trace.
-2. **Rebuild `settings-tabs/compare/`** from the two folders, as the README describes.
-3. **Say whether they match.** The expected answer is byte-identical, as the last comparison was. The Mac's
-   `faces.png` shows Timing empty on the left and Break and Meeting on the right, each with its icon, and
-   Create under them. A difference is either the icons (they are SVGs rasterised by Slint, so this is the
-   first time that has been compared) or the database not being clean.
-4. **Update the README's `linux/` and `compare/` rows** with the result.
-
-**Keep doing this whenever a `.slint` file changes**, on both machines, so the tabs are shown to stay the
-same rather than assumed to. The machine that changed the UI renders first and asks the other here.
