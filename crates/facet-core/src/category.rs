@@ -87,6 +87,163 @@ pub fn set_active(connection: &Connection, id: i64, active: bool) -> Result<bool
     Ok(changed > 0)
 }
 
+/// Every retired category except Unassigned, in display order (see [`display_order`]).
+pub fn inactive(connection: &Connection) -> Result<Vec<Category>, rusqlite::Error> {
+    let mut statement = connection.prepare(&format!("{SELECT} WHERE c.active = 0 AND c.category_id >= 1"))?;
+    let mut categories = statement.query_map([], from_row)?.collect::<Result<Vec<_>, _>>()?;
+    categories.sort_by(display_order);
+    Ok(categories)
+}
+
+/// The highest daily limit a category may have, in minutes.
+pub const MAXIMUM_DAILY_LIMIT_MINUTES: i64 = 1440;
+
+/// `minutes` held to 0 through [`MAXIMUM_DAILY_LIMIT_MINUTES`].
+pub fn clamp_daily_limit(minutes: i64) -> i64 {
+    minutes.clamp(0, MAXIMUM_DAILY_LIMIT_MINUTES)
+}
+
+/// The icon or colour id to store when `picked` is chosen for a category holding `current`: picking what it
+/// already holds clears it to 0 (None).
+pub fn toggled_choice(current: i64, picked: i64) -> i64 {
+    if picked == current { 0 } else { picked }
+}
+
+fn update(
+    connection: &Connection,
+    sql: &str,
+    value: &dyn rusqlite::ToSql,
+    id: i64,
+) -> Result<bool, rusqlite::Error> {
+    Ok(connection.execute(sql, params![value, id])? > 0)
+}
+
+/// Renames a category. Returns whether a row changed. Unassigned is never changed; an active category taking
+/// a name another active category holds is refused by the table's unique index, as an error.
+pub fn set_name(connection: &Connection, id: i64, name: &str) -> Result<bool, rusqlite::Error> {
+    update(
+        connection,
+        "UPDATE category SET category_name = ?1 WHERE category_id = ?2 AND category_id >= 1",
+        &name,
+        id,
+    )
+}
+
+/// Sets a category's icon (0 for None). Returns whether a row changed.
+pub fn set_icon(connection: &Connection, id: i64, icon_id: i64) -> Result<bool, rusqlite::Error> {
+    update(
+        connection,
+        "UPDATE category SET icon_id = ?1 WHERE category_id = ?2 AND category_id >= 1",
+        &icon_id,
+        id,
+    )
+}
+
+/// Sets a category's colour (0 for None). Returns whether a row changed.
+pub fn set_colour(connection: &Connection, id: i64, colour_id: i64) -> Result<bool, rusqlite::Error> {
+    update(
+        connection,
+        "UPDATE category SET colour_id = ?1 WHERE category_id = ?2 AND category_id >= 1",
+        &colour_id,
+        id,
+    )
+}
+
+/// Sets a category's daily limit, clamped by [`clamp_daily_limit`], and returns the value written, or `None`
+/// when no row changed.
+pub fn set_daily_limit(
+    connection: &Connection,
+    id: i64,
+    minutes: i64,
+) -> Result<Option<i64>, rusqlite::Error> {
+    let allowed = clamp_daily_limit(minutes);
+    let changed = update(
+        connection,
+        "UPDATE category SET daily_limit = ?1 WHERE category_id = ?2 AND category_id >= 1",
+        &allowed,
+        id,
+    )?;
+    Ok(changed.then_some(allowed))
+}
+
+/// Retires a category and puts Unassigned on every unlocked face holding it. Returns the faces cleared, or
+/// `None` when the category was not changed (Unassigned, or no such row). Both writes are one transaction.
+pub fn retire(connection: &Connection, id: i64) -> Result<Option<Vec<i64>>, rusqlite::Error> {
+    let transaction = connection.unchecked_transaction()?;
+    if !set_active(&transaction, id, false)? {
+        return Ok(None);
+    }
+    let cleared = crate::face::clear_category(&transaction, id)?;
+    transaction.commit()?;
+    Ok(Some(cleared))
+}
+
+/// Whether a retired category may be reinstated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReinstateDecision {
+    Allowed,
+    /// An active category holds the same name, compared case-insensitively.
+    Refused {
+        active_namesake: Category,
+    },
+}
+
+/// Decides whether the retired category `id` may be reinstated, by reading whether an active category holds
+/// its name.
+pub fn decide_reinstate(
+    connection: &Connection,
+    id: i64,
+) -> Result<Option<ReinstateDecision>, rusqlite::Error> {
+    let Some(category) = by_id(connection, id)? else { return Ok(None) };
+    let namesake =
+        matching(connection, &category.name)?.into_iter().find(|c| c.id != id && c.is_category_active);
+    Ok(Some(match namesake {
+        Some(active_namesake) => ReinstateDecision::Refused { active_namesake },
+        None => ReinstateDecision::Allowed,
+    }))
+}
+
+/// What renaming a category to a typed name should do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenameDecision {
+    /// Empty once normalised, or exactly the current name.
+    Ignore,
+    /// No other category holds the name: confirm, then rename.
+    Confirm { name: String },
+    /// Only retired categories hold the name: confirm, and say how many.
+    ConfirmAgainstRetired { name: String, retired: Vec<Category> },
+    /// The category is retired and an active one holds the name: allowed, but it then cannot be reinstated.
+    ConfirmAgainstActive { name: String, active_namesake: Category },
+    /// The category is active and another active one holds the name: the table would refuse it.
+    Refuse { active_namesake: Category },
+}
+
+/// Decides what renaming `current` to `raw` should do. Other categories are matched case-insensitively and
+/// `current` itself is left out, so changing only the capitals is an ordinary rename.
+pub fn decide_rename(
+    connection: &Connection,
+    current: &Category,
+    raw: &str,
+) -> Result<RenameDecision, rusqlite::Error> {
+    let name = normalise(raw);
+    if name.is_empty() || name == current.name {
+        return Ok(RenameDecision::Ignore);
+    }
+    let others: Vec<Category> =
+        matching(connection, &name)?.into_iter().filter(|c| c.id != current.id).collect();
+    Ok(match others.first() {
+        None => RenameDecision::Confirm { name },
+        Some(first) if first.is_category_active => {
+            if current.is_category_active {
+                RenameDecision::Refuse { active_namesake: first.clone() }
+            } else {
+                RenameDecision::ConfirmAgainstActive { name, active_namesake: first.clone() }
+            }
+        }
+        Some(_) => RenameDecision::ConfirmAgainstRetired { name, retired: others },
+    })
+}
+
 /// The order categories are listed in: names that are whole numbers first, by value; then the rest by
 /// natural order (case-insensitive, runs of digits compared as numbers); ties broken by id.
 pub fn display_order(a: &Category, b: &Category) -> Ordering {
@@ -210,6 +367,89 @@ mod tests {
         assert!(!names(&active(&connection).expect("the list should read")).contains(&"Email"));
         assert!(set_active(&connection, id, true).expect("the update should run"));
         assert!(names(&active(&connection).expect("the list should read")).contains(&"Email"));
+    }
+
+    #[test]
+    fn a_retired_category_is_listed_inactive() {
+        let connection = seeded();
+        let id = insert(&connection, "Email").expect("should insert");
+        assert!(inactive(&connection).expect("should read").is_empty());
+        set_active(&connection, id, false).expect("should retire");
+        assert_eq!(names(&inactive(&connection).expect("should read")), ["Email"]);
+    }
+
+    #[test]
+    fn the_field_writes_land_and_the_limit_is_clamped() {
+        let connection = seeded();
+        let id = insert(&connection, "Email").expect("should insert");
+        assert!(set_name(&connection, id, "Mail").expect("should rename"));
+        assert!(set_icon(&connection, id, 3).expect("should set icon"));
+        assert!(set_colour(&connection, id, 1).expect("should set colour"));
+        assert_eq!(set_daily_limit(&connection, id, 2000).expect("should set limit"), Some(1440));
+        assert_eq!(set_daily_limit(&connection, id, -5).expect("should set limit"), Some(0));
+        assert_eq!(set_daily_limit(&connection, id, 45).expect("should set limit"), Some(45));
+        let row = by_id(&connection, id).expect("should read").expect("should exist");
+        assert_eq!(
+            (row.name.as_str(), row.colour_hex.as_deref(), row.daily_limit_minutes),
+            ("Mail", Some("#ff0000"), 45)
+        );
+        assert!(row.icon_name.is_some());
+        assert!(!set_name(&connection, 0, "Nobody").expect("the update should run"));
+        assert_eq!(set_daily_limit(&connection, 0, 5).expect("the update should run"), None);
+    }
+
+    #[test]
+    fn picking_the_current_choice_again_clears_it() {
+        assert_eq!(toggled_choice(3, 5), 5);
+        assert_eq!(toggled_choice(5, 5), 0);
+    }
+
+    #[test]
+    fn retiring_clears_unlocked_faces_and_a_namesake_blocks_reinstating() {
+        let connection = seeded();
+        let id = insert(&connection, "Email").expect("should insert");
+        crate::face::assign(&connection, id, 4).expect("should assign");
+        assert_eq!(retire(&connection, id).expect("should retire"), Some(vec![4]));
+        assert_eq!(retire(&connection, 0).expect("should run"), None);
+        assert_eq!(
+            decide_reinstate(&connection, id).expect("should decide"),
+            Some(ReinstateDecision::Allowed)
+        );
+        let namesake = insert(&connection, "EMAIL").expect("should insert");
+        match decide_reinstate(&connection, id).expect("should decide") {
+            Some(ReinstateDecision::Refused { active_namesake }) => assert_eq!(active_namesake.id, namesake),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn renaming_decides_from_who_else_holds_the_name() {
+        let connection = seeded();
+        let email = insert(&connection, "Email").expect("should insert");
+        let current = by_id(&connection, email).expect("should read").expect("should exist");
+        assert_eq!(
+            decide_rename(&connection, &current, " Email ").expect("should decide"),
+            RenameDecision::Ignore
+        );
+        assert_eq!(
+            decide_rename(&connection, &current, "EMAIL").expect("should decide"),
+            RenameDecision::Confirm { name: "EMAIL".to_string() }
+        );
+        assert!(matches!(
+            decide_rename(&connection, &current, "meeting").expect("should decide"),
+            RenameDecision::Refuse { .. }
+        ));
+        let old = insert(&connection, "Old").expect("should insert");
+        set_active(&connection, old, false).expect("should retire");
+        assert!(matches!(
+            decide_rename(&connection, &current, "old").expect("should decide"),
+            RenameDecision::ConfirmAgainstRetired { retired, .. } if retired.len() == 1
+        ));
+        let retired = by_id(&connection, old).expect("should read").expect("should exist");
+        assert!(matches!(
+            decide_rename(&connection, &retired, "Meeting").expect("should decide"),
+            RenameDecision::ConfirmAgainstActive { .. }
+        ));
     }
 
     #[test]
