@@ -481,6 +481,31 @@ across from the Swift suite. Each one made a correct app look broken until the d
 **An element revealed by a press is absent for a moment**, because AccessKit publishes a tree change after the
 frame that made it. `require` in `atspi_tree.py` now waits up to five seconds rather than asking once.
 
+## The same window over macOS accessibility, found running the Faces checks on the Mac
+
+**Measured 2026-09-25 on the Mac**, driving `facet-mac` while `00`, `05`, `06` and `12` were run there for the
+first time. The suite passed 71 of 71 once the harness was taught these.
+
+1. **A hidden Slint window leaves the macOS accessibility tree entirely**, the opposite of Linux fact 3 above.
+   With Settings closed the app reports no windows at all, so on macOS the tree is the answer: `settings_is_open`
+   asks for the Faces tab button, and `close_settings` presses the title bar's close button through AX
+   (`ax-press.py --close-window`).
+2. **`accessible-enabled: false` does reach macOS accessibility.** With the daily limit spent, `ax-dump.py`
+   prints the Faces tab's play/pause glyph as `disabled`. Slint's side therefore works, and the loss in Linux
+   fact 4 is between AccessKit's tree and AT-SPI, in `accesskit_unix` or the bridge after it.
+3. **Every tray-icon menu item carries the same `AXIdentifier`, `fireMenuItemAction:`.** The ids the app gives
+   its items (`pause`, `settings`, `quit`) do not reach AX, so the suite presses menu items by title on macOS as
+   it does on Linux. The items take an AX press with the menu closed, so reaching the menu needs no mouse event.
+4. **Straight after launch the menu is not in the tree yet.** A press in the first moment finds no item; a few
+   hundred milliseconds later it does. The macOS menu press asks again for up to five seconds.
+5. **A real left click on the status item is one toggle.** macOS delivers a press and a release, the app logs
+   both, and only the release acts: one segment closed per click.
+6. **With no bundle, macOS names the app after the binary**, `facet-mac`, so every script that found the app
+   as `Facet` found nothing. The scripts read `FACET_APP_NAME`, which `platform.sh` sets.
+
+**The Linux tray hang below has not been seen on the Mac** in about eight launches that day, which is too few to
+rule out a rate of one in fifteen but is a different tray stack (tray-icon, not ksni) in any case.
+
 ## The Linux tray stops answering D-Bus on about one launch in fifteen
 
 **Measured 2026-09-25, and not yet understood.** On a launch that goes wrong, every call to the item or its menu
