@@ -51,8 +51,8 @@ shorter list and one that empties.
 
 **A recommendation rather than a rule**, and what it is really saying is which items unblock the most.
 
-1. **7 is the only one**, and it is blocked on the Mac until the renderer moves. Nothing else is
-   outstanding: this file emptied of work on 2026-09-22.
+1. **8 first**: it is two commands and a doc fix, and the one-off reformat waits on its answer.
+2. **7** is waiting on the Mac to run the renderer and compare, so there is nothing to do on it here.
 
 ---
 
@@ -123,3 +123,39 @@ that would break quietly, is intact**: `AM`, `min` and `secs` all line up.
 that needs the Mac to run the same command now that it can. [handover-mac.md](handover-mac.md) item 4
 asks for it and carries these numbers to check against. Nothing goes in
 [port-findings.md](port-findings.md) until there is a comparison to record, in either direction.
+
+---
+
+## 8. Check `rustfmt.toml` against this box, and correct the rustfmt row in system-linux.md
+
+**Handover-mac 2 is decided: the project adopts a formatting standard.** The config is `rustfmt.toml` at
+the repo root, committed 2026-09-25:
+
+```toml
+max_width = 110
+use_small_heuristics = "Max"
+```
+
+**110 is the width the tree is already written to**: most long lines run 100 to 110 and only a handful
+exceed it. `Max` gives every width heuristic the full line, so compact struct literals stay on one line.
+Measured on the Mac with rustfmt 1.9.0-stable, `cargo fmt --check` reports **27 diffs** under this config,
+against 55 under the defaults. Most of the 27 re-join lines an earlier default-width format split, which
+is the one-off reformat rather than a config that fights the style. The one departure from house style
+is the `Error` enum in `facet-core/src/database.rs`, whose struct variants still get exploded.
+
+**What is wanted from this box:**
+
+1. **Run `cargo fmt --check` and report the count.** Same rustfmt (1.9.0-stable, `48a229cea`) on both
+   machines, so it should also be 27, less the 9 in `facet-mac/src/main.rs` if that file differs from
+   the Mac's working tree when you run it. A different number means the two machines are not formatting
+   alike, and that has to be understood before anything is reformatted.
+2. **Run `cargo clippy` on the workspace crates this box builds**, so there is a current baseline to hold
+   the reformat against.
+3. **Correct [system-linux.md](system-linux.md).** The rustfmt row says `cargo fmt --check` is clean,
+   and the section further down says it fails. The second is what was measured. Both it and the line
+   saying clippy and rustfmt are not on the Mac are now out of date: the Mac installed both on
+   2026-09-23, same versions as here.
+
+**Do not run `cargo fmt` itself.** The reformat lands as one commit containing nothing else, from the
+Mac, once uncommitted work there is in. A toolchain pin in `rust-toolchain.toml` follows it, at 1.98.1
+with `rustfmt` and `clippy` as components, so neither machine drifts.

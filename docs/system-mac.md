@@ -42,8 +42,8 @@ here and nothing else installed.
 | Toolchains | One: `stable-aarch64-apple-darwin`. No nightly |
 | Targets | One: `aarch64-apple-darwin`. **Nothing here cross-compiles** |
 | Installed by | rustup, into `~/.cargo` and `~/.rustup`. **Not Homebrew** |
-| `clippy` | **Not installed.** `cargo clippy` errors with *not installed for the toolchain* |
-| `rustfmt` | **Not installed.** Same error from `cargo fmt` |
+| `clippy` | **0.1.98** (`48a229cea`, 2026-09-01), a rustup component, added 2026-09-23 |
+| `rustfmt` | **1.9.0-stable** (`48a229cea`, 2026-09-01), a rustup component, added 2026-09-23 |
 
 **`~/.cargo/bin` is not on the PATH a non-interactive shell gets, and no dotfile fixes it.** Checked
 `.zshrc`, `.zprofile`, `.bash_profile`, `.bashrc` and `.profile`: **none mentions cargo**, and none
@@ -55,8 +55,7 @@ differ if a terminal profile sets PATH; nothing in the dotfiles does, and that i
 . "$HOME/.cargo/env"          # or: export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-**Two consequences.** `clippy` and `rustfmt` both need installing before either can be a CI gate, and
-with one target installed the Linux and Windows crates are built on their own machines rather than
+**With one target installed**, the Linux and Windows crates are built on their own machines rather than
 from here.
 
 ### The Apple toolchain, and what actually needs it
