@@ -389,15 +389,21 @@ platform_menu_press() {
     titles=$(platform_menu_titles "$1") || return 1
     case "$PLATFORM" in
         mac)
-            while IFS= read -r title; do
-                [ -z "$title" ] && continue
-                output=$(python3 scripts/ax-press.py --title "$title" 2>&1) && {
-                    printf '%s\n' "$output"
-                    return 0
-                }
-            done <<EOF
+            # **Asked again for up to five seconds.** Straight after launch the status item's menu is not in
+            # the accessibility tree yet, and a press then finds no item (run 5, 2026-09-25).
+            local attempt
+            for attempt in $(seq 1 25); do
+                while IFS= read -r title; do
+                    [ -z "$title" ] && continue
+                    output=$(python3 scripts/ax-press.py --title "$title" 2>&1) && {
+                        printf '%s\n' "$output"
+                        return 0
+                    }
+                done <<EOF
 $titles
 EOF
+                sleep 0.2
+            done
             echo "  no menu item matching $1${output:+: $output}" >&2
             return 1 ;;
         linux)
