@@ -155,7 +155,16 @@ def main():
     # **Read back rather than trusted**, which is the same rule this project applies to the cube and to
     # the database: a spin button clamps to its own range, so a write that reported nothing and landed
     # somewhere else is exactly the disagreement worth catching here rather than three checks later.
-    settled = value.currentValue
+    #
+    # **Polled, briefly, not read once.** AccessKit publishes the new value on the frame after the write, so a
+    # read straight away answers the old one. Measured 2026-09-25 on a Slint SpinBox: `set to 0` when asked for
+    # 45, with 45 already in the table the field writes to.
+    deadline = time.monotonic() + 3
+    while True:
+        settled = value.currentValue
+        if abs(settled - number) <= 1e-9 or time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
     print(f"set {arguments.name!r} to {settled:g}")
     if abs(settled - number) > 1e-9:
         sys.exit(f"  but it was asked for {number:g}: the control clamped it")
