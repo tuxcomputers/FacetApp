@@ -46,9 +46,7 @@ pub fn debug_trace(connection: &Connection) -> Result<DebugTrace, rusqlite::Erro
         .optional()?;
 
     Ok(match row {
-        Some((enabled, directory)) => {
-            DebugTrace { enabled: enabled.unwrap_or(false), directory }
-        }
+        Some((enabled, directory)) => DebugTrace { enabled: enabled.unwrap_or(false), directory },
         None => DebugTrace::default(),
     })
 }

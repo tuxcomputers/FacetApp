@@ -33,9 +33,9 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::rc::Rc;
 
+use facet_ui::{ComponentHandle, SettingsWindow};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor, TargetPixel};
 use slint::platform::{Platform, WindowAdapter};
-use facet_ui::{ComponentHandle, SettingsWindow};
 use slint::{LogicalSize, PhysicalSize, PlatformError};
 
 /// How tall each tab is rendered. **The height the window opens at**, so a tab that does not fit is cut here
@@ -46,14 +46,8 @@ const DEFAULT_HEIGHT: u32 = 680;
 ///
 /// **The file is prefixed with the index plus one**, so `1-faces.png` to `6-about.png` sort in tab order
 /// rather than alphabetically. The number comes from the index, so reordering the tabs renumbers the files.
-const TABS: [(i32, &str); 6] = [
-    (0, "faces"),
-    (1, "categories"),
-    (2, "report"),
-    (3, "app"),
-    (4, "device"),
-    (5, "about"),
-];
+const TABS: [(i32, &str); 6] =
+    [(0, "faces"), (1, "categories"), (2, "report"), (3, "app"), (4, "device"), (5, "about")];
 
 struct SoftwareBackend {
     window: Rc<MinimalSoftwareWindow>,
@@ -137,7 +131,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn write_png(path: &Path, width: u32, height: u32, pixels: &[Rgba]) -> Result<(), Box<dyn std::error::Error>> {
+fn write_png(
+    path: &Path,
+    width: u32,
+    height: u32,
+    pixels: &[Rgba],
+) -> Result<(), Box<dyn std::error::Error>> {
     let file = BufWriter::new(File::create(path)?);
     let mut encoder = png::Encoder::new(file, width, height);
     encoder.set_color(png::ColorType::Rgba);

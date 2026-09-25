@@ -50,8 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = SettingsWindow::new()?;
 
     // `true` for has_given_up_on_cube: this build has no radio, so it never waits for a cube.
-    let faces =
-        Faces::attach(&ui, data_directory().join("appdata.sqlite"), std::rc::Rc::clone(&log), true);
+    let faces = Faces::attach(&ui, data_directory().join("appdata.sqlite"), std::rc::Rc::clone(&log), true);
 
     let tab_log = std::rc::Rc::clone(&log);
     let tab_faces = std::rc::Rc::clone(&faces);
@@ -98,9 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         drain(&from_tray, &ui_weak, &pump_log, &pump_faces);
     });
 
-    log.record(Tag::Launch, || {
-        "Facet is in the tray. Right click the icon for the menu".to_string()
-    });
+    log.record(Tag::Launch, || "Facet is in the tray. Right click the icon for the menu".to_string());
 
     // Not `ui.run()`: the window is not shown at launch, and the loop must outlive it being closed.
     slint::run_event_loop_until_quit()?;
@@ -157,9 +154,7 @@ fn drain(
                 log.record(Tag::Quit, || "Quitting on the menu item".to_string());
                 faces.quit();
                 if let Err(error) = slint::quit_event_loop() {
-                    log.record_failure(Tag::Quit, || {
-                        format!("The event loop refused to quit: {error}")
-                    });
+                    log.record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
                 }
             }
         }
@@ -186,7 +181,8 @@ fn follow_the_clock(
         // No tray means start_the_tray has already said why, and there is nothing to follow into.
         let Some(tray) = tray.as_ref() else { return };
         let Some(timing) = faces.upgrade().and_then(|faces| faces.menu_bar_timing()) else { return };
-        match tray.update(|tray| tray.follow_clock(timing.is_paused, timing.pause_title, timing.is_clickable)) {
+        match tray.update(|tray| tray.follow_clock(timing.is_paused, timing.pause_title, timing.is_clickable))
+        {
             Some(true) => log.record(Tag::Tray, || {
                 format!(
                     "Status item follows the clock, paused={} item={} enabled={}",
@@ -208,9 +204,7 @@ fn follow_the_clock(
 /// a Dock is a macOS object and there is no Linux equivalent to take the app in and out of.
 fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
     if let Err(error) = ui.show() {
-        log.record_failure(Tag::Settings, || {
-            format!("The Settings window could not be shown: {error}")
-        });
+        log.record_failure(Tag::Settings, || format!("The Settings window could not be shown: {error}"));
         return;
     }
     ui.window().set_maximized(false);
@@ -332,9 +326,7 @@ fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
     let file = folder.join("debug.sqlite");
     let log = DebugLog::open(&file)?;
     let log = Some(log);
-    log.record(Tag::Database, || {
-        format!("Trace open at {}, against the {which} database", file.display())
-    });
+    log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
     Ok(log)
 }
 

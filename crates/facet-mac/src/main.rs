@@ -134,7 +134,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the event loop rather than the function that built it.
     let _tray: TrayIcon = tray;
 
-
     let ui_weak = ui.as_weak();
     let tray_handle = Rc::new(_tray);
     let pump_tray = Rc::clone(&tray_handle);
@@ -211,26 +210,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // nothing said about why, which is the shape CLAUDE.md has a section about. The Linux
                     // composition root reports the same failure the same way.
                     if let Err(error) = slint::quit_event_loop() {
-                        pump_log.record_failure(Tag::Quit, || {
-                            format!("The event loop refused to quit: {error}")
-                        });
+                        pump_log
+                            .record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
                     }
                 }
                 other => {
                     // Nothing fails silently: an id with no arm is a menu item somebody added and
                     // did not wire up, and it should say so rather than doing nothing.
-                    pump_log.record_failure(Tag::Menu, || {
-                        format!("No handler for menu item id {other}")
-                    });
+                    pump_log.record_failure(Tag::Menu, || format!("No handler for menu item id {other}"));
                 }
             }
         }
 
         while let Ok(event) = TrayIconEvent::receiver().try_recv() {
             if let TrayIconEvent::Click { button, button_state, .. } = event {
-                pump_log.record(Tag::Tray, || {
-                    format!("Status item {button:?} {button_state:?}")
-                });
+                pump_log.record(Tag::Tray, || format!("Status item {button:?} {button_state:?}"));
 
                 // **Left click is Pause's accelerator**, which is what it already is on Linux and what
                 // the design rule in docs/rust-port.md asks for on every platform: the menu is the
@@ -253,9 +247,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         show_in_dock(false, &settle_log);
     });
 
-    log.record(Tag::Launch, || {
-        "Facet is in the menu bar. Right click the icon for the menu".to_string()
-    });
+    log.record(Tag::Launch, || "Facet is in the menu bar. Right click the icon for the menu".to_string());
 
     // Not `ui.run()`: the window is not shown at launch, and the loop must outlive it being closed.
     slint::run_event_loop_until_quit()?;
@@ -273,9 +265,7 @@ fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
     show_in_dock(true, log);
 
     if let Err(error) = ui.show() {
-        log.record_failure(Tag::Settings, || {
-            format!("The Settings window could not be shown: {error}")
-        });
+        log.record_failure(Tag::Settings, || format!("The Settings window could not be shown: {error}"));
         // Back out of the Dock, or the app sits there advertising a window that never appeared.
         show_in_dock(false, log);
         return;
@@ -395,15 +385,12 @@ fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &Opti
                 return;
             }
             log.record(Tag::Tray, || {
-                format!(
-                    "Status item now shows paused={} locked={}",
-                    showing.paused, showing.locked
-                )
+                format!("Status item now shows paused={} locked={}", showing.paused, showing.locked)
             });
         }
-        Err(error) => log.record_failure(Tag::Tray, || {
-            format!("The status item icon could not be drawn: {error}")
-        }),
+        Err(error) => {
+            log.record_failure(Tag::Tray, || format!("The status item icon could not be drawn: {error}"))
+        }
     }
 }
 
@@ -469,9 +456,7 @@ fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
     let file = folder.join("debug.sqlite");
     let log = DebugLog::open(&file)?;
     let log = Some(log);
-    log.record(Tag::Database, || {
-        format!("Trace open at {}, against the {which} database", file.display())
-    });
+    log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
     Ok(log)
 }
 
@@ -523,4 +508,3 @@ fn wear_the_facet_logo(mtm: objc2::MainThreadMarker, log: &Option<DebugLog>) {
         NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image));
     }
 }
-

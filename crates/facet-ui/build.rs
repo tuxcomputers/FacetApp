@@ -19,8 +19,9 @@ fn main() {
 /// Writes `$OUT_DIR/icons.rs`: `ICONS`, every `ui/icons/*.svg` as `(name without extension, bytes)`, sorted
 /// by name.
 fn embed_icons() {
-    let directory = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"))
-        .join("ui/icons");
+    let directory =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"))
+            .join("ui/icons");
     println!("cargo:rerun-if-changed={}", directory.display());
     let mut names: Vec<String> = std::fs::read_dir(&directory)
         .expect("ui/icons should be readable")

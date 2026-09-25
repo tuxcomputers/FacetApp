@@ -59,19 +59,12 @@ pub fn open(path: &Path, ddl: &[(&str, &str)]) -> Result<Connection, Error> {
         return Err(Error::NoDdl);
     }
 
-    let connection = Connection::open(path).map_err(|source| Error::Open {
-        path: path.display().to_string(),
-        source,
-    })?;
-    connection
-        .execute_batch("PRAGMA foreign_keys = ON;")
-        .map_err(|source| Error::Pragma { source })?;
+    let connection =
+        Connection::open(path).map_err(|source| Error::Open { path: path.display().to_string(), source })?;
+    connection.execute_batch("PRAGMA foreign_keys = ON;").map_err(|source| Error::Pragma { source })?;
 
     for (name, sql) in ddl {
-        connection.execute_batch(sql).map_err(|source| Error::Ddl {
-            file: (*name).to_string(),
-            source,
-        })?;
+        connection.execute_batch(sql).map_err(|source| Error::Ddl { file: (*name).to_string(), source })?;
     }
 
     Ok(connection)
@@ -97,18 +90,25 @@ pub fn connect(path: &Path) -> Result<Connection, Error> {
 pub enum Error {
     /// The DDL list was empty, so the database would have come up with no schema in it.
     NoDdl,
-    Open { path: String, source: rusqlite::Error },
-    Pragma { source: rusqlite::Error },
-    Ddl { file: String, source: rusqlite::Error },
+    Open {
+        path: String,
+        source: rusqlite::Error,
+    },
+    Pragma {
+        source: rusqlite::Error,
+    },
+    Ddl {
+        file: String,
+        source: rusqlite::Error,
+    },
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::NoDdl => write!(
-                formatter,
-                "the DDL list is empty, so the database would have no schema in it"
-            ),
+            Error::NoDdl => {
+                write!(formatter, "the DDL list is empty, so the database would have no schema in it")
+            }
             Error::Open { path, source } => write!(formatter, "{path} could not be opened: {source}"),
             Error::Pragma { source } => {
                 write!(formatter, "foreign keys could not be turned on: {source}")
@@ -122,9 +122,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::NoDdl => None,
-            Error::Open { source, .. } | Error::Pragma { source } | Error::Ddl { source, .. } => {
-                Some(source)
-            }
+            Error::Open { source, .. } | Error::Pragma { source } | Error::Ddl { source, .. } => Some(source),
         }
     }
 }
