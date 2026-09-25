@@ -16,6 +16,11 @@
 //!
 //!     cargo run -p facet-ui --example draw-settings-tabs
 //!     FACET_TAB_HEIGHT=1200 cargo run -p facet-ui --example draw-settings-tabs
+//!     FACET_DATABASE=path/to/appdata.sqlite cargo run -p facet-ui --example draw-settings-tabs
+//!
+//! FACET_DATABASE fills the Faces tab from that database, which must already exist. Rendering it may
+//! finalise segments an earlier launch left open on an app face, as launching the app does. Without it the
+//! Faces tab draws with no categories.
 //!
 //! Writes target/settings-tabs/<tab>.png, one per tab. The default height is the one the window opens at, so
 //! what it draws is what somebody opening Settings sees; FACET_TAB_HEIGHT draws a taller one, which is how to
@@ -86,9 +91,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let width = 640u32;
     let ui = SettingsWindow::new()?;
+    let faces = std::env::var_os("FACET_DATABASE")
+        .map(|path| facet_ui::faces::Faces::attach(&ui, path.into(), Rc::new(None), true));
     ui.window().set_size(LogicalSize::new(width as f32, height as f32));
     window.set_size(PhysicalSize::new(width, height));
     ui.show()?;
+    if let Some(faces) = &faces {
+        faces.refresh();
+    }
 
     let directory = Path::new("target/settings-tabs");
     std::fs::create_dir_all(directory)?;
