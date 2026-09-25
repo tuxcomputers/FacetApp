@@ -24,6 +24,7 @@ use std::time::Duration;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
+use facet_ui::categories::Categories;
 use facet_ui::faces::Faces;
 use facet_ui::notice::Notice;
 use facet_ui::{ComponentHandle, SettingsWindow};
@@ -62,14 +63,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::rc::Rc::clone(&notice),
     );
 
+    let categories = Categories::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        std::rc::Rc::clone(&log),
+        std::rc::Rc::clone(&notice),
+    );
+    // A change on the Categories tab can change what the Faces tab and the menu bar show.
+    let changed_faces = std::rc::Rc::downgrade(&faces);
+    categories.set_on_changed(move || {
+        if let Some(faces) = changed_faces.upgrade() {
+            faces.refresh();
+        }
+    });
+
     let tab_log = std::rc::Rc::clone(&log);
     let tab_faces = std::rc::Rc::clone(&faces);
+    let tab_categories = std::rc::Rc::clone(&categories);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
         tab_log.record(Tag::Settings, || format!("Settings tab selected: {tab}"));
         if tab == "Faces" {
             tab_faces.refresh();
+        }
+        if tab == "Categories" {
+            tab_categories.refresh();
         }
     });
 
@@ -102,9 +121,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui_weak = ui.as_weak();
     let pump_log = std::rc::Rc::clone(&log);
     let pump_faces = std::rc::Rc::clone(&faces);
+    let pump_categories = std::rc::Rc::clone(&categories);
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
-        drain(&from_tray, &ui_weak, &pump_log, &pump_faces);
+        drain(&from_tray, &ui_weak, &pump_log, &pump_faces, &pump_categories);
     });
 
     log.record(Tag::Launch, || "Facet is in the tray. Right click the icon for the menu".to_string());
@@ -127,6 +147,7 @@ fn drain(
     ui_weak: &slint::Weak<SettingsWindow>,
     log: &Option<DebugLog>,
     faces: &Faces,
+    categories: &Categories,
 ) {
     while let Ok(message) = from_tray.try_recv() {
         match message {
@@ -151,6 +172,7 @@ fn drain(
                     ui.invoke_open_on_faces();
                     show_settings(&ui, "Faces", log);
                     faces.refresh();
+                    categories.refresh();
                 }
             }
             FromTray::OpenAbout => {
@@ -158,6 +180,7 @@ fn drain(
                     ui.invoke_open_on_about();
                     show_settings(&ui, "About", log);
                     faces.refresh();
+                    categories.refresh();
                 }
             }
             FromTray::Quit => {

@@ -16,6 +16,7 @@ use std::time::Duration;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
+use facet_ui::categories::Categories;
 use facet_ui::faces::Faces;
 use facet_ui::notice::Notice;
 use facet_ui::{ComponentHandle, SettingsWindow};
@@ -56,6 +57,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Rc::clone(&notice),
     );
 
+    let categories =
+        Categories::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log), Rc::clone(&notice));
+    // A change on the Categories tab can change what the Faces tab and the menu bar show.
+    let changed_faces = Rc::downgrade(&faces);
+    categories.set_on_changed(move || {
+        if let Some(faces) = changed_faces.upgrade() {
+            faces.refresh();
+        }
+    });
+
     // A menu bar app owns no dock icon. This has to happen after Slint has built its backend, because
     // that is what creates the application object, and again from inside the event loop below, because
     // the windowing layer sets its own policy on the way up.
@@ -63,12 +74,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let tab_log = Rc::clone(&log);
     let tab_faces = Rc::clone(&faces);
+    let tab_categories = Rc::clone(&categories);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
         tab_log.record(Tag::Settings, || format!("Settings tab selected: {tab}"));
         if tab == "Faces" {
             tab_faces.refresh();
+        }
+        if tab == "Categories" {
+            tab_categories.refresh();
         }
     });
 
@@ -150,6 +165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_showing = Rc::clone(&showing);
     let pump_log = Rc::clone(&log);
     let pump_faces = Rc::clone(&faces);
+    let pump_categories = Rc::clone(&categories);
 
     // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
     // is after every toggle, every click on the Faces tab and every tick.
@@ -204,6 +220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.invoke_open_on_about();
                         show_settings(&ui, "About", &pump_log);
                         pump_faces.refresh();
+                        pump_categories.refresh();
                     }
                 }
                 "settings" => {
@@ -211,6 +228,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.invoke_open_on_faces();
                         show_settings(&ui, "Faces", &pump_log);
                         pump_faces.refresh();
+                        pump_categories.refresh();
                     }
                 }
                 "quit" => {
