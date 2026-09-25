@@ -18,7 +18,7 @@ use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use tray_icon::{
-    TrayIcon, TrayIconBuilder, TrayIconEvent,
+    MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 
@@ -136,15 +136,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_log = Rc::clone(&log);
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
+        // Flips pause, relabels the menu item and redraws the icon.
+        //
+        // **One function for the two routes deliberately**, which is the same shape `facet-linux`'s tray
+        // uses and for the same reason: left click is an accelerator for the first menu item, so the day
+        // it does something the item does not, the accelerator has become a mechanism.
+        let toggle_pause = || {
+            let mut next = pump_showing.get();
+            next.paused = !next.paused;
+            pump_showing.set(next);
+            pause_item.set_text(if next.paused { "Resume" } else { "Pause" });
+            redraw_status_item(&pump_tray, next, &pump_log);
+        };
+
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             match event.id.as_ref() {
-                "pause" => {
-                    let mut next = pump_showing.get();
-                    next.paused = !next.paused;
-                    pump_showing.set(next);
-                    pause_item.set_text(if next.paused { "Resume" } else { "Pause" });
-                    redraw_status_item(&pump_tray, next, &pump_log);
-                }
+                "pause" => toggle_pause(),
                 "lock" => {
                     let mut next = pump_showing.get();
                     next.locked = !next.locked;
@@ -166,7 +173,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 "quit" => {
                     pump_log.record(Tag::Quit, || "Quitting on the menu item".to_string());
-                    let _ = slint::quit_event_loop();
+                    // Not a discarded Result: a quit that the loop refuses leaves the app running with
+                    // nothing said about why, which is the shape CLAUDE.md has a section about. The Linux
+                    // composition root reports the same failure the same way.
+                    if let Err(error) = slint::quit_event_loop() {
+                        pump_log.record_failure(Tag::Quit, || {
+                            format!("The event loop refused to quit: {error}")
+                        });
+                    }
                 }
                 other => {
                     // Nothing fails silently: an id with no arm is a menu item somebody added and
@@ -183,6 +197,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pump_log.record(Tag::Tray, || {
                     format!("Status item {button:?} {button_state:?}")
                 });
+
+                // **Left click is Pause's accelerator**, which is what it already is on Linux and what
+                // the design rule in docs/rust-port.md asks for on every platform: the menu is the
+                // primary route and left click is a shortcut to its first item.
+                //
+                // **On the release, not the press.** macOS delivers both edges of a left click here, so
+                // acting on each would flip pause twice and land back where it started. Right click never
+                // arrives as a pair, the menu taking it, so this is not a general rule about clicks.
+                if button == MouseButton::Left && button_state == MouseButtonState::Up {
+                    toggle_pause();
+                }
             }
         }
     });
