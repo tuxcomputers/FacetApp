@@ -14,8 +14,14 @@ pub const MAXIMUM_NAME_LENGTH: usize = 35;
 pub struct Category {
     pub id: i64,
     pub name: String,
+    /// 0 for the icon row called `None`.
+    pub icon_id: i64,
     /// The icon's name, such as `ic_meeting`. `None` for the icon row called `None`.
     pub icon_name: Option<String>,
+    /// 0 for the colour row called `None`.
+    pub colour_id: i64,
+    /// The colour's name, such as `Cyan`. `None` for the colour row called `None`.
+    pub colour_name: Option<String>,
     /// `#rrggbb`. `None` for the colour row called `None`.
     pub colour_hex: Option<String>,
     /// Whether the icon is drawn white rather than black on this colour.
@@ -26,17 +32,21 @@ pub struct Category {
 }
 
 const SELECT: &str = "SELECT c.category_id, c.category_name, i.icon_name, l.device_hex, l.white_lines, \
-                             c.daily_limit, c.active \
+                             c.daily_limit, c.active, c.icon_id, c.colour_id, l.colour_name \
                         FROM category c \
                         JOIN icon i ON i.icon_id = c.icon_id \
                         JOIN colour l ON l.colour_id = c.colour_id";
 
 fn from_row(row: &rusqlite::Row<'_>) -> Result<Category, rusqlite::Error> {
     let icon_name: String = row.get(2)?;
+    let colour_name: String = row.get(9)?;
     Ok(Category {
         id: row.get(0)?,
         name: row.get(1)?,
+        icon_id: row.get(7)?,
         icon_name: (icon_name != "None").then_some(icon_name),
+        colour_id: row.get(8)?,
+        colour_name: (colour_name != "None").then_some(colour_name),
         colour_hex: row.get(3)?,
         uses_white_lines: row.get(4)?,
         daily_limit_minutes: row.get(5)?,

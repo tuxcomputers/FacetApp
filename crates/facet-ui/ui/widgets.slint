@@ -181,6 +181,9 @@ export component StepperField inherits HorizontalLayout {
     in property <string> field-id;
     in property <bool> enabled: true;
 
+    // The value after each change made here: an arrow press, or a typed number committed.
+    callback edited(int);
+
     spacing: Metrics.title-spacing;
     horizontal-stretch: 0;
 
@@ -192,6 +195,7 @@ export component StepperField inherits HorizontalLayout {
         maximum: root.maximum;
         enabled: root.enabled;
         accessible-id: root.field-id;
+        edited(value) => { root.edited(value); }
     }
 
     // Left-aligned in a fixed slot, so the units line up down the tab however long the word is.

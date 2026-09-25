@@ -24,6 +24,7 @@
 
 slint::include_modules!();
 
+pub mod categories;
 pub mod create;
 pub mod faces;
 pub mod icons;
