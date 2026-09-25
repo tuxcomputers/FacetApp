@@ -88,6 +88,12 @@ impl Tag {
     };
 }
 
+/// `text` with apostrophes and double quotes removed, for putting a user-supplied value such as a category
+/// name into a message.
+pub fn plain(text: &str) -> String {
+    text.chars().filter(|&c| c != '\'' && c != '"').collect()
+}
+
 /// Says what happened, if there is anywhere to say it.
 ///
 /// **Implemented on `Option<DebugLog>` rather than on the logger**, which is what keeps the gate in the

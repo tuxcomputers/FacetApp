@@ -1221,7 +1221,9 @@ dependencies = [
 name = "facet-ui"
 version = "0.1.0"
 dependencies = [
+ "facet-core",
  "png",
+ "rusqlite",
  "slint",
  "slint-build",
 ]

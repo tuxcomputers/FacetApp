@@ -7,7 +7,8 @@
 //! it a macOS window by accident of where the file sat.
 //!
 //! **It is not the core, and the core does not depend on it.** `facet-core` states what the app *is*;
-//! this states what it *looks like*. The dependency runs one way: a composition root takes both.
+//! this states what it *looks like*, and [`faces`] fills the Faces tab from the core. The dependency runs one
+//! way: this crate uses the core, and the core knows nothing of this crate.
 //!
 //! **It is platform-blind in the same sense the core is**: no `cfg`, no platform crate, and nothing here
 //! may learn what it is running on. What differs per platform is the menu bar and the tray, and those are
@@ -23,6 +24,8 @@
 
 slint::include_modules!();
 
+pub mod faces;
+pub mod icons;
 pub mod status_icon;
 
 /// Re-exported because every generated component needs it and nothing else about it is interesting.

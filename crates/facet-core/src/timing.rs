@@ -6,7 +6,7 @@
 use rusqlite::{Connection, params};
 
 use crate::category::{self, Category};
-use crate::debug_log::{Record, Tag};
+use crate::debug_log::{Record, Tag, plain};
 use crate::{face, segment, setting, time_entry};
 
 /// What the app's own clock is doing.
@@ -159,7 +159,7 @@ pub fn start_timing(
     log: &impl Record,
 ) -> Result<StartOutcome, rusqlite::Error> {
     let before = read(connection, now)?;
-    let name = before.category.as_ref().map(|c| c.name.clone());
+    let name = before.category.as_ref().map(|c| plain(&c.name));
     if before.timing_state == TimingState::Running
         && before.category.as_ref().is_some_and(|c| c.id == category_id)
     {
@@ -191,7 +191,7 @@ pub fn toggle_pause(
 ) -> Result<Option<Reading>, rusqlite::Error> {
     let before = read(connection, now)?;
     if !is_clickable(before.timing_state, before.is_limit_reached) {
-        let name = before.category.as_ref().map_or("nothing", |c| c.name.as_str());
+        let name = before.category.as_ref().map_or_else(|| "nothing".to_string(), |c| plain(&c.name));
         log.record(Tag::Limit, || format!("Resume refused, {name} is idle or has spent its daily limit"));
         return Ok(None);
     }
@@ -205,7 +205,7 @@ pub fn toggle_pause(
         format!(
             "Timing: {} {}, {}s today",
             if after.timing_state == TimingState::Running { "running" } else { "stopped" },
-            after.category.as_ref().map_or("nothing", |c| c.name.as_str()),
+            after.category.as_ref().map_or_else(|| "nothing".to_string(), |c| plain(&c.name)),
             after.seconds
         )
     });
@@ -226,7 +226,7 @@ pub fn enforce_daily_limit(
     log.record(Tag::Limit, || {
         format!(
             "Daily limit reached, {} paused at {}s",
-            reading.category.as_ref().map_or("nothing", |c| c.name.as_str()),
+            reading.category.as_ref().map_or_else(|| "nothing".to_string(), |c| plain(&c.name)),
             reading.seconds
         )
     });

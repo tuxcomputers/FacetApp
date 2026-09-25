@@ -1,0 +1,516 @@
+//! The Faces tab's behaviour: fills [`FacesData`] from the database and carries out its clicks.
+//!
+//! Every refresh opens the database and reads what it shows; nothing is held between refreshes except the
+//! decoded icon images, which come from files compiled into the binary rather than from the database.
+//!
+//! Timing is always by hand in this build: there is no radio, so the app never waits for a cube (see
+//! [`Faces::attach`]).
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::{Rc, Weak};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use facet_core::category::{self, Category, CreateDecision};
+use facet_core::database;
+use facet_core::debug_log::{DebugLog, Record, Tag, plain};
+use facet_core::{segment, setting, timing};
+use rusqlite::Connection;
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+
+use crate::{FaceCategory, FacesData, SettingsWindow, icons};
+
+/// A question the notice is asking, and what each of its buttons means.
+enum Pending {
+    AlreadyActive,
+    RetiredNamesakes { name: String, first_id: i64, choices: Vec<Choice> },
+}
+
+#[derive(Clone, Copy)]
+enum Choice {
+    Reactivate,
+    CreateNew,
+    Cancel,
+}
+
+impl Choice {
+    fn title(self) -> &'static str {
+        match self {
+            Choice::Reactivate => "Reactivate",
+            Choice::CreateNew => "Create new one",
+            Choice::Cancel => "Cancel",
+        }
+    }
+}
+
+/// The Faces tab, attached to one Settings window.
+pub struct Faces {
+    ui: slint::Weak<SettingsWindow>,
+    database: PathBuf,
+    log: Rc<Option<DebugLog>>,
+    has_given_up_on_cube: bool,
+    tick: slint::Timer,
+    icons: RefCell<HashMap<String, slint::Image>>,
+    pending: RefCell<Option<Pending>>,
+    this: RefCell<Weak<Faces>>,
+}
+
+impl Faces {
+    /// Wires the tab's callbacks on `ui` to `database` and closes any segment an earlier launch left open on
+    /// an app face. Call once, at launch, before the window is shown.
+    ///
+    /// `has_given_up_on_cube` is passed to [`timing::is_manual_mode`] with the paired setting on every click.
+    /// A build with no radio passes `true`, so a paired cube never blocks timing by hand.
+    pub fn attach(
+        ui: &SettingsWindow,
+        database: PathBuf,
+        log: Rc<Option<DebugLog>>,
+        has_given_up_on_cube: bool,
+    ) -> Rc<Faces> {
+        let faces = Rc::new(Faces {
+            ui: ui.as_weak(),
+            database,
+            log,
+            has_given_up_on_cube,
+            tick: slint::Timer::default(),
+            icons: RefCell::new(HashMap::new()),
+            pending: RefCell::new(None),
+            this: RefCell::new(Weak::new()),
+        });
+        *faces.this.borrow_mut() = Rc::downgrade(&faces);
+
+        if let Some(connection) = faces.connect() {
+            faces.report(segment::close_stranded_on_app_faces(&connection, &*faces.log));
+        }
+
+        let data = ui.global::<FacesData>();
+        let weak = Rc::downgrade(&faces);
+        let with = move |action: fn(&Faces)| {
+            let weak = weak.clone();
+            move || {
+                if let Some(faces) = weak.upgrade() {
+                    action(&faces);
+                }
+            }
+        };
+        data.on_play_pause_pressed(with(Faces::toggle_pause));
+        data.on_create_opened(with(Faces::open_create));
+        data.on_create_cancelled(with(Faces::cancel_create));
+
+        let weak = Rc::downgrade(&faces);
+        data.on_category_picked(move |id| {
+            if let Some(faces) = weak.upgrade() {
+                faces.pick(i64::from(id));
+            }
+        });
+        let weak = Rc::downgrade(&faces);
+        data.on_name_edited(move |text| {
+            if let Some(faces) = weak.upgrade() {
+                faces.limit_typed(&text);
+            }
+        });
+        let weak = Rc::downgrade(&faces);
+        data.on_create_saved(move |text| {
+            if let Some(faces) = weak.upgrade() {
+                faces.save(&text);
+            }
+        });
+        let weak = Rc::downgrade(&faces);
+        data.on_notice_chosen(move |index| {
+            if let Some(faces) = weak.upgrade() {
+                faces.choose(index);
+            }
+        });
+        faces
+    }
+
+    /// Re-reads the category list and the timing picture. Call when the window opens and when the Faces tab
+    /// is shown.
+    pub fn refresh(&self) {
+        let Some(connection) = self.connect() else { return };
+        let Some(ui) = self.ui.upgrade() else { return };
+        match category::active(&connection) {
+            Ok(categories) => {
+                let rows: Vec<FaceCategory> = categories.iter().map(|c| self.row(c)).collect();
+                ui.global::<FacesData>().set_categories(ModelRc::new(VecModel::from(rows)));
+            }
+            Err(error) => self.log.record_failure(Tag::Settings, || {
+                format!("Faces: the category list would not read: {error}")
+            }),
+        }
+        self.show_timing(&connection);
+    }
+
+    /// Closes the open app-face segment. Call during quit.
+    pub fn quit(&self) {
+        self.tick.stop();
+        if let Some(connection) = self.connect() {
+            self.report(segment::close_open_segment(&connection, now(), &*self.log));
+        }
+    }
+
+    fn connect(&self) -> Option<Connection> {
+        match database::connect(&self.database) {
+            Ok(connection) => Some(connection),
+            Err(error) => {
+                self.log
+                    .record_failure(Tag::Database, || format!("Faces: the database would not open: {error}"));
+                None
+            }
+        }
+    }
+
+    /// Logs a failed database call, and gives back the value of a successful one.
+    fn report<T>(&self, result: Result<T, rusqlite::Error>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                self.log.record_failure(Tag::Database, || format!("Faces: a database call failed: {error}"));
+                None
+            }
+        }
+    }
+
+    fn is_manual_mode(&self, connection: &Connection) -> Option<bool> {
+        let is_cube_paired = self.report(setting::is_cube_paired(connection))?;
+        Some(timing::is_manual_mode(is_cube_paired, self.has_given_up_on_cube))
+    }
+
+    /// Sets the timing column from a fresh reading, and runs the one-second tick while the figure is moving
+    /// and the window is on screen.
+    fn show_timing(&self, connection: &Connection) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let Some(reading) = self.report(timing::read(connection, now())) else { return };
+        let is_manual_mode = self.is_manual_mode(connection).unwrap_or(true);
+        let data = ui.global::<FacesData>();
+        data.set_has_category(reading.category.is_some());
+        data.set_running(reading.timing_state == timing::TimingState::Running);
+        data.set_timing_category(
+            reading.category.as_ref().map(|c| c.name.as_str()).unwrap_or_default().into(),
+        );
+        let colour = reading.category.as_ref().and_then(|c| colour(c.colour_hex.as_deref()));
+        data.set_has_timing_colour(colour.is_some());
+        data.set_timing_colour(colour.unwrap_or_default());
+        data.set_elapsed(timing::format_duration(reading.seconds, true).into());
+        data.set_glyph_enabled(timing::is_clickable(reading.timing_state, reading.is_limit_reached));
+        data.set_rows_enabled(timing::click(is_manual_mode) == timing::Click::StartTiming);
+
+        let is_visible = ui.window().is_visible();
+        if reading.is_counting && is_visible {
+            if !self.tick.running() {
+                let weak = self.this.borrow().clone();
+                self.tick.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
+                    if let Some(faces) = weak.upgrade() {
+                        faces.on_tick();
+                    }
+                });
+            }
+        } else {
+            self.tick.stop();
+        }
+    }
+
+    fn on_tick(&self) {
+        let Some(connection) = self.connect() else { return };
+        let instant = now();
+        self.report(timing::enforce_daily_limit(&connection, instant, &*self.log));
+        self.report(segment::refresh_open_segment(&connection, instant));
+        self.show_timing(&connection);
+    }
+
+    fn pick(&self, category_id: i64) {
+        self.log.record(Tag::Click, || format!("Button clicked: category_id {category_id}"));
+        let Some(connection) = self.connect() else { return };
+        match self.is_manual_mode(&connection).map(timing::click) {
+            Some(timing::Click::StartTiming) => {
+                self.report(timing::start_timing(&connection, category_id, now(), &*self.log));
+            }
+            Some(timing::Click::WaitingForTheDevice) => self.log.record(Tag::Timing, || {
+                format!("Timing: category_id {category_id} was not started, a device is paired")
+            }),
+            None => {}
+        }
+        self.show_timing(&connection);
+    }
+
+    fn toggle_pause(&self) {
+        self.log.record(Tag::Click, || "Button clicked: play pause".to_string());
+        let Some(connection) = self.connect() else { return };
+        self.report(timing::toggle_pause(&connection, now(), &*self.log));
+        self.show_timing(&connection);
+    }
+
+    fn open_create(&self) {
+        self.log.record(Tag::Click, || "Button clicked: Create".to_string());
+        if let Some(ui) = self.ui.upgrade() {
+            let data = ui.global::<FacesData>();
+            data.set_typed_name(SharedString::new());
+            data.set_creating(true);
+        }
+    }
+
+    fn cancel_create(&self) {
+        self.log.record(Tag::Click, || "Create cancelled".to_string());
+        if let Some(ui) = self.ui.upgrade() {
+            ui.global::<FacesData>().set_creating(false);
+        }
+    }
+
+    /// Cuts the name being typed to the longest a category may have.
+    fn limit_typed(&self, text: &str) {
+        if text.chars().count() > category::MAXIMUM_NAME_LENGTH
+            && let Some(ui) = self.ui.upgrade()
+        {
+            let cut: String = text.chars().take(category::MAXIMUM_NAME_LENGTH).collect();
+            ui.global::<FacesData>().set_typed_name(cut.into());
+        }
+    }
+
+    fn save(&self, typed: &str) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        ui.global::<FacesData>().set_creating(false);
+        let Some(connection) = self.connect() else { return };
+        let Some(decision) = self.report(category::decide_create(&connection, typed)) else { return };
+        match decision {
+            CreateDecision::Ignore => {}
+            CreateDecision::Insert(name) => {
+                let created = self.report(category::insert(&connection, &name));
+                self.log.record(Tag::Click, || {
+                    format!("Button clicked: Save new category {} -> {created:?}", plain(&name))
+                });
+                self.refresh();
+                if let Some(id) = created {
+                    self.pick(id);
+                }
+            }
+            CreateDecision::AlreadyActive(existing) => {
+                self.log.record(Tag::Click, || {
+                    format!(
+                        "Button clicked: Save new category {} -> already active as category_id {}",
+                        plain(&existing.name),
+                        existing.id
+                    )
+                });
+                *self.pending.borrow_mut() = Some(Pending::AlreadyActive);
+                self.show_notice(
+                    "That category already exists",
+                    &format!("\u{201c}{}\u{201d} is already in the list.", existing.name),
+                    &["OK"],
+                );
+            }
+            CreateDecision::RetiredNamesakes(existing) => {
+                let first = &existing[0];
+                let choices = if existing.len() == 1 {
+                    vec![Choice::Reactivate, Choice::CreateNew, Choice::Cancel]
+                } else {
+                    vec![Choice::CreateNew, Choice::Cancel]
+                };
+                self.log.record(Tag::Click, || {
+                    format!(
+                        "Button clicked: Save new category {} -> asking, {} retired under that name",
+                        plain(&first.name),
+                        existing.len()
+                    )
+                });
+                let message = if existing.len() == 1 {
+                    "There is one category with the same name.".to_string()
+                } else {
+                    format!("There are {} categories with the same name.", existing.len())
+                };
+                let titles: Vec<&str> = choices.iter().map(|c| c.title()).collect();
+                self.show_notice(
+                    &format!(
+                        "The category \u{201c}{}\u{201d} already exists as a deactivated category",
+                        first.name
+                    ),
+                    &message,
+                    &titles,
+                );
+                *self.pending.borrow_mut() = Some(Pending::RetiredNamesakes {
+                    name: category::normalise(typed),
+                    first_id: first.id,
+                    choices,
+                });
+            }
+        }
+    }
+
+    fn choose(&self, index: i32) {
+        let pending = self.pending.borrow_mut().take();
+        self.show_notice("", "", &[]);
+        let Some(Pending::RetiredNamesakes { name, first_id, choices }) = pending else { return };
+        let Some(&choice) = usize::try_from(index).ok().and_then(|i| choices.get(i)) else { return };
+        let Some(connection) = self.connect() else { return };
+        let started = match choice {
+            Choice::Reactivate => {
+                let reinstated =
+                    self.report(category::set_active(&connection, first_id, true)).unwrap_or(false);
+                self.log.record(Tag::Click, || {
+                    format!(
+                        "Button clicked: Reactivate category_id {first_id} -> {}",
+                        if reinstated { "done" } else { "REFUSED" }
+                    )
+                });
+                reinstated.then_some(first_id)
+            }
+            Choice::CreateNew => {
+                let created = self.report(category::insert(&connection, &name));
+                self.log.record(Tag::Click, || {
+                    format!("Button clicked: Create new one {} -> {created:?}, leaving category_id {first_id} retired", plain(&name))
+                });
+                created
+            }
+            Choice::Cancel => {
+                self.log
+                    .record(Tag::Click, || format!("Button clicked: Cancel, {} not created", plain(&name)));
+                return;
+            }
+        };
+        self.refresh();
+        if let Some(id) = started {
+            self.pick(id);
+        }
+    }
+
+    fn show_notice(&self, title: &str, message: &str, choices: &[&str]) {
+        if let Some(ui) = self.ui.upgrade() {
+            let data = ui.global::<FacesData>();
+            let choices: Vec<SharedString> = choices.iter().map(|&c| c.into()).collect();
+            data.set_notice_choices(ModelRc::new(VecModel::from(choices)));
+            data.set_notice_message(message.into());
+            data.set_notice_title(title.into());
+        }
+    }
+
+    fn row(&self, category: &Category) -> FaceCategory {
+        let colour = colour(category.colour_hex.as_deref());
+        let icon = category.icon_name.as_deref().and_then(|name| self.icon(name));
+        FaceCategory {
+            id: i32::try_from(category.id).unwrap_or(i32::MAX),
+            name: category.name.as_str().into(),
+            colour: colour.unwrap_or_default(),
+            has_colour: colour.is_some(),
+            has_icon: icon.is_some(),
+            icon: icon.unwrap_or_default(),
+            white_lines: category.uses_white_lines,
+        }
+    }
+
+    /// The decoded icon called `name`. `None`, and a logged failure, when it has no file or will not decode.
+    fn icon(&self, name: &str) -> Option<slint::Image> {
+        if let Some(image) = self.icons.borrow().get(name) {
+            return Some(image.clone());
+        }
+        let Some(bytes) = icons::svg(name) else {
+            self.log.record_failure(Tag::Settings, || format!("Faces: no icon file for {}", plain(name)));
+            return None;
+        };
+        match slint::Image::load_from_svg_data(bytes) {
+            Ok(image) => {
+                self.icons.borrow_mut().insert(name.to_string(), image.clone());
+                Some(image)
+            }
+            Err(error) => {
+                self.log.record_failure(Tag::Settings, || {
+                    format!("Faces: icon {} would not decode: {error:?}", plain(name))
+                });
+                None
+            }
+        }
+    }
+}
+
+/// `#rrggbb` as a colour. `None` for no value or one that does not parse.
+fn colour(hex: Option<&str>) -> Option<slint::Color> {
+    let digits = hex?.strip_prefix('#')?;
+    if digits.len() != 6 {
+        return None;
+    }
+    let value = u32::from_str_radix(digits, 16).ok()?;
+    Some(slint::Color::from_rgb_u8((value >> 16) as u8, (value >> 8) as u8, value as u8))
+}
+
+/// Whole unix seconds now. A clock before 1970 reads as 0.
+fn now() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slint::Model;
+    use slint::platform::software_renderer::MinimalSoftwareWindow;
+    use slint::platform::{Platform, WindowAdapter};
+
+    struct Headless(Rc<MinimalSoftwareWindow>);
+
+    impl Platform for Headless {
+        fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn colours_parse_from_the_stored_hex() {
+        assert_eq!(colour(Some("#00ffff")), Some(slint::Color::from_rgb_u8(0, 255, 255)));
+        assert_eq!(colour(None), None);
+        assert_eq!(colour(Some("teal")), None);
+        assert_eq!(colour(Some("#fff")), None);
+    }
+
+    #[test]
+    fn every_icon_file_decodes() {
+        for (name, bytes) in icons::ICONS {
+            assert!(slint::Image::load_from_svg_data(bytes).is_ok(), "{name} would not decode");
+        }
+    }
+
+    /// The only test in this crate that builds a window: Slint takes one platform per process.
+    #[test]
+    fn picking_a_category_times_it_and_the_glyph_pauses_it() {
+        slint::platform::set_platform(Box::new(Headless(MinimalSoftwareWindow::new(Default::default()))))
+            .expect("the headless platform should install");
+        let path = std::env::temp_dir().join(format!("facet-ui-faces-{}.sqlite", std::process::id()));
+        if path.exists() {
+            std::fs::remove_file(&path).expect("a stale test database should be removable");
+        }
+        database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
+
+        let ui = SettingsWindow::new().expect("the window should build");
+        let faces = Faces::attach(&ui, path.clone(), Rc::new(None), true);
+        faces.refresh();
+        let data = ui.global::<FacesData>();
+        let names: Vec<String> = (0..data.get_categories().row_count())
+            .filter_map(|i| data.get_categories().row_data(i))
+            .map(|row| row.name.to_string())
+            .collect();
+        assert_eq!(names, ["Break", "Meeting"]);
+        assert!(!data.get_has_category());
+        assert!(data.get_rows_enabled());
+        let meeting = data.get_categories().row_data(1).expect("a second row");
+        assert!(meeting.has_icon && meeting.has_colour);
+
+        faces.pick(i64::from(meeting.id));
+        assert!(data.get_has_category());
+        assert!(data.get_running());
+        assert_eq!(data.get_timing_category(), "Meeting");
+        assert_eq!(data.get_elapsed(), "0:00:00");
+        assert!(data.get_glyph_enabled());
+
+        faces.toggle_pause();
+        assert!(!data.get_running());
+        assert!(data.get_has_category());
+
+        faces.save("  Deep   work ");
+        assert_eq!(data.get_timing_category(), "Deep work");
+        assert!(data.get_running());
+
+        faces.save("meeting");
+        assert_eq!(data.get_notice_title(), "That category already exists");
+        faces.choose(0);
+        assert_eq!(data.get_notice_title(), "");
+
+        std::fs::remove_file(&path).expect("the test database should be removable");
+    }
+}
