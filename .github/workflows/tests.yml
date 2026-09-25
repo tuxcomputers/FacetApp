@@ -107,6 +107,19 @@ jobs:
       - name: Test the Linux crate
         run: cargo test --locked -p facet-linux
 
+  # rustfmt.toml is the project's formatting standard; a tree cargo fmt would change fails here. Formatting
+  # needs no compiling, so one job on one platform covers every crate, facet-linux and facet-windows included.
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --check
+
   # The one required status check on main. It is an aggregator so that branch protection names a
   # single context and the job list above can change without touching the protection rule.
   all-tests-pass:
@@ -117,6 +130,7 @@ jobs:
       - test-macos-branch-as-is
       - test-linux-merge-result
       - test-linux-branch-as-is
+      - format
     if: always()
     steps:
       # A needs: job that fails does not by itself fail an `if: always()` dependent, so every
@@ -142,6 +156,7 @@ jobs:
           check test-macos-branch-as-is  "${{ needs.test-macos-branch-as-is.result }}"  skippable
           check test-linux-merge-result  "${{ needs.test-linux-merge-result.result }}"  required
           check test-linux-branch-as-is  "${{ needs.test-linux-branch-as-is.result }}"  skippable
+          check format                   "${{ needs.format.result }}"                   required
           if [[ "$fail" -ne 0 ]]; then
             echo "At least one required job did not pass."
             exit 1
