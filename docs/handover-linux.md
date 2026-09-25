@@ -49,21 +49,6 @@ shorter list and one that empties.
 
 ---
 
-## 12. Pull the reformat, and bring system-linux.md up to date on formatting
-
-**On `feature/faceTab`.** The one-off `cargo fmt` reformat has landed (`088c676`), alone in its commit, and CI
-now runs `cargo fmt --check` as a required Format job (`c0c596f`). `handover-mac` 2 is closed.
-
-**What is wanted:**
-
-1. **Pull before touching Rust.** The reformat changed `facet-linux/src/main.rs` among seven files, so work
-   started from an older tree will conflict on formatting rather than on substance. Run `cargo fmt` before
-   each commit from now on; CI refuses a tree it would change.
-2. **Check `facet-linux` still builds** after the reformat, which the Mac formatted but could not compile.
-3. **Update [system-linux.md](system-linux.md)**: the `rustfmt` row and the timing table say
-   `cargo fmt --check` exits 1, and the paragraph under it says CI gates on neither. It now exits 0, and CI
-   gates on formatting but not on clippy.
-
 ## 13. Run the scripted suite on this branch as it stands, and commit the stamp
 
 **CI now needs a passing run from both machines** (`scripts/check-scripted-stamps.sh`, the
