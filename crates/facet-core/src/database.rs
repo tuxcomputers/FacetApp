@@ -77,6 +77,20 @@ pub fn open(path: &Path, ddl: &[(&str, &str)]) -> Result<Connection, Error> {
     Ok(connection)
 }
 
+/// Opens a database that has already been brought up by [`open`], without applying any DDL.
+///
+/// For reads and writes at the point of use. Foreign keys are enforced, as they are by [`open`]. The file
+/// must already exist: a missing file is an error rather than a new empty database.
+pub fn connect(path: &Path) -> Result<Connection, Error> {
+    let connection = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|source| Error::Open { path: path.display().to_string(), source })?;
+    connection.execute_batch("PRAGMA foreign_keys = ON;").map_err(|source| Error::Pragma { source })?;
+    Ok(connection)
+}
+
 /// What can go wrong bringing a database up. **Every arm names the file it was working on**, because the
 /// message is read by somebody who has one failure and a directory of nineteen files.
 #[derive(Debug)]

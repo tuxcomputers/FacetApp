@@ -69,6 +69,39 @@ pub fn database_type(connection: &Connection) -> Result<String, rusqlite::Error>
     Ok(value.flatten().unwrap_or_else(|| "unknown".to_string()))
 }
 
+/// One integer field of one setting's JSON value. `None` when the row or the field is absent.
+fn integer(connection: &Connection, name: &str, field: &str) -> Result<Option<i64>, rusqlite::Error> {
+    let value = connection
+        .query_row(
+            "SELECT json_extract(setting_value, ?2) FROM setting WHERE setting_name = ?1",
+            rusqlite::params![name, format!("$.{field}")],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .optional()?;
+    Ok(value.flatten())
+}
+
+/// Whether a cube is paired: `setting.paired.paired`. An absent row reads as not paired.
+pub fn is_cube_paired(connection: &Connection) -> Result<bool, rusqlite::Error> {
+    Ok(integer(connection, "paired", "paired")?.unwrap_or(0) != 0)
+}
+
+/// The shortest segment that becomes a time entry, from `setting.blip_time.seconds`.
+///
+/// Clamped to 0 through 30; an absent row or field reads as 5. Zero means every segment counts.
+pub fn blip_seconds(connection: &Connection) -> Result<i64, rusqlite::Error> {
+    Ok(integer(connection, "blip_time", "seconds")?.unwrap_or(5).clamp(0, 30))
+}
+
+/// The local time each day's totals roll over at, as `(hour, minute)`, from `setting.daily_reset_time`.
+///
+/// Hour clamped to 0 through 23 and minute to 0 through 59. An absent field reads as 3:00.
+pub fn daily_reset_time(connection: &Connection) -> Result<(i64, i64), rusqlite::Error> {
+    let hour = integer(connection, "daily_reset_time", "hour")?.unwrap_or(3).clamp(0, 23);
+    let minute = integer(connection, "daily_reset_time", "minute")?.unwrap_or(0).clamp(0, 59);
+    Ok((hour, minute))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +145,30 @@ mod tests {
     fn a_freshly_seeded_database_calls_itself_production() {
         let connection = seeded();
         assert_eq!(database_type(&connection).expect("db_type should read"), "production");
+    }
+
+    #[test]
+    fn the_seeded_values_read_as_unpaired_five_seconds_and_three_in_the_morning() {
+        let connection = seeded();
+        assert!(!is_cube_paired(&connection).expect("paired should read"));
+        assert_eq!(blip_seconds(&connection).expect("blip_time should read"), 5);
+        assert_eq!(daily_reset_time(&connection).expect("daily_reset_time should read"), (3, 0));
+    }
+
+    #[test]
+    fn out_of_range_values_are_clamped() {
+        let connection = seeded();
+        connection
+            .execute_batch(
+                "UPDATE setting SET setting_value = '{\"seconds\":90}' WHERE setting_name = 'blip_time';
+                 UPDATE setting SET setting_value = '{\"hour\":30,\"minute\":-4}' \
+                 WHERE setting_name = 'daily_reset_time';
+                 UPDATE setting SET setting_value = '{\"paired\":true}' WHERE setting_name = 'paired';",
+            )
+            .expect("the rows should be writable");
+        assert_eq!(blip_seconds(&connection).expect("blip_time should read"), 30);
+        assert_eq!(daily_reset_time(&connection).expect("daily_reset_time should read"), (23, 0));
+        assert!(is_cube_paired(&connection).expect("paired should read"));
     }
 
     fn seeded() -> Connection {
