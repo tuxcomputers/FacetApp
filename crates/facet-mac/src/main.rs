@@ -89,10 +89,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Pause and Lock are first, per the rule in docs/rust-port.md that the menu is the primary route
     // to everything and left click is only an accelerator for its first item.
     //
-    // **In-memory state, and it is the exception being flagged rather than the rule being broken.**
-    // These two facts belong in the database and will be read from it at the point of use like
-    // everything else. There is no database yet, so this holds them to demonstrate that the icon
-    // follows the state; it is the demonstration that is temporary, not the icon.
+    // Pause is the app's own clock, read from the database through `faces`. Lock is the cube's and there
+    // is no radio yet, so `showing.locked` is held in memory and changes only the icon.
     let menu = Menu::new();
     let pause_item = MenuItem::with_id("pause", "Pause", true, None);
     let lock_item = MenuItem::with_id("lock", "Lock", true, None);
@@ -143,24 +141,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_showing = Rc::clone(&showing);
     let pump_log = Rc::clone(&log);
     let pump_faces = Rc::clone(&faces);
+
+    // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
+    // is after every toggle, every click on the Faces tab and every tick.
+    let follow_faces = Rc::downgrade(&faces);
+    let follow_tray = Rc::clone(&tray_handle);
+    let follow_showing = Rc::clone(&showing);
+    let follow_log = Rc::clone(&log);
+    let follow_pause_item = pause_item.clone();
+    let follow = move || {
+        let Some(timing) = follow_faces.upgrade().and_then(|faces| faces.menu_bar_timing()) else { return };
+        follow_pause_item.set_text(timing.pause_title);
+        follow_pause_item.set_enabled(timing.is_clickable);
+        let next = status_icon::Showing { paused: timing.is_paused, ..follow_showing.get() };
+        if next != follow_showing.get() {
+            follow_showing.set(next);
+            redraw_status_item(&follow_tray, next, &follow_log);
+        }
+    };
+    follow();
+    faces.set_on_timing_changed(follow);
+
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
-        // Flips pause, relabels the menu item and redraws the icon.
-        //
-        // **One function for the two routes deliberately**, which is the same shape `facet-linux`'s tray
-        // uses and for the same reason: left click is an accelerator for the first menu item, so the day
-        // it does something the item does not, the accelerator has become a mechanism.
-        let toggle_pause = || {
-            let mut next = pump_showing.get();
-            next.paused = !next.paused;
-            pump_showing.set(next);
-            pause_item.set_text(if next.paused { "Resume" } else { "Pause" });
-            redraw_status_item(&pump_tray, next, &pump_log);
-        };
-
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             match event.id.as_ref() {
-                "pause" => toggle_pause(),
+                // The same call as the Faces tab's glyph and the left click, so the three cannot disagree.
+                "pause" => pump_faces.toggle_pause(),
                 "lock" => {
                     let mut next = pump_showing.get();
                     next.locked = !next.locked;
@@ -218,7 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // acting on each would flip pause twice and land back where it started. Right click never
                 // arrives as a pair, the menu taking it, so this is not a general rule about clicks.
                 if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                    toggle_pause();
+                    pump_faces.toggle_pause();
                 }
             }
         }

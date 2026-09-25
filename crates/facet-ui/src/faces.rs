@@ -44,6 +44,17 @@ impl Choice {
     }
 }
 
+/// What the menu bar shows for the app's own clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MenuBarTiming {
+    /// Whether the icon draws the pause glyph: anything other than running, idle included.
+    pub is_paused: bool,
+    /// Whether Pause, Resume and the left click do anything (see [`timing::is_clickable`]).
+    pub is_clickable: bool,
+    /// The menu item's title: `Resume` while paused, otherwise `Pause`.
+    pub pause_title: &'static str,
+}
+
 /// The Faces tab, attached to one Settings window.
 pub struct Faces {
     ui: slint::Weak<SettingsWindow>,
@@ -53,6 +64,7 @@ pub struct Faces {
     tick: slint::Timer,
     icons: RefCell<HashMap<String, slint::Image>>,
     pending: RefCell<Option<Pending>>,
+    on_timing_changed: RefCell<Option<Box<dyn Fn()>>>,
     this: RefCell<Weak<Faces>>,
 }
 
@@ -76,6 +88,7 @@ impl Faces {
             tick: slint::Timer::default(),
             icons: RefCell::new(HashMap::new()),
             pending: RefCell::new(None),
+            on_timing_changed: RefCell::new(None),
             this: RefCell::new(Weak::new()),
         });
         *faces.this.borrow_mut() = Rc::downgrade(&faces);
@@ -142,6 +155,32 @@ impl Faces {
         self.show_timing(&connection);
     }
 
+    /// What the menu bar should show, read from the database now. `None` when the database cannot be read,
+    /// which is logged.
+    pub fn menu_bar_timing(&self) -> Option<MenuBarTiming> {
+        let connection = self.connect()?;
+        let reading = self.report(timing::read(&connection, now()))?;
+        let is_paused = reading.timing_state != timing::TimingState::Running;
+        Some(MenuBarTiming {
+            is_paused,
+            is_clickable: timing::is_clickable(reading.timing_state, reading.is_limit_reached),
+            pause_title: if reading.timing_state == timing::TimingState::Paused { "Resume" } else { "Pause" },
+        })
+    }
+
+    /// Sets what runs whenever the timing picture has been re-read: after every click on the tab, every
+    /// menu bar toggle and every tick. Replaces any earlier callback.
+    pub fn set_on_timing_changed(&self, changed: impl Fn() + 'static) {
+        *self.on_timing_changed.borrow_mut() = Some(Box::new(changed));
+    }
+
+    /// Re-reads the timing picture, without the category list, and tells the timing-changed callback.
+    pub fn refresh_timing(&self) {
+        if let Some(connection) = self.connect() {
+            self.show_timing(&connection);
+        }
+    }
+
     /// Closes the open app-face segment. Call during quit.
     pub fn quit(&self) {
         self.tick.stop();
@@ -177,8 +216,8 @@ impl Faces {
         Some(timing::is_manual_mode(is_cube_paired, self.has_given_up_on_cube))
     }
 
-    /// Sets the timing column from a fresh reading, and runs the one-second tick while the figure is moving
-    /// and the window is on screen.
+    /// Sets the timing column from a fresh reading, tells the timing-changed callback, and runs the
+    /// one-second tick while the figure is moving, whether or not the window is on screen.
     fn show_timing(&self, connection: &Connection) {
         let Some(ui) = self.ui.upgrade() else { return };
         let Some(reading) = self.report(timing::read(connection, now())) else { return };
@@ -196,8 +235,11 @@ impl Faces {
         data.set_glyph_enabled(timing::is_clickable(reading.timing_state, reading.is_limit_reached));
         data.set_rows_enabled(timing::click(is_manual_mode) == timing::Click::StartTiming);
 
-        let is_visible = ui.window().is_visible();
-        if reading.is_counting && is_visible {
+        if let Some(changed) = self.on_timing_changed.borrow().as_ref() {
+            changed();
+        }
+
+        if reading.is_counting {
             if !self.tick.running() {
                 let weak = self.this.borrow().clone();
                 self.tick.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
@@ -234,7 +276,9 @@ impl Faces {
         self.show_timing(&connection);
     }
 
-    fn toggle_pause(&self) {
+    /// Pauses the clock if it is running and resumes it if it is paused. Refused when idle or when a resume
+    /// would pass a spent daily limit. The one path for the glyph, the menu item and the left click.
+    pub fn toggle_pause(&self) {
         self.log.record(Tag::Click, || "Button clicked: play pause".to_string());
         let Some(connection) = self.connect() else { return };
         self.report(timing::toggle_pause(&connection, now(), &*self.log));
@@ -479,7 +523,14 @@ mod tests {
 
         let ui = SettingsWindow::new().expect("the window should build");
         let faces = Faces::attach(&ui, path.clone(), Rc::new(None), true);
+        let changes = Rc::new(std::cell::Cell::new(0));
+        let counted = Rc::clone(&changes);
+        faces.set_on_timing_changed(move || counted.set(counted.get() + 1));
         faces.refresh();
+        assert_eq!(
+            faces.menu_bar_timing(),
+            Some(MenuBarTiming { is_paused: true, is_clickable: false, pause_title: "Pause" })
+        );
         let data = ui.global::<FacesData>();
         let names: Vec<String> = (0..data.get_categories().row_count())
             .filter_map(|i| data.get_categories().row_data(i))
@@ -498,9 +549,20 @@ mod tests {
         assert_eq!(data.get_elapsed(), "0:00:00");
         assert!(data.get_glyph_enabled());
 
+        assert_eq!(
+            faces.menu_bar_timing(),
+            Some(MenuBarTiming { is_paused: false, is_clickable: true, pause_title: "Pause" })
+        );
+
+        let before = changes.get();
         faces.toggle_pause();
         assert!(!data.get_running());
         assert!(data.get_has_category());
+        assert!(changes.get() > before, "a toggle should tell the timing-changed callback");
+        assert_eq!(
+            faces.menu_bar_timing(),
+            Some(MenuBarTiming { is_paused: true, is_clickable: true, pause_title: "Resume" })
+        );
 
         faces.save("  Deep   work ");
         assert_eq!(data.get_timing_category(), "Deep work");
