@@ -37,25 +37,6 @@ for something is to write it down where the other will look.
 
 ---
 
-## 2. Not a task: `cargo fmt` is not a gate, and this box cannot make it one alone
-
-**Flagged rather than asked, because it is a decision and not work.** `cargo fmt --check` fails on this
-tree. Measured on a clean checkout on 2026-09-22, so **it predates the Linux work and is not something
-that arrived with it**.
-
-**It is not a formatting lapse.** There is no `rustfmt.toml`, and the house style is wider than rustfmt's
-defaults: compact struct literals such as `Showing { paused: false, locked: false }` are on one line
-throughout, and rustfmt's `struct_lit_width` of 18 would explode every one. Running `cargo fmt` would
-rewrite most of the codebase into a style nobody chose, which is why nobody has run it here.
-
-**The Mac cannot check this at all**, rustfmt not being installed there: `docs/system-mac.md` records it,
-and it is why no commit from that side has ever been formatted-checked. **So the honest position is that
-the project has no formatting standard it enforces**, and making one means agreeing a `rustfmt.toml` first
-and reformatting once, deliberately.
-
-`cargo clippy` is the gate that is actually ready: installed here, exit 0 on `facet-core`, `facet-ui` and
-`facet-linux`. It is **not** installed on the Mac either, and CI gates on neither.
-
 ## 4. Render the Settings tabs here and compare them with these numbers
 
 **The other half of [handover-linux.md](handover-linux.md) item 7, which cannot be answered from one
