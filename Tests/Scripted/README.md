@@ -286,41 +286,48 @@ finish
 ## CI checks that you ran them
 
 CI cannot run this suite: there is no screen, no Keychain and no Google account on a build machine. What
-it can do is refuse a pull request that has no record of a run.
+it does is refuse a pull request that has no record of a run.
 
-**Not carried over, and worth restoring.** `scripts/check_interactive_checklists.sh` was the gate and it
-is not in this repository: it was written against `swift build` and the Swift suite's stamp, and porting
-it before there are any checks to gate would be porting it blind. No stamp file exists yet either. The
-CI workflow here runs `cargo build` and `cargo test` and enforces nothing about this suite.
+**Both machines, every time.** `run.sh` writes a stamp at the end of every run, from the recorded run rather
+than from anything it was told: **`Tests/Scripted/last-run-mac.md`** on the Mac and
+**`Tests/Scripted/last-run-linux.md`** on the Linux box. Both are committed, and a pull request needs both.
+One platform's pass says nothing about the other: both platform divergences the Swift port found lived in
+shared code that passed on one and failed on the other (see "Run every test on every platform that can run
+it" in `docs/port-findings.md`).
 
-The rest of this section is the arrangement as it worked, kept because the reasoning is what makes it
-worth rebuilding rather than reinventing.
+**The gate is `scripts/check-scripted-stamps.sh`**, run by the `Scripted suite run on both machines` job in
+`.github/workflows/tests.yml` on every pull request, and required by `All tests pass`. Run it yourself before
+pushing:
 
-`run.sh` writes **`Tests/Scripted/last-run-mac.md`** at the end of every run, from the recorded run rather
-than from anything it was told, and that file is committed. On a pull request, the gate requires all of:
+```sh
+scripts/check-scripted-stamps.sh --branch "$(git branch --show-current)"
+```
+
+First it checks every numbered script is runnable: it parses, is executable, calls `finish`, guards the
+database with `require_test_database` and declares `EXPECTED_CHECKS`. Then, **for each of the two stamps**,
+it requires all of:
 
 - the run was on **this** branch;
 - it **passed**, with zero failing checks;
-- **nothing was skipped.** A skip is a check saying it could not answer -- no cube on the desk, no Google
-  account connected, a prompt nobody was there to answer -- and the run still reports `passed` with the
-  totals adding up, so a branch could merge on coverage that was never taken. In practice this means a run
-  meant for a pull request needs the cube in reach, an account connected, and every prompt answered rather
-  than skipped past. The failure names which scripts skipped and how many;
+- **every numbered script ran, and each passed exactly the checks it declares.** This suite has no skip
+  verdict, so a check that could not answer shows here as a script short of its `EXPECTED_CHECKS`. In
+  practice a run meant for a pull request needs the cube in reach, an account connected and every prompt
+  answered, once there are checks that want them. The failure names each short script;
 - the tree was **clean** when it ran, since a run against uncommitted changes is not evidence about the
   commit it names;
-- the commit it names is **in this branch's history**, and nothing under the app's sources,
-  `Tests/Scripted/` or the DDL has changed since. Those are `crates/` and
-  `crates/facet-core/resources/database/` now, where they were `Sources/` and `database/` in Swift, so
-  whatever restores the gate has to name the new paths.
+- the commit it names is **in this branch's history**, and nothing under `crates/` (the DDL included),
+  `Tests/Scripted/`, `Cargo.toml` or `Cargo.lock` has changed since. The stamps and the other Markdown in
+  `Tests/Scripted/` are left out of that, so committing one machine's stamp does not make the other's stale.
 
 That last one is why the stamp carries a commit rather than a date. The old checklists recorded a date and
 a branch, so a run from before the last five commits looked exactly like one from after them. Editing a
-README does not force a re-run; changing the app does.
+README does not force a re-run; changing the app does. **So a change to the app made on one machine needs a
+run on the other as well**, and the handover files are where one machine asks the other for it.
 
-None of it is enforced on a push to main, where the stamp goes on naming the feature branch that ran it.
+None of it is enforced on a push to main, where the stamps go on naming the feature branch that ran them.
 
-**So: run the suite, then commit the stamp along with your change.** If you did not run it, CI will say so
-rather than let a green build imply otherwise.
+**So: run the suite on both machines, then commit each stamp.** If either machine did not run it, CI will
+say so rather than let a green build imply otherwise.
 
 **Commit the stamp before running the suite again**, which is the part that is easy to miss and cost a real
 afternoon on 2026-08-22. `run.sh` writes the file at the *end* of a run, so from that moment the tree has an
@@ -342,10 +349,11 @@ It is generated from what the database recorded, so it stays a true account of a
 is the whole reason the file says not to edit it by hand. Check the run you pick was `dirty` 0, `outcome`
 passed, and unfiltered.
 
-**A contributor with no TimeFlip cannot clear this, and is not meant to.** The suite needs a cube in range
-and a person to turn it, so a fork's pull request lands here red however good the change is -- which is the
-honest state of it: the change has not been tried against hardware. What clears it is somebody who *has* a
-device running the suite against that branch and committing the stamp. The two things that make that
+**A contributor without both machines cannot clear this, and is not meant to.** The suite needs a Mac and a
+Linux box, and a cube in range once there are checks that want one, so a fork's pull request lands here red
+however good the change is -- which is the honest state of it: the change has not been tried on both
+platforms. What clears it is somebody who *has* both running the suite against that branch and committing
+the two stamps. The two things that make that
 possible are leaving "Allow edits by maintainers" ticked and not force-pushing the branch while it is
 being run. In Swift that was written down in `CONTRIBUTING.md`, which has not been carried over; it
 wants writing again when this repository takes outside contributions.

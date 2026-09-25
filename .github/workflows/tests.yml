@@ -120,6 +120,22 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+  # CI cannot run the scripted suite, so it checks the record of it: both machines' stamps must show a
+  # passing run of this branch with nothing under crates/, Tests/Scripted/, Cargo.toml or Cargo.lock changed
+  # since. The branch tip rather than the merge preview, with full history, because the stamps name commits
+  # on the branch. Pull requests only: a push to main has no branch to compare against.
+  scripted-stamps:
+    name: Scripted suite run on both machines
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Check the Mac and Linux stamps
+        run: scripts/check-scripted-stamps.sh --branch "${{ github.head_ref }}"
+
   # The one required status check on main. It is an aggregator so that branch protection names a
   # single context and the job list above can change without touching the protection rule.
   all-tests-pass:
@@ -131,6 +147,7 @@ jobs:
       - test-linux-merge-result
       - test-linux-branch-as-is
       - format
+      - scripted-stamps
     if: always()
     steps:
       # A needs: job that fails does not by itself fail an `if: always()` dependent, so every
@@ -157,6 +174,7 @@ jobs:
           check test-linux-merge-result  "${{ needs.test-linux-merge-result.result }}"  required
           check test-linux-branch-as-is  "${{ needs.test-linux-branch-as-is.result }}"  skippable
           check format                   "${{ needs.format.result }}"                   required
+          check scripted-stamps          "${{ needs.scripted-stamps.result }}"          skippable
           if [[ "$fail" -ne 0 ]]; then
             echo "At least one required job did not pass."
             exit 1
