@@ -149,15 +149,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let follow_showing = Rc::clone(&showing);
     let follow_log = Rc::clone(&log);
     let follow_pause_item = pause_item.clone();
+    // A change to the icon, the item's title or whether it is enabled writes one row, in the wording the
+    // Linux tray writes, which the scripted checks read. The item's current text and enabled state are read
+    // from the item itself.
     let follow = move || {
         let Some(timing) = follow_faces.upgrade().and_then(|faces| faces.menu_bar_timing()) else { return };
+        let next = status_icon::Showing { paused: timing.is_paused, ..follow_showing.get() };
+        let is_item_changed = follow_pause_item.text() != timing.pause_title
+            || follow_pause_item.is_enabled() != timing.is_clickable;
+        let is_icon_changed = next != follow_showing.get();
+        if !is_item_changed && !is_icon_changed {
+            return;
+        }
         follow_pause_item.set_text(timing.pause_title);
         follow_pause_item.set_enabled(timing.is_clickable);
-        let next = status_icon::Showing { paused: timing.is_paused, ..follow_showing.get() };
-        if next != follow_showing.get() {
+        if is_icon_changed {
             follow_showing.set(next);
             redraw_status_item(&follow_tray, next, &follow_log);
         }
+        follow_log.record(Tag::Tray, || {
+            format!(
+                "Status item follows the clock, paused={} item={} enabled={}",
+                timing.is_paused, timing.pause_title, timing.is_clickable
+            )
+        });
     };
     follow();
     faces.set_on_timing_changed(follow);
