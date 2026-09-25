@@ -22,6 +22,7 @@ use std::time::Duration;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
+use facet_ui::faces::Faces;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use ksni::blocking::{Handle, TrayMethods};
 
@@ -46,11 +47,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui = SettingsWindow::new()?;
 
+    // `true` for has_given_up_on_cube: this build has no radio, so it never waits for a cube.
+    let faces =
+        Faces::attach(&ui, data_directory().join("appdata.sqlite"), std::rc::Rc::clone(&log), true);
+
     let tab_log = std::rc::Rc::clone(&log);
+    let tab_faces = std::rc::Rc::clone(&faces);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
         tab_log.record(Tag::Settings, || format!("Settings tab selected: {tab}"));
+        if tab == "Faces" {
+            tab_faces.refresh();
+        }
     });
 
     // Closing Settings puts the app back in the tray and nowhere else.
@@ -73,9 +82,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui_weak = ui.as_weak();
     let pump_log = std::rc::Rc::clone(&log);
+    let pump_faces = std::rc::Rc::clone(&faces);
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
-        drain(&from_tray, &ui_weak, &pump_log);
+        drain(&from_tray, &ui_weak, &pump_log, &pump_faces);
     });
 
     log.record(Tag::Launch, || {
@@ -99,6 +109,7 @@ fn drain(
     from_tray: &Receiver<FromTray>,
     ui_weak: &slint::Weak<SettingsWindow>,
     log: &Option<DebugLog>,
+    faces: &Faces,
 ) {
     while let Ok(message) = from_tray.try_recv() {
         match message {
@@ -125,16 +136,19 @@ fn drain(
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.invoke_open_on_faces();
                     show_settings(&ui, "Faces", log);
+                    faces.refresh();
                 }
             }
             FromTray::OpenAbout => {
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.invoke_open_on_about();
                     show_settings(&ui, "About", log);
+                    faces.refresh();
                 }
             }
             FromTray::Quit => {
                 log.record(Tag::Quit, || "Quitting on the menu item".to_string());
+                faces.quit();
                 if let Err(error) = slint::quit_event_loop() {
                     log.record_failure(Tag::Quit, || {
                         format!("The event loop refused to quit: {error}")

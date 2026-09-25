@@ -16,6 +16,7 @@ use std::time::Duration;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
+use facet_ui::faces::Faces;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use tray_icon::{
     MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -42,16 +43,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui = SettingsWindow::new()?;
 
+    // `true` for has_given_up_on_cube: this build has no radio, so it never waits for a cube.
+    let faces = Faces::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log), true);
+
     // A menu bar app owns no dock icon. This has to happen after Slint has built its backend, because
     // that is what creates the application object, and again from inside the event loop below, because
     // the windowing layer sets its own policy on the way up.
     show_in_dock(false, &log);
 
     let tab_log = Rc::clone(&log);
+    let tab_faces = Rc::clone(&faces);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
         tab_log.record(Tag::Settings, || format!("Settings tab selected: {tab}"));
+        if tab == "Faces" {
+            tab_faces.refresh();
+        }
     });
 
     // Closing Settings puts the app back in the menu bar and nowhere else.
@@ -134,6 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_tray = Rc::clone(&tray_handle);
     let pump_showing = Rc::clone(&showing);
     let pump_log = Rc::clone(&log);
+    let pump_faces = Rc::clone(&faces);
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
         // Flips pause, relabels the menu item and redraws the icon.
@@ -163,16 +172,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.invoke_open_on_about();
                         show_settings(&ui, "About", &pump_log);
+                        pump_faces.refresh();
                     }
                 }
                 "settings" => {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.invoke_open_on_faces();
                         show_settings(&ui, "Faces", &pump_log);
+                        pump_faces.refresh();
                     }
                 }
                 "quit" => {
                     pump_log.record(Tag::Quit, || "Quitting on the menu item".to_string());
+                    pump_faces.quit();
                     // Not a discarded Result: a quit that the loop refuses leaves the app running with
                     // nothing said about why, which is the shape CLAUDE.md has a section about. The Linux
                     // composition root reports the same failure the same way.
