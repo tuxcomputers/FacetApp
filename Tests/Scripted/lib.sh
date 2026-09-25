@@ -933,6 +933,14 @@ anysql() {
 # The number is a high-water mark, not a count. It reads the largest number already used and goes one
 # past, so a gap left by a deleted row is simply never reused -- which is what makes it safe to derive
 # other names from it (`$NAME renamed`, `$NAME reactivate`) without checking each one.
+# **The id of the category the last Save made**, read out of its own trace row after `$1`. The Rust app writes
+# `Button clicked: Save new category <name> -> Some(<id>)`, the `Some` being the insert's answer, so a refused
+# insert (`None`) answers empty here rather than a number.
+created_category_id() {
+    dsql "SELECT message FROM debug_log WHERE debug_log_id > $1 AND message LIKE '%Save new category%' ORDER BY debug_log_id LIMIT 1;" \
+        | sed -n 's/.*-> Some(\([0-9]*\)).*/\1/p'
+}
+
 next_name() {
     local prefix="$1" highest
     highest=$(sql "SELECT IFNULL(MAX(CAST(SUBSTR(category_name, LENGTH('$prefix') + 2) AS INTEGER)), 0)
@@ -1185,6 +1193,21 @@ is_running() { platform_app_is_running; }
 # for. Is it up; is it stale; build it; launch it; wait for it -- that sequence is the check, and it reads
 # the same here whether the build underneath is `swift-bundler` making a signed `.app` or `swift build`
 # producing a bare executable.
+# **Turns toolkit accessibility on if it is off, and says so.** Without it a Slint app is not on the bus and
+# every press fails as though the window never opened (docs/port-findings.md). `run.sh` records what it
+# found before the run and puts it back after; a script run on its own leaves it on and says that here.
+require_accessibility() {
+    [ "$PLATFORM" = "linux" ] || return 0
+    local state
+    state=$(platform_accessibility_state) || { red "  cannot read toolkit-accessibility"; exit 2; }
+    [ "$state" = "true" ] && return 0
+    if ! platform_set_accessibility true; then
+        red "  toolkit-accessibility is off and could not be turned on, so the app will not be on the bus"
+        exit 2
+    fi
+    step "toolkit-accessibility was $state; turned on so the window is on the accessibility bus"
+}
+
 ensure_app_running() {
     if is_running; then
         step "app: already running"
@@ -1210,7 +1233,9 @@ ensure_app_running() {
 
     # **Newer sources mean a stale binary, on both platforms.** `find -newer` is the whole test and it is
     # POSIX, so the one line covers a `.app` bundle's executable and a bare one alike.
-    if [ ! -x "$BINARY" ] || [ -n "$(find Sources -newer "$BINARY" -name '*.swift' -print -quit 2>/dev/null)" ]; then
+    # `crates/` and `.rs` now; this still looked for `Sources/*.swift`, which no longer exists, so a stale
+    # binary was never rebuilt from a script run on its own.
+    if [ ! -x "$BINARY" ] || [ -n "$(find crates -newer "$BINARY" \( -name '*.rs' -o -name '*.slint' -o -name '*.sql' \) -print -quit 2>/dev/null)" ]; then
         if [ -x "$BINARY" ]; then
             step "building (sources are newer than the binary)..."
         else
@@ -1225,6 +1250,7 @@ ensure_app_running() {
         fi
     fi
 
+    require_accessibility
     step "launching $(platform_binary_built_at)"
     platform_launch_app
     local waited=0
@@ -1342,6 +1368,17 @@ click_left() {
     esac
 }
 click_right()        { platform_click_right; }
+
+# **The status item's left click as the accelerator for Pause**, which is what it is in the Rust app on
+# both platforms. Kept apart from `click_left`, whose job in `open_settings` is to open a menu on macOS and
+# which must stay a no-op on Linux, where a left click would toggle the clock instead.
+activate_status_item() {
+    local output status
+    output=$(platform_click_left)
+    status=$?
+    [ "$status" -ne 0 ] && red "  the status item left click failed (exit $status)${output:+: $output}"
+    return $status
+}
 double_click_left()  { case "$PLATFORM" in mac) click_status_item --double ;; *) platform_click_right --double ;; esac; }
 double_click_right() { case "$PLATFORM" in mac) click_status_item --right --double ;; *) platform_click_right --double ;; esac; }
 
@@ -1559,8 +1596,20 @@ element() { tree | grep -m1 -E "id=$1($|[[:space:]])" || true; }
 # selecting the App tab widened the window by two hundred points, because a wrapping footnote asks for its whole
 # text on one line, and `AppSettingsPane.fittingSize` reported the same number before and after the fix.
 window_width() {
+    # **The Slint window carries no identifier**, only its title, so on Linux the frame line at the top of
+    # the dump is the window: `frame  id=Facet Settings  ...  size=w:640 h:680`.
+    #
+    # **Nor on macOS**, where the dump's window line is `AXWindow  title=Facet Settings  ...  size=w:640 h:712`
+    # (measured 2026-09-25). The height there includes the title bar; the width is the window's.
+    local pattern="id=$1 "
+    if [ "$1" = "settings-window" ]; then
+        case "$PLATFORM" in
+            linux) pattern="^frame " ;;
+            mac)   pattern="^AXWindow  title=Facet Settings" ;;
+        esac
+    fi
     platform_tree_frames \
-        | grep -m1 "id=$1 " \
+        | grep -m1 -E "$pattern" \
         | sed -n 's/.*size=w:\([0-9]*\)\.*[0-9]* .*/\1/p'
 }
 
@@ -1584,7 +1633,33 @@ tree_has() {
     esac
 }
 
-settings_is_open() { tree_has "close-settings"; }
+# **Whether the Settings window is on screen, asked of whoever can actually tell.**
+#
+# On Linux that is the window manager, not the accessibility tree. **A hidden Slint window stays on the bus
+# whole**, frame reporting `showing` and `visible`, panes and all, and its controls can even be pressed
+# (measured 2026-09-25: a run pressed Create on a window nobody had opened). `wmctrl -l` lists only mapped
+# windows, so the title being there is the window being up.
+#
+# **On macOS the tree is the answer.** A hidden Slint window leaves the accessibility tree entirely: the dump
+# reports the app running with no windows open (measured 2026-09-25), so the Faces tab button being in the
+# tree is the window being up.
+settings_is_open() {
+    case "$PLATFORM" in
+        linux)
+            local windows status
+            windows=$(wmctrl -l 2>&1)
+            status=$?
+            if [ "$status" -ne 0 ]; then
+                red "  wmctrl could not list the windows (exit $status)${windows:+: $windows}"
+                return 1
+            fi
+            case "$windows" in
+                *" Facet Settings"*) return 0 ;;
+                *) return 1 ;;
+            esac ;;
+        *) tree_has "id=settings-tab-faces" ;;
+    esac
+}
 
 # Waits for an element to appear, rather than sleeping a guessed amount and hoping.
 #
@@ -1605,8 +1680,8 @@ wait_for_element() {
 
 open_settings() {
     settings_is_open && return 0
-    click_left || return 1
-    sleep 0.5
+    # No click first on either platform: the menu's items take a press with the menu closed. On macOS a left
+    # click would toggle the clock, which is Pause's accelerator in the Rust app.
     menu_press open-settings
     sleep 1
     settings_is_open
@@ -1614,7 +1689,23 @@ open_settings() {
 
 close_settings() {
     settings_is_open || return 0
-    press close-settings
+    # **The Slint window has no close control of its own**, so it is closed the way the window manager
+    # closes it: `wmctrl -c` on Linux, and the title bar's close button on macOS. The app answers either by
+    # hiding the window.
+    case "$PLATFORM" in
+        linux)
+            local output status
+            output=$(wmctrl -c "Facet Settings" 2>&1)
+            status=$?
+            [ "$status" -ne 0 ] && red "  closing Settings failed (exit $status)${output:+: $output}"
+            ;;
+        *)
+            local output status
+            output=$(python3 scripts/ax-press.py --close-window "Facet Settings" 2>&1)
+            status=$?
+            [ "$status" -ne 0 ] && red "  closing Settings failed (exit $status)${output:+: $output}"
+            ;;
+    esac
     sleep 0.5
 }
 

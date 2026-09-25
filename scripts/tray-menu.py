@@ -160,6 +160,11 @@ def main():
         help="choose the item whose label is this, or begins with it",
     )
     parser.add_argument(
+        "--activate",
+        action="store_true",
+        help="send the item the Activate call a left click on the panel sends",
+    )
+    parser.add_argument(
         "--label",
         action="store_true",
         help="print what the tray icon itself is showing, rather than its menu",
@@ -167,6 +172,17 @@ def main():
     arguments = parser.parse_args()
 
     bus = dbus.SessionBus()
+
+    # **The left click, as the panel delivers it.** A StatusNotifierHost turns a left click into this one
+    # method call on the item, so calling it is the gesture itself minus the pointer: addressed at the app
+    # and nowhere else, which a synthetic click on the panel would not be. Measured against MATE's own
+    # left click on 2026-09-25 (handover-linux 10): the same `Status item left clicked` row.
+    if arguments.activate:
+        name = facet_connection(bus)
+        item = dbus.Interface(bus.get_object(name, ITEM_PATH), ITEM_IFACE)
+        item.Activate(dbus.Int32(0), dbus.Int32(0))
+        print("activated the status item")
+        return 0
 
     if arguments.label:
         lines_out = label_of(bus)

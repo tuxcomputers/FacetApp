@@ -26,18 +26,23 @@ use ksni::{Category, Icon, MenuItem, Status, ToolTip, Tray};
 
 /// What the tray tells the UI thread happened.
 ///
-/// **State travels with the message rather than being asked for afterwards.** The tray thread owns
-/// [`Showing`] and the UI thread cannot read it without a lock, so a message that said only "pause was
-/// clicked" would leave the reader to work out what it had become, and the two answers could differ. The
-/// message carries what it is now.
+/// **Pause is a press, not a state.** Whether the clock is paused is the database's answer, and this
+/// thread has no connection to ask it with, so the tray posts that Pause was pressed and the UI thread
+/// does the toggling through `Faces`. What the icon and the item show afterwards is pushed back in with
+/// [`FacetTray::follow_clock`], from a read made after the toggle.
+///
+/// **Lock still carries its state**, because Lock is still the tray's own: it is the cube's, there is no
+/// radio yet, and the tray thread is where it is held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FromTray {
-    /// Left click, which is Pause's accelerator. Carries what the state became.
-    Activated(Showing),
+    /// Left click, which is Pause's accelerator.
+    Activated,
     /// Middle click. Reported and otherwise unused: it is a spare gesture, not a mechanism.
     SecondaryActivated,
-    /// A menu item changed the state. Carries what it became.
-    Changed(Showing),
+    /// The Pause or Resume menu item.
+    PausePressed,
+    /// The Lock menu item changed the state. Carries what it became.
+    LockChanged(Showing),
     OpenSettings,
     OpenAbout,
     Quit,
@@ -45,18 +50,50 @@ pub enum FromTray {
 
 /// The status item, and the state it is drawing.
 pub struct FacetTray {
-    /// **In-memory, and it is the exception being flagged rather than the rule being broken.** Whether the
-    /// cube is paused or locked belongs in the database and will be read from it at the point of use, per
-    /// CLAUDE.md. There is nothing to read yet: no radio, and no rows that mean either thing. This holds
-    /// them so the icon can be shown to follow the state, and it is the holding that is temporary rather
-    /// than the icon. The Mac's composition root carries the same note for the same reason.
+    /// What the icon draws.
+    ///
+    /// **`paused` is not this thread's to decide.** It is written only by [`FacetTray::follow_clock`], with
+    /// what the UI thread read from the database after the clock last changed, and it is held here because
+    /// `ksni` asks for the icon on this thread, synchronously, and there is no connection here to read it
+    /// with. It goes stale only if a change to the clock skips `Faces`'s re-read, which nothing does.
+    ///
+    /// **`locked` is in-memory, and it is the exception being flagged rather than the rule being broken.**
+    /// It is the cube's, and there is no radio yet to read it from. It is held so the icon can be shown to
+    /// follow it; the Mac's composition root carries the same note.
     showing: Showing,
+    /// The Pause item's label, `Pause` or `Resume`, pushed in alongside `paused` and for the same reason.
+    pause_title: &'static str,
+    /// Whether Pause and the left click do anything, pushed in alongside `paused`. False while the clock is
+    /// idle or a resume would pass a spent daily limit.
+    is_pause_clickable: bool,
     to_ui: Sender<FromTray>,
 }
 
 impl FacetTray {
+    /// **Starts showing an idle clock with Pause disabled**, which is what an unread clock should look like:
+    /// nothing offered until the first read says otherwise. That read is pushed in straight after spawning.
     pub fn new(to_ui: Sender<FromTray>) -> Self {
-        Self { showing: Showing { paused: false, locked: false }, to_ui }
+        Self {
+            showing: Showing { paused: true, locked: false },
+            pause_title: "Pause",
+            is_pause_clickable: false,
+            to_ui,
+        }
+    }
+
+    /// Shows what the clock is doing, as the UI thread just read it.
+    ///
+    /// **Only the Faces tab's clock reaches this**, via `Handle::update`; nothing on the tray thread calls
+    /// it. Returns whether anything changed, so the caller can say so in the trace once rather than once a
+    /// tick.
+    pub fn follow_clock(&mut self, is_paused: bool, pause_title: &'static str, is_clickable: bool) -> bool {
+        let changed = self.showing.paused != is_paused
+            || self.pause_title != pause_title
+            || self.is_pause_clickable != is_clickable;
+        self.showing.paused = is_paused;
+        self.pause_title = pause_title;
+        self.is_pause_clickable = is_clickable;
+        changed
     }
 
     /// Posts to the UI thread, and says so if the channel has gone.
@@ -70,15 +107,6 @@ impl FacetTray {
         if let Err(error) = self.to_ui.send(message) {
             eprintln!("[tray    ] The UI thread is not listening, so {message:?} went nowhere: {error}");
         }
-    }
-
-    /// Flips pause, which is what both the menu item and a left click do.
-    ///
-    /// **One function for the two routes deliberately.** Left click is an accelerator for the first menu
-    /// item, so if it ever did something the item did not, the accelerator would have become a mechanism.
-    fn toggle_pause(&mut self) -> Showing {
-        self.showing.paused = !self.showing.paused;
-        self.showing
     }
 }
 
@@ -124,9 +152,12 @@ impl Tray for FacetTray {
     ///
     /// **It reaches the app here, and that is measured rather than assumed**: 2026-09-18 on MATE, left and
     /// middle arrived and right did not. See `docs/rust-port.md`.
+    ///
+    /// **Posted whether or not Pause is enabled**, and the UI thread's toggle refuses it when the clock says
+    /// no, exactly as the Faces tab's glyph would. The item's `enabled` is this thread's picture of that;
+    /// the clock's own rule is the one that decides.
     fn activate(&mut self, _x: i32, _y: i32) {
-        let showing = self.toggle_pause();
-        self.post(FromTray::Activated(showing));
+        self.post(FromTray::Activated);
     }
 
     /// Middle click. Reported so the trace shows it arriving, and wired to nothing.
@@ -147,11 +178,9 @@ impl Tray for FacetTray {
     fn menu(&self) -> Vec<MenuItem<Self>> {
         vec![
             StandardItem {
-                label: if self.showing.paused { "Resume" } else { "Pause" }.into(),
-                activate: Box::new(|tray: &mut Self| {
-                    let showing = tray.toggle_pause();
-                    tray.post(FromTray::Changed(showing));
-                }),
+                label: self.pause_title.into(),
+                enabled: self.is_pause_clickable,
+                activate: Box::new(|tray: &mut Self| tray.post(FromTray::PausePressed)),
                 ..Default::default()
             }
             .into(),
@@ -160,7 +189,7 @@ impl Tray for FacetTray {
                 activate: Box::new(|tray: &mut Self| {
                     tray.showing.locked = !tray.showing.locked;
                     let showing = tray.showing;
-                    tray.post(FromTray::Changed(showing));
+                    tray.post(FromTray::LockChanged(showing));
                 }),
                 ..Default::default()
             }
@@ -240,6 +269,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The Pause item is whatever the clock last said, and a repeat of it is not a change.
+    ///
+    /// **Worth a test because the trace depends on it**: `follow_clock` returning true on every tick would
+    /// write a row a second while the figure moves, and returning false on a real change would leave the
+    /// trace silent about the one thing a check wants to see.
+    #[test]
+    fn the_pause_item_follows_the_clock() {
+        let (to_ui, _from_tray) = std::sync::mpsc::channel();
+        let mut tray = FacetTray::new(to_ui);
+        let pause = |tray: &FacetTray| match tray.menu().into_iter().next() {
+            Some(MenuItem::Standard(item)) => (item.label, item.enabled),
+            _ => panic!("the first menu item is not Pause"),
+        };
+        assert_eq!(pause(&tray), ("Pause".to_string(), false), "an unread clock must offer nothing");
+
+        assert!(tray.follow_clock(true, "Resume", true));
+        assert_eq!(pause(&tray), ("Resume".to_string(), true));
+        assert!(tray.showing.paused);
+        assert!(!tray.follow_clock(true, "Resume", true), "the same reading again is not a change");
+
+        assert!(tray.follow_clock(false, "Pause", true));
+        assert_eq!(pause(&tray), ("Pause".to_string(), true));
+        assert!(!tray.showing.paused);
     }
 
     /// Locking widens the icon, here as much as in the shared renderer.

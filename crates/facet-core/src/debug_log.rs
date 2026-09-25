@@ -31,13 +31,29 @@ pub enum Tag {
     Menu,
     Database,
     Quit,
+    Timing,
+    Event,
+    Entry,
+    Click,
+    Limit,
 }
 
 impl Tag {
     /// Every case, which is what the width below is measured over. **Adding a case means adding it here**;
     /// a tag missing from this list is one the console columns do not line up with.
-    pub const ALL: &'static [Tag] =
-        &[Tag::Launch, Tag::Settings, Tag::Tray, Tag::Menu, Tag::Database, Tag::Quit];
+    pub const ALL: &'static [Tag] = &[
+        Tag::Launch,
+        Tag::Settings,
+        Tag::Tray,
+        Tag::Menu,
+        Tag::Database,
+        Tag::Quit,
+        Tag::Timing,
+        Tag::Event,
+        Tag::Entry,
+        Tag::Click,
+        Tag::Limit,
+    ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
     /// pattern in a check is written once and should not have to guess at capitals.
@@ -49,6 +65,11 @@ impl Tag {
             Tag::Menu => "menu",
             Tag::Database => "database",
             Tag::Quit => "quit",
+            Tag::Timing => "timing",
+            Tag::Event => "event",
+            Tag::Entry => "entry",
+            Tag::Click => "click",
+            Tag::Limit => "limit",
         }
     }
 
@@ -65,6 +86,12 @@ impl Tag {
         }
         widest
     };
+}
+
+/// `text` with apostrophes and double quotes removed, for putting a user-supplied value such as a category
+/// name into a message.
+pub fn plain(text: &str) -> String {
+    text.chars().filter(|&c| c != '\'' && c != '"').collect()
 }
 
 /// Says what happened, if there is anywhere to say it.

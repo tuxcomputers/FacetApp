@@ -4,6 +4,7 @@
     scripts/ax-press.py create-category         # by AXIdentifier
     scripts/ax-press.py --desc Faces            # by AXDescription, for elements that have no identifier
     scripts/ax-press.py --title Close           # by AXTitle
+    scripts/ax-press.py --close-window "Facet Settings"   # that window's close button
     scripts/ax-press.py --app "Some App" quit-app
 
 Searched for rather than pathed to, which is the point. An AppleScript path like
@@ -19,6 +20,7 @@ nothing. Needs accessibility permission for whatever runs it.
 """
 
 import argparse
+import os
 import sys
 
 from AppKit import NSWorkspace
@@ -66,13 +68,30 @@ def main():
     parser.add_argument("identifier", nargs="?", help="the element's AXIdentifier")
     parser.add_argument("--desc", help="match AXDescription instead (for elements with no identifier)")
     parser.add_argument("--title", help="match AXTitle instead")
-    parser.add_argument("--app", default="Facet", help="the running app (default: Facet)")
+    parser.add_argument("--close-window", help="press the close button of the window with this AXTitle")
+    parser.add_argument("--app", default=os.environ.get("FACET_APP_NAME", "Facet"), help="the running app (default: $FACET_APP_NAME, else Facet)")
     parser.add_argument(
         "--sheet",
         action="store_true",
         help="search only the open sheet, so a confirmation's button is not confused with the one behind it",
     )
     arguments = parser.parse_args()
+
+    if arguments.close_window:
+        pid = pid_of(arguments.app)
+        if pid is None:
+            sys.exit(f"{arguments.app} is not running")
+        windows = attribute(AXUIElementCreateApplication(pid), "AXWindows") or []
+        window = next((w for w in windows if attribute(w, "AXTitle") == arguments.close_window), None)
+        if window is None:
+            sys.exit(f"{arguments.app} has no window titled {arguments.close_window!r}")
+        button = attribute(window, "AXCloseButton")
+        if button is None:
+            sys.exit(f"the window {arguments.close_window!r} has no close button")
+        if AXUIElementPerformAction(button, "AXPress") != 0:
+            sys.exit(f"the close button of {arguments.close_window!r} would not accept a press")
+        print(f"closed {arguments.close_window}")
+        return
 
     chosen = [
         ("AXIdentifier", arguments.identifier),

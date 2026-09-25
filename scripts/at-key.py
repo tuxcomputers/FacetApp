@@ -120,7 +120,7 @@ def focus_the_app(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("key", help="a character, or a name like return or escape")
-    parser.add_argument("--app", default="FacetLinux", help="the application to send to")
+    parser.add_argument("--app", default="facet-linux", help="the application to send to")
     parser.add_argument("--command", action="store_true", help="hold Control (macOS Command)")
     parser.add_argument("--no-focus", action="store_true", help="send it wherever focus already is")
     arguments = parser.parse_args()

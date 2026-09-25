@@ -246,7 +246,7 @@ font rather than to the layout, and at a heading's size it came out as a dot. Dr
 viewbox, it is the size it is asked to be.
 
 **The renderer is the way to look at any of this.** `cargo run -p facet-mac --example draw-settings-tabs`
-draws each tab through Slint's software renderer into `target/settings-tabs/<tab>.png`, with no window and no
+draws each tab through Slint's software renderer into `target/settings-tabs/<n>-<tab>.png`, with no window and no
 menu bar, so a layout question does not cost a launch on the owner's screen. It is evidence about arrangement
 rather than about appearance: the fonts are rasterised by Slint and not by the platform.
 
@@ -453,6 +453,75 @@ instruction sets produced the same file.
 and **the real window's font rasterisation**, which is fontconfig against Core Text rather than the
 software renderer. Both need the app open on each machine with somebody at the screen. The packaged font
 removes the *family* as a variable there too, but not the rasteriser.
+
+## Four facts about driving a Slint window over AT-SPI, found converting the Faces checks
+
+**Measured 2026-09-25 on the Linux box**, with the real app on screen, while `05`, `06` and `12` were brought
+across from the Swift suite. Each one made a correct app look broken until the driver was taught about it.
+
+1. **`accessible-id` arrives as AT-SPI `AccessibleId`, and the accessible name is the label.** AccessKit maps
+   Slint's id to `author_id`, which `accesskit_unix` publishes as `AccessibleId`. GTK was the other way round:
+   the Swift app overwrote the *name* with its identifier. `atspi_tree.by_name` now matches the id first and the
+   name second, and `at-dump.py` prints `id=<AccessibleId>  value=<name>`, the same line shape as the macOS dump.
+2. **A Slint text field cannot be written through the bus.** `accesskit_unix` 0.22 implements no
+   EditableText, so `setTextContents` has nothing to call. `at-set.py` now activates the window with
+   `wmctrl`, gives the field focus through its Component interface, types the string with XTEST and **reads the
+   field back**, refusing if it does not hold what was typed. These are real keystrokes, which is the sharp case
+   in CLAUDE.md, so a run needs the owner's hands off.
+3. **A hidden Slint window stays on the accessibility bus whole.** Its frame reports `showing` and `visible`, its
+   panes are all there, and its controls can be pressed: a run pressed Create on a Settings window nobody had
+   opened, and the field behind it was then never found. `settings_is_open` asks the window manager instead
+   (`wmctrl -l` lists only mapped windows). Only `active` differs, and that is focus, not presence.
+4. **`accessible-enabled: false` does not reach AT-SPI.** The Faces tab's play/pause glyph draws greyed while a
+   daily limit is spent, and the tray computes the same answer and shows its item insensitive, but AT-SPI reports
+   the glyph `enabled` and `sensitive`. Slint 1.18's bridge does call `set_disabled` for the property, so where it
+   is lost is not yet known. `12` asserts the refusal by pressing the glyph instead, which is the stronger check
+   anyway: the tab ignores the press, so no click row and no segment appear.
+
+**An element revealed by a press is absent for a moment**, because AccessKit publishes a tree change after the
+frame that made it. `require` in `atspi_tree.py` now waits up to five seconds rather than asking once.
+
+## The same window over macOS accessibility, found running the Faces checks on the Mac
+
+**Measured 2026-09-25 on the Mac**, driving `facet-mac` while `00`, `05`, `06` and `12` were run there for the
+first time. The suite passed 71 of 71 once the harness was taught these.
+
+1. **A hidden Slint window leaves the macOS accessibility tree entirely**, the opposite of Linux fact 3 above.
+   With Settings closed the app reports no windows at all, so on macOS the tree is the answer: `settings_is_open`
+   asks for the Faces tab button, and `close_settings` presses the title bar's close button through AX
+   (`ax-press.py --close-window`).
+2. **`accessible-enabled: false` does reach macOS accessibility.** With the daily limit spent, `ax-dump.py`
+   prints the Faces tab's play/pause glyph as `disabled`. Slint's side therefore works, and the loss in Linux
+   fact 4 is between AccessKit's tree and AT-SPI, in `accesskit_unix` or the bridge after it.
+3. **Every tray-icon menu item carries the same `AXIdentifier`, `fireMenuItemAction:`.** The ids the app gives
+   its items (`pause`, `settings`, `quit`) do not reach AX, so the suite presses menu items by title on macOS as
+   it does on Linux. The items take an AX press with the menu closed, so reaching the menu needs no mouse event.
+4. **Straight after launch the menu is not in the tree yet.** A press in the first moment finds no item; a few
+   hundred milliseconds later it does. The macOS menu press asks again for up to five seconds.
+5. **A real left click on the status item is one toggle.** macOS delivers a press and a release, the app logs
+   both, and only the release acts: one segment closed per click.
+6. **With no bundle, macOS names the app after the binary**, `facet-mac`, so every script that found the app
+   as `Facet` found nothing. The scripts read `FACET_APP_NAME`, which `platform.sh` sets.
+
+**The Linux tray hang below has not been seen on the Mac** in about eight launches that day, which is too few to
+rule out a rate of one in fifteen but is a different tray stack (tray-icon, not ksni) in any case.
+
+## The Linux tray stops answering D-Bus on about one launch in fifteen
+
+**Measured 2026-09-25, and not yet understood.** On a launch that goes wrong, every call to the item or its menu
+(`Introspect`, `GetLayout`, `Activate`) gets `NoReply` after the 25 second timeout, for as long as the process
+lives. The event loop is still running (the main thread is in `ep_poll`) and the trace shows the launch completing
+normally, including the tray's first push of the clock.
+
+| | |
+|---|---|
+| This branch, accessibility on | 1 of 10 launches |
+| This branch, accessibility off | 1 of 15 |
+| `87e7d2e`, before the tray followed the clock | 1 of 20 |
+
+**So it predates the tray following the clock and is not AccessKit.** It lives in the ksni service or its zbus
+connection. For the suite it means a run fails at its first tray press about once in fifteen, with the tray
+reported unreachable. That is the right diagnosis, but it is the app's fault, not the driver's.
 
 ## Design rules that follow from all of the above
 

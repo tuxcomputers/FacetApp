@@ -74,6 +74,9 @@ case "$PLATFORM" in
         CRATE="facet-mac"
         BINARY="target/debug/$CRATE"
         PROCESS_NAME="$CRATE"
+        # What macOS calls the running app, which is the binary's name while there is no bundle. Every
+        # `scripts/ax-*.py` and `status-item-click.py` looks the app up by it.
+        export FACET_APP_NAME="$PROCESS_NAME"
         # The Swift app, which is still the one recording real time. It was renamed to TimeFlip on
         # 2026-09-21 so that this one could take the Facet name, its directory and its identifier.
         # Here so that anything warning about two icons in the menu bar does not grow a platform case
@@ -150,11 +153,9 @@ platform_kill_app() {
 platform_quit_app() {
     case "$PLATFORM" in
         mac)
-            python3 scripts/status-item-click.py 2>&1 \
-                || echo "  the status item would not click; falling back to a kill"
-            sleep 0.5
-            python3 scripts/ax-press.py quit-app 2>&1 \
-                || echo "  quit-app would not press; falling back to a kill"
+            # A menu item takes an accessibility press with the menu closed, so no click is needed.
+            python3 scripts/ax-press.py --title "Quit Facet" 2>&1 \
+                || echo "  Quit Facet would not press; falling back to a kill"
             ;;
         linux)
             # **One call where the Mac needs two**, and that is the whole of the difference between the
@@ -237,7 +238,8 @@ platform_press_sheet() {
 # `Tests/Methods.md` Method 20.
 platform_select_tab() {
     case "$PLATFORM" in
-        mac)   python3 scripts/ax-press.py --desc "$1" 2>&1 ;;
+        # The Slint tab is a radio button carrying `settings-tab-<name in lower case>`.
+        mac)   python3 scripts/ax-press.py "settings-tab-$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" 2>&1 ;;
         linux) python3 scripts/at-press.py --tab "$1" 2>&1 ;;
     esac
 }
@@ -342,15 +344,15 @@ platform_status_item() {
 # `com.canonical.dbusmenu` object whose items can be read and chosen without it ever being opened, so
 # there is nothing to open: `platform_menu_press` below works whether or not this was called.
 platform_open_menu() {
-    case "$PLATFORM" in
-        mac)   python3 scripts/status-item-click.py 2>&1 ;;
-        linux) return 0 ;;
-    esac
+    # A no-op on macOS too: the menu's items are in the accessibility tree and take a press with the menu
+    # closed (measured 2026-09-25 against facet-mac).
+    return 0
 }
 
-# **The titles a menu identifier can be showing on Linux**, printed one per line.
+# **The titles a menu identifier can be showing**, printed one per line.
 #
-# Nothing carries the identifier to the tray: `com.canonical.dbusmenu` answers with the label and `enabled`,
+# **On macOS too**: tray-icon gives every menu item the same `AXIdentifier`, `fireMenuItemAction:` (measured
+# 2026-09-25), so the identifier reaches nothing there either. On Linux nothing carries the identifier to the tray: `com.canonical.dbusmenu` answers with the label and `enabled`,
 # and the numeric ids it gives out are libdbusmenu's own and are reassigned whenever the menu is rebuilt
 # (measured 2026-09-13, see `scripts/tray-menu.py`). So this side maps the identifier to the words.
 #
@@ -362,8 +364,11 @@ platform_open_menu() {
 # Pause reads *Resume* while paused and Lock reads *Unlock* while locked, and they are the same item either way.
 platform_menu_titles() {
     case "$1" in
-        open-settings)    printf 'Settings…\n' ;;
-        quit-app)         printf 'Quit\n' ;;
+        # The Rust tray's own words, from `crates/facet-linux/src/tray.rs`. The Swift app said `Settings…`
+        # and `Quit`, and a title that matches nothing is a press that reports it found no item.
+        open-settings)    printf 'Settings...\n' ;;
+        quit-app)         printf 'Quit Facet\n' ;;
+        open-about)       printf 'About Facet\n' ;;
         toggle-pause)     printf 'Pause\nResume\n' ;;
         toggle-cube-lock) printf 'Lock\nUnlock\n' ;;
         status-item)      printf '\n' ;;
@@ -380,11 +385,28 @@ platform_menu_titles() {
 # identifier is what `AXIdentifier` carries and the press is by name; on Linux it goes through the mapping above
 # and whichever title the menu is currently showing is the one pressed.
 platform_menu_press() {
+    local titles output
+    titles=$(platform_menu_titles "$1") || return 1
     case "$PLATFORM" in
-        mac) python3 scripts/ax-press.py "$1" 2>&1 ;;
+        mac)
+            # **Asked again for up to five seconds.** Straight after launch the status item's menu is not in
+            # the accessibility tree yet, and a press then finds no item (run 5, 2026-09-25).
+            local attempt
+            for attempt in $(seq 1 25); do
+                while IFS= read -r title; do
+                    [ -z "$title" ] && continue
+                    output=$(python3 scripts/ax-press.py --title "$title" 2>&1) && {
+                        printf '%s\n' "$output"
+                        return 0
+                    }
+                done <<EOF
+$titles
+EOF
+                sleep 0.2
+            done
+            echo "  no menu item matching $1${output:+: $output}" >&2
+            return 1 ;;
         linux)
-            local titles output
-            titles=$(platform_menu_titles "$1") || return 1
             while IFS= read -r title; do
                 [ -z "$title" ] && continue
                 output=$(python3 scripts/tray-menu.py --press "$title" 2>&1) && {
@@ -420,8 +442,9 @@ platform_menu_tree() {
             python3 scripts/tray-menu.py 2>/dev/null | while IFS= read -r line; do
                 local identifier=""
                 case "$line" in
-                    *"'Settings…'"*)        identifier="open-settings" ;;
-                    *"'Quit'"*)             identifier="quit-app" ;;
+                    *"'Settings...'"*)      identifier="open-settings" ;;
+                    *"'Quit Facet'"*)       identifier="quit-app" ;;
+                    *"'About Facet'"*)      identifier="open-about" ;;
                     *"'Pause'"*|*"'Resume'"*) identifier="toggle-pause" ;;
                     *"'Lock'"*|*"'Unlock'"*)  identifier="toggle-cube-lock" ;;
                 esac
@@ -441,7 +464,26 @@ platform_menu_tree() {
 # `(insensitive)` that `tray-menu.py` prints, which is what a check asking whether the line is dead reads.
 platform_menu_item() {
     case "$PLATFORM" in
-        mac) python3 scripts/ax-dump.py --menu-bar 2>/dev/null | grep -m1 "id=$1" || true ;;
+        mac)
+            local titles menu
+            titles=$(platform_menu_titles "$1") || return 1
+            menu=$(python3 scripts/ax-dump.py --menu-bar 2>/dev/null) || true
+            while IFS= read -r title; do
+                [ -z "$title" ] && continue
+                # The title followed by two spaces or the end of the line, so that `Lock` cannot match `Unlock`.
+                # Printed in the shape `tray-menu.py` prints on Linux, the title quoted and `(insensitive)`
+                # after a disabled item, so a check reads the same line on both platforms.
+                local line
+                line=$(printf '%s\n' "$menu" | grep -m1 -E "title=$title(  |\$)") || continue
+                case "$line" in
+                    *"  disabled"*) printf "%s   '%s'   (insensitive)\n" "$line" "$title" ;;
+                    *)              printf "%s   '%s'\n" "$line" "$title" ;;
+                esac
+                return 0
+            done <<EOF
+$titles
+EOF
+            return 0 ;;
         linux)
             local titles menu
             titles=$(platform_menu_titles "$1") || return 1
@@ -475,6 +517,35 @@ platform_click_right() {
             echo "  activation and the panel owns the secondary click, so there is no gesture to" >&2
             echo "  post. The checks that need it are item 12 of docs/linux-port.md." >&2
             return 1 ;;
+    esac
+}
+
+# **The left click on the status item.** On Linux that is the SNI `Activate` call a panel makes, sent to
+# the app directly: `tray-menu.py --activate`. Said out loud when it fails.
+platform_click_left() {
+    case "$PLATFORM" in
+        mac)   python3 scripts/status-item-click.py 2>&1 ;;
+        linux) python3 scripts/tray-menu.py --activate 2>&1 ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------- accessibility
+
+# **Slint reaches the accessibility bus only while an assistive technology is enabled**, measured
+# 2026-09-22 (docs/port-findings.md): with `toolkit-accessibility` false the app is simply not on the bus,
+# and every press fails as though the window never opened. So a run turns it on, and `run.sh` puts back
+# whatever it found. macOS has no equivalent switch.
+platform_accessibility_state() {
+    case "$PLATFORM" in
+        mac)   echo "not applicable" ;;
+        linux) gsettings get org.gnome.desktop.interface toolkit-accessibility ;;
+    esac
+}
+
+platform_set_accessibility() {
+    case "$PLATFORM" in
+        mac)   return 0 ;;
+        linux) gsettings set org.gnome.desktop.interface toolkit-accessibility "$1" ;;
     esac
 }
 
@@ -687,16 +758,17 @@ platform_build_app() {
 
 # **Starts it detached**, so the suite keeps its own terminal and the app outlives the shell that began it.
 platform_launch_app() {
-    case "$PLATFORM" in
-        mac) open "$APP" ;;
-        linux)
-            # Its console copy goes to a file rather than to the run log: every line it prints is also a
-            # `debug_log` row, which is what the checks read, but a crash on the way up prints there and
-            # nowhere else.
-            mkdir -p logs
-            nohup "$BINARY" >> logs/app.log 2>&1 &
-            ;;
-    esac
+    # **The binary itself on both platforms while there is no bundle**: `open ""` starts nothing, which is what
+    # the first macOS run of the Rust app met (2026-09-25). `open "$APP"` returns when there is a bundle.
+    #
+    # Its console copy goes to a file rather than to the run log: every line it prints is also a `debug_log`
+    # row, which is what the checks read, but a crash on the way up prints there and nowhere else.
+    if [ -n "$APP" ]; then
+        open "$APP"
+    else
+        mkdir -p logs
+        nohup "$BINARY" >> logs/app.log 2>&1 &
+    fi
 }
 
 # **A warning that only one platform can earn.** Ad-hoc signing makes every build a different application

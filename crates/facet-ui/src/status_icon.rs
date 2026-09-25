@@ -169,8 +169,7 @@ fn pause(x: i32, y: i32) -> bool {
 /// come out lopsided. Only the half above the body is kept, which is what turns a ring into a shackle.
 fn lock(x: i32, y: i32) -> bool {
     let body_top = 15;
-    let body =
-        x >= MARGIN + 2 && x < CELL - MARGIN - 2 && y >= body_top && y < CELL - MARGIN - 1;
+    let body = x >= MARGIN + 2 && x < CELL - MARGIN - 2 && y >= body_top && y < CELL - MARGIN - 1;
 
     let dx = x - CELL / 2;
     let dy = y - body_top;
@@ -198,8 +197,13 @@ mod tests {
     /// of any one state.
     #[test]
     fn each_state_draws_a_different_icon() {
-        let drawn: Vec<(u32, Vec<u8>)> =
-            STATES.iter().map(|s| { let r = render(*s); (r.width, r.rgba) }).collect();
+        let drawn: Vec<(u32, Vec<u8>)> = STATES
+            .iter()
+            .map(|s| {
+                let r = render(*s);
+                (r.width, r.rgba)
+            })
+            .collect();
 
         for (i, a) in drawn.iter().enumerate() {
             assert!(a.1.iter().any(|&b| b != 0), "{:?} drew nothing at all", STATES[i]);
@@ -226,8 +230,7 @@ mod tests {
             for y in 0..CELL {
                 for x in 0..CELL {
                     let before = &plain.rgba[((y * CELL + x) * 4) as usize..][..4];
-                    let after =
-                        &locked.rgba[((y * locked.width as i32 + x) * 4) as usize..][..4];
+                    let after = &locked.rgba[((y * locked.width as i32 + x) * 4) as usize..][..4];
                     assert_eq!(before, after, "the first glyph changed at {x},{y} when locked");
                 }
             }
@@ -287,7 +290,8 @@ mod tests {
                     if r.rgba[i + 3] != 0 {
                         seen += 1;
                         assert_eq!(
-                            [r.rgba[i], r.rgba[i + 1], r.rgba[i + 2]], colour,
+                            [r.rgba[i], r.rgba[i + 1], r.rgba[i + 2]],
+                            colour,
                             "wrong colour at {x},{y} of slot {slot} for {showing:?}"
                         );
                     }

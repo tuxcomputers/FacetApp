@@ -6,16 +6,37 @@ compared rather than asserted. This answers item 7 of
 structurally true is not the same as true.
 
 ```sh
-cargo run -p facet-ui --example draw-settings-tabs   # writes target/settings-tabs/
+scripts/switch-database.sh test -clean
+FACET_DATABASE="<data directory>/appdata.sqlite" cargo run -p facet-ui --example draw-settings-tabs
 ```
 
 Then copy the six files into the folder for the machine you are on.
 
+**Each file is numbered for its place in the tab bar**, so every folder here lists in the order the window
+reads rather than alphabetically:
+
+| | | | | | |
+|---|---|---|---|---|---|
+| `1-faces.png` | `2-categories.png` | `3-report.png` | `4-app.png` | `5-device.png` | `6-about.png` |
+
+**Keep it that way.** The number is the example's own tab index plus one, so it comes out of
+`draw-settings-tabs` already prefixed and a copy needs no renaming. A tab that is added, removed or moved is
+renumbered there, in `TABS`, and all three folders here are renamed to match in the same change, so the
+same number means the same tab on both machines and in `compare/`. The example empties
+`target/settings-tabs/` before it draws, so a renumbering cannot leave a file under its old name to be
+copied in beside the new one. The data directory is
+`~/Library/Application Support/Facet` on the Mac and `~/.local/share/Facet` on Linux.
+
+**The Faces tab is drawn from a freshly built test database**, so both machines render the same rows: the
+seeded Break and Meeting, with their icons, and nothing being timed. Without `FACET_DATABASE` the tab draws
+no categories at all, and a database with anything else in it draws something the other machine cannot
+reproduce.
+
 | | |
 |---|---|
-| [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11, `x86_64`. Rendered 2026-09-25 at `759684b`, **with Inter packaged** |
-| [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-25 at `26b9f40`, **with Inter packaged** |
-| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-25; **every diff panel is empty** |
+| [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11, `x86_64`. Rendered 2026-09-25 on `feature/faceTab` at `b9991f5`, against a clean test database |
+| [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-25 on `feature/faceTab` at `030f2ce`, against a clean test database |
+| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-25 from Mac `3c2ac11` and Linux `b9991f5`; every diff panel is empty, and all six PNGs, `1-faces.png` with its rasterised SVG icons included, are byte-identical across the two machines |
 
 **These are Slint's software renderer, not screenshots of the running app.** It draws into a buffer with
 no window server involved, so window chrome and compositing are out of the comparison.

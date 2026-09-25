@@ -16,6 +16,7 @@ use std::time::Duration;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
+use facet_ui::faces::Faces;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use tray_icon::{
     MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -42,16 +43,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui = SettingsWindow::new()?;
 
+    // `true` for has_given_up_on_cube: this build has no radio, so it never waits for a cube.
+    let faces = Faces::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log), true);
+
     // A menu bar app owns no dock icon. This has to happen after Slint has built its backend, because
     // that is what creates the application object, and again from inside the event loop below, because
     // the windowing layer sets its own policy on the way up.
     show_in_dock(false, &log);
 
     let tab_log = Rc::clone(&log);
+    let tab_faces = Rc::clone(&faces);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
         tab_log.record(Tag::Settings, || format!("Settings tab selected: {tab}"));
+        if tab == "Faces" {
+            tab_faces.refresh();
+        }
     });
 
     // Closing Settings puts the app back in the menu bar and nowhere else.
@@ -81,10 +89,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Pause and Lock are first, per the rule in docs/rust-port.md that the menu is the primary route
     // to everything and left click is only an accelerator for its first item.
     //
-    // **In-memory state, and it is the exception being flagged rather than the rule being broken.**
-    // These two facts belong in the database and will be read from it at the point of use like
-    // everything else. There is no database yet, so this holds them to demonstrate that the icon
-    // follows the state; it is the demonstration that is temporary, not the icon.
+    // Pause is the app's own clock, read from the database through `faces`. Lock is the cube's and there
+    // is no radio yet, so `showing.locked` is held in memory and changes only the icon.
     let menu = Menu::new();
     let pause_item = MenuItem::with_id("pause", "Pause", true, None);
     let lock_item = MenuItem::with_id("lock", "Lock", true, None);
@@ -128,30 +134,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the event loop rather than the function that built it.
     let _tray: TrayIcon = tray;
 
-
     let ui_weak = ui.as_weak();
     let tray_handle = Rc::new(_tray);
     let pump_tray = Rc::clone(&tray_handle);
     let pump_showing = Rc::clone(&showing);
     let pump_log = Rc::clone(&log);
+    let pump_faces = Rc::clone(&faces);
+
+    // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
+    // is after every toggle, every click on the Faces tab and every tick.
+    let follow_faces = Rc::downgrade(&faces);
+    let follow_tray = Rc::clone(&tray_handle);
+    let follow_showing = Rc::clone(&showing);
+    let follow_log = Rc::clone(&log);
+    let follow_pause_item = pause_item.clone();
+    // A change to the icon, the item's title or whether it is enabled writes one row, in the wording the
+    // Linux tray writes, which the scripted checks read. The item's current text and enabled state are read
+    // from the item itself.
+    let follow = move || {
+        let Some(timing) = follow_faces.upgrade().and_then(|faces| faces.menu_bar_timing()) else { return };
+        let next = status_icon::Showing { paused: timing.is_paused, ..follow_showing.get() };
+        let is_item_changed = follow_pause_item.text() != timing.pause_title
+            || follow_pause_item.is_enabled() != timing.is_clickable;
+        let is_icon_changed = next != follow_showing.get();
+        if !is_item_changed && !is_icon_changed {
+            return;
+        }
+        follow_pause_item.set_text(timing.pause_title);
+        follow_pause_item.set_enabled(timing.is_clickable);
+        if is_icon_changed {
+            follow_showing.set(next);
+            redraw_status_item(&follow_tray, next, &follow_log);
+        }
+        follow_log.record(Tag::Tray, || {
+            format!(
+                "Status item follows the clock, paused={} item={} enabled={}",
+                timing.is_paused, timing.pause_title, timing.is_clickable
+            )
+        });
+    };
+    follow();
+    faces.set_on_timing_changed(follow);
+
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
-        // Flips pause, relabels the menu item and redraws the icon.
-        //
-        // **One function for the two routes deliberately**, which is the same shape `facet-linux`'s tray
-        // uses and for the same reason: left click is an accelerator for the first menu item, so the day
-        // it does something the item does not, the accelerator has become a mechanism.
-        let toggle_pause = || {
-            let mut next = pump_showing.get();
-            next.paused = !next.paused;
-            pump_showing.set(next);
-            pause_item.set_text(if next.paused { "Resume" } else { "Pause" });
-            redraw_status_item(&pump_tray, next, &pump_log);
-        };
-
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             match event.id.as_ref() {
-                "pause" => toggle_pause(),
+                // The same call as the Faces tab's glyph and the left click, so the three cannot disagree.
+                "pause" => pump_faces.toggle_pause(),
                 "lock" => {
                     let mut next = pump_showing.get();
                     next.locked = !next.locked;
@@ -163,40 +193,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.invoke_open_on_about();
                         show_settings(&ui, "About", &pump_log);
+                        pump_faces.refresh();
                     }
                 }
                 "settings" => {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.invoke_open_on_faces();
                         show_settings(&ui, "Faces", &pump_log);
+                        pump_faces.refresh();
                     }
                 }
                 "quit" => {
                     pump_log.record(Tag::Quit, || "Quitting on the menu item".to_string());
+                    pump_faces.quit();
                     // Not a discarded Result: a quit that the loop refuses leaves the app running with
                     // nothing said about why, which is the shape CLAUDE.md has a section about. The Linux
                     // composition root reports the same failure the same way.
                     if let Err(error) = slint::quit_event_loop() {
-                        pump_log.record_failure(Tag::Quit, || {
-                            format!("The event loop refused to quit: {error}")
-                        });
+                        pump_log
+                            .record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
                     }
                 }
                 other => {
                     // Nothing fails silently: an id with no arm is a menu item somebody added and
                     // did not wire up, and it should say so rather than doing nothing.
-                    pump_log.record_failure(Tag::Menu, || {
-                        format!("No handler for menu item id {other}")
-                    });
+                    pump_log.record_failure(Tag::Menu, || format!("No handler for menu item id {other}"));
                 }
             }
         }
 
         while let Ok(event) = TrayIconEvent::receiver().try_recv() {
             if let TrayIconEvent::Click { button, button_state, .. } = event {
-                pump_log.record(Tag::Tray, || {
-                    format!("Status item {button:?} {button_state:?}")
-                });
+                pump_log.record(Tag::Tray, || format!("Status item {button:?} {button_state:?}"));
 
                 // **Left click is Pause's accelerator**, which is what it already is on Linux and what
                 // the design rule in docs/rust-port.md asks for on every platform: the menu is the
@@ -206,7 +234,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // acting on each would flip pause twice and land back where it started. Right click never
                 // arrives as a pair, the menu taking it, so this is not a general rule about clicks.
                 if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                    toggle_pause();
+                    pump_faces.toggle_pause();
                 }
             }
         }
@@ -219,9 +247,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         show_in_dock(false, &settle_log);
     });
 
-    log.record(Tag::Launch, || {
-        "Facet is in the menu bar. Right click the icon for the menu".to_string()
-    });
+    log.record(Tag::Launch, || "Facet is in the menu bar. Right click the icon for the menu".to_string());
 
     // Not `ui.run()`: the window is not shown at launch, and the loop must outlive it being closed.
     slint::run_event_loop_until_quit()?;
@@ -239,9 +265,7 @@ fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
     show_in_dock(true, log);
 
     if let Err(error) = ui.show() {
-        log.record_failure(Tag::Settings, || {
-            format!("The Settings window could not be shown: {error}")
-        });
+        log.record_failure(Tag::Settings, || format!("The Settings window could not be shown: {error}"));
         // Back out of the Dock, or the app sits there advertising a window that never appeared.
         show_in_dock(false, log);
         return;
@@ -361,15 +385,12 @@ fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &Opti
                 return;
             }
             log.record(Tag::Tray, || {
-                format!(
-                    "Status item now shows paused={} locked={}",
-                    showing.paused, showing.locked
-                )
+                format!("Status item now shows paused={} locked={}", showing.paused, showing.locked)
             });
         }
-        Err(error) => log.record_failure(Tag::Tray, || {
-            format!("The status item icon could not be drawn: {error}")
-        }),
+        Err(error) => {
+            log.record_failure(Tag::Tray, || format!("The status item icon could not be drawn: {error}"))
+        }
     }
 }
 
@@ -435,9 +456,7 @@ fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
     let file = folder.join("debug.sqlite");
     let log = DebugLog::open(&file)?;
     let log = Some(log);
-    log.record(Tag::Database, || {
-        format!("Trace open at {}, against the {which} database", file.display())
-    });
+    log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
     Ok(log)
 }
 
@@ -489,4 +508,3 @@ fn wear_the_facet_logo(mtm: objc2::MainThreadMarker, log: &Option<DebugLog>) {
         NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image));
     }
 }
-

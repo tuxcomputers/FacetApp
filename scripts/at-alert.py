@@ -43,7 +43,7 @@ def text_of(node):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--app", default="FacetLinux", help="the application to read")
+    parser.add_argument("--app", default="facet-linux", help="the application to read")
     parser.add_argument("--message", action="store_true", help="print the text, not the buttons")
     arguments = parser.parse_args()
 

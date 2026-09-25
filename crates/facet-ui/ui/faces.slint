@@ -1,48 +1,82 @@
-// The Faces tab: a wide left column for the thing being timed, and a narrow right column for the categories
-// to pick from.
+// The Faces tab: a wide left column for what is being timed, and a narrow right column for the categories to
+// pick from.
 //
-// **Two arrangements, one layout.** With nothing paired the left column is the play/pause control alone;
-// following a cube it is the device drawn from above, the face it is resting on, and the lock on that face.
-// Both occupy the same square, so the column keeps its proportions either way rather than being two layouts
-// that happen to sit in one pane. Nothing is paired yet, so this draws the first of them.
+// Everything shown comes from `FacesData`, which Rust fills from the database; every click is a callback on
+// it. This file holds no state of its own beyond what is being typed into the name field.
 //
-// **The square is what everything in the column is sized from.** The column's width defines it and the glyph,
-// the figure under the glyph and the gap between them are fractions of it, so the group stays in proportion as
-// the window is resized rather than being a set of fixed points that only look right at one width.
-//
-// **The right column's list is deliberately not tinted**, unlike every panel on the Categories, App and Device
-// tabs. That is the Swift app's own split: a pick list is part of the page, and a panel of settings is a thing
-// on it.
-//
-// Nothing here reads and nothing here writes. The categories are the same placeholders the Categories tab
-// draws, and the clock is stopped.
+// The left column is a square sized from the column width. Idle, it is empty. Timing, it holds the
+// play/pause glyph in the category's colour and today's total under it, with the category's name below the
+// square. The glyph shows what is happening, not what clicking does: play while time is being recorded,
+// pause while it is stopped.
 
-import { Palette, Button, ScrollView } from "std-widgets.slint";
+import { Palette, Button, LineEdit } from "std-widgets.slint";
 import { Metrics } from "metrics.slint";
-import { Swatch, Footnote } from "widgets.slint";
-import { CategoryRow } from "categories.slint";
+import { Swatch } from "widgets.slint";
 
-// The play/pause control, which is what the column holds when there is no cube to draw.
-//
-// **The glyph takes the category's colour; nothing behind it does.** It stands where the lit device would be,
-// and the device is what carries colour as a body, so a filled tile here would be inventing an object that is
-// not in the design.
-component PlayPauseGlyph inherits Rectangle {
+// One category as the pick list draws it.
+export struct FaceCategory {
+    id: int,
+    name: string,
+    colour: color,
+    has-colour: bool,
+    icon: image,
+    has-icon: bool,
+    white-lines: bool,
+}
+
+// What the Faces tab shows and what it can be asked to do. Set from Rust; read by `FacesPane`.
+export global FacesData {
+    in property <[FaceCategory]> categories;
+
+    // A category is on the current app face. False draws the idle column.
+    in property <bool> has-category: false;
     in property <bool> running: false;
+    in property <string> timing-category;
+    in property <color> timing-colour;
+    in property <bool> has-timing-colour: false;
+    in property <string> elapsed: "0:00:00";
+    // Whether pressing the glyph does anything: false when idle or when a resume is refused.
+    in property <bool> glyph-enabled: false;
+    // Whether a category click does anything.
+    in property <bool> rows-enabled: true;
+
+    // The Create control: the button, or the name field with Save.
+    in-out property <bool> creating: false;
+    in-out property <string> typed-name;
+
+    // A notice over the tab. Shown while `notice-title` is not empty; one button per choice.
+    in property <string> notice-title;
+    in property <string> notice-message;
+    in property <[string]> notice-choices;
+
+    callback category-picked(int);
+    callback play-pause-pressed();
+    callback create-opened();
+    callback name-edited(string);
+    callback create-saved(string);
+    callback create-cancelled();
+    callback notice-chosen(int);
+}
+
+component PlayPauseGlyph inherits Rectangle {
+    in property <bool> running;
+    in property <bool> enabled;
     in property <color> colour;
     in property <length> side;
 
     width: root.side;
     height: root.side;
+    opacity: root.enabled ? 1 : 0.4;
 
     accessible-role: button;
     accessible-id: "timing-play-pause";
-    accessible-label: root.running ? "Pause" : "Play";
+    accessible-label: root.running ? "Running, click to pause" : "Paused, click to resume";
+    accessible-enabled: root.enabled;
     accessible-action-default => { root.pressed(); }
 
     callback pressed();
 
-    if !root.running: Path {
+    if root.running: Path {
         width: root.side;
         height: root.side;
         viewbox-width: 100;
@@ -51,7 +85,7 @@ component PlayPauseGlyph inherits Rectangle {
         fill: root.colour;
     }
 
-    if root.running: HorizontalLayout {
+    if !root.running: HorizontalLayout {
         spacing: root.side * 0.22;
         padding-left: root.side * 0.16;
         padding-right: root.side * 0.16;
@@ -62,21 +96,23 @@ component PlayPauseGlyph inherits Rectangle {
     TouchArea { clicked => { root.pressed(); } }
 }
 
-// One category as a row of the pick list. **The whole row is the control**: clicking one is how a category is
-// picked, so making somebody aim at a smaller target inside it would be the triangle-versus-heading mistake.
+// One category as a row of the pick list. The whole row is the control.
 component PickRow inherits Rectangle {
-    in property <CategoryRow> category;
+    in property <FaceCategory> category;
+    in property <bool> enabled;
 
     height: 36px;
+    opacity: root.enabled ? 1 : 0.5;
 
     accessible-role: button;
     accessible-id: "category-row-" + root.category.id;
     accessible-label: root.category.name;
+    accessible-enabled: root.enabled;
     accessible-action-default => { root.picked(); }
 
     callback picked();
 
-    background: touch.has-hover ? Palette.alternate-background : transparent;
+    background: touch.has-hover && root.enabled ? Palette.alternate-background : transparent;
 
     HorizontalLayout {
         padding-left: 8px;
@@ -85,7 +121,15 @@ component PickRow inherits Rectangle {
 
         Rectangle {
             width: 28px;
-            Swatch { colour: root.category.colour; size: 28px; radius: 6px; }
+            Swatch {
+                colour: root.category.colour;
+                has-colour: root.category.has-colour;
+                icon: root.category.icon;
+                has-icon: root.category.has-icon;
+                white-lines: root.category.white-lines;
+                size: 28px;
+                radius: 6px;
+            }
         }
 
         Text {
@@ -99,32 +143,112 @@ component PickRow inherits Rectangle {
     touch := TouchArea { clicked => { root.picked(); } }
 }
 
+// The Create button, which becomes a name field and Save. Return saves and Escape cancels.
+component CreateControl inherits Rectangle {
+    height: 28px;
+
+    if !FacesData.creating: HorizontalLayout {
+        alignment: start;
+        Button {
+            text: "Create";
+            accessible-id: "create-category";
+            clicked => { FacesData.create-opened(); }
+        }
+    }
+
+    if FacesData.creating: FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                FacesData.create-cancelled();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            field := LineEdit {
+                placeholder-text: "Category name";
+                text <=> FacesData.typed-name;
+                accessible-id: "category-name-field";
+                accessible-label: "Category name";
+                edited(text) => { FacesData.name-edited(text); }
+                accepted(text) => { FacesData.create-saved(text); }
+                init => { self.focus(); }
+            }
+            Button {
+                text: "Save";
+                accessible-id: "save-category";
+                clicked => { FacesData.create-saved(FacesData.typed-name); }
+            }
+        }
+    }
+}
+
+// A notice over the pane, for the questions Create can raise.
+component Notice inherits Rectangle {
+    background: #00000040;
+
+    accessible-role: groupbox;
+    accessible-id: "faces-notice";
+    accessible-label: FacesData.notice-title;
+
+    // Swallows clicks on the backdrop so nothing under the notice can be pressed.
+    TouchArea { }
+
+    Rectangle {
+        width: min(root.width - 80px, 420px);
+        height: box.preferred-height;
+        background: Palette.background;
+        border-radius: Metrics.corner-radius;
+        border-width: 1px;
+        border-color: Palette.border;
+
+        box := VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+
+            Text {
+                text: FacesData.notice-title;
+                font-weight: 700;
+                wrap: word-wrap;
+                color: Palette.foreground;
+                accessible-role: AccessibleRole.text;
+                accessible-id: "faces-notice-title";
+                accessible-label: FacesData.notice-title;
+            }
+            if FacesData.notice-message != "": Text {
+                text: FacesData.notice-message;
+                wrap: word-wrap;
+                color: Palette.foreground;
+                accessible-role: AccessibleRole.text;
+                accessible-id: "faces-notice-message";
+                accessible-label: FacesData.notice-message;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                for choice[index] in FacesData.notice-choices: Button {
+                    text: choice;
+                    accessible-id: "faces-notice-choice-" + index;
+                    clicked => { FacesData.notice-chosen(index); }
+                }
+            }
+        }
+    }
+}
+
 export component FacesPane inherits Rectangle {
-    in property <[CategoryRow]> categories: [
-        { id: 1, name: "Meeting", colour: #0000ff, daily-limit: 0, last-used: "" },
-        { id: 2, name: "Code", colour: #008000, daily-limit: 0, last-used: "" },
-        { id: 3, name: "Admin", colour: #ffa500, daily-limit: 120, last-used: "" },
-        { id: 4, name: "Email", colour: #800080, daily-limit: 0, last-used: "" },
-        { id: 5, name: "Break", colour: #808080, daily-limit: 0, last-used: "" },
-    ];
-
-    // What is being timed, and for how long. Stopped, there being no clock behind it yet, and the figure
-    // carries seconds because the seeded `display_seconds` is on.
-    in property <bool> running: false;
-    in property <string> timing-category: "Nothing";
-    in property <color> timing-colour: #8e8e93;
-    in property <string> elapsed: "0:00:00";
-
     accessible-role: tab-panel;
     accessible-id: "settings-pane-faces";
     accessible-label: "Faces";
 
-    // The left column is twice the width of the right, expressed as a ratio between the two rather than as a
-    // fraction of the pane, so it needs nothing measured and holds by itself as the window is resized.
+    // The left column is twice the width of the right.
     property <length> gutter: 24px;
     property <length> content-width: root.width - 2 * Metrics.tab-padding;
     property <length> right-width: (root.content-width - root.gutter) / 3;
     property <length> left-width: root.right-width * 2;
+    property <color> glyph-colour: FacesData.has-timing-colour ? FacesData.timing-colour : Palette.foreground;
 
     HorizontalLayout {
         padding: Metrics.tab-padding;
@@ -151,21 +275,23 @@ export component FacesPane inherits Rectangle {
             Rectangle {
                 height: root.left-width;
 
-                VerticalLayout {
+                if FacesData.has-category: VerticalLayout {
                     alignment: center;
                     spacing: root.left-width * 0.29 * 0.12;
 
                     HorizontalLayout {
                         alignment: center;
                         PlayPauseGlyph {
-                            running: root.running;
-                            colour: root.timing-colour;
+                            running: FacesData.running;
+                            enabled: FacesData.glyph-enabled;
+                            colour: root.glyph-colour;
                             side: root.left-width * 0.29;
+                            pressed => { if FacesData.glyph-enabled { FacesData.play-pause-pressed(); } }
                         }
                     }
 
                     Text {
-                        text: root.elapsed;
+                        text: FacesData.elapsed;
                         horizontal-alignment: center;
                         font-size: root.left-width * 0.29 * 0.3;
                         font-weight: 500;
@@ -173,23 +299,23 @@ export component FacesPane inherits Rectangle {
                         opacity: 0.6;
                         accessible-role: AccessibleRole.text;
                         accessible-id: "timing-elapsed";
-                        accessible-label: root.elapsed;
+                        accessible-label: FacesData.elapsed;
                     }
                 }
             }
 
-            // Under the square, set large enough to fill the space the squared-off graphic leaves at the
-            // bottom of the column.
-            Text {
-                text: root.timing-category;
+            if FacesData.has-category: Text {
+                text: FacesData.timing-category;
                 horizontal-alignment: center;
                 font-size: 40px;
                 font-weight: 600;
+                wrap: word-wrap;
                 overflow: elide;
+                max-height: 2 * 48px;
                 color: Palette.foreground;
                 accessible-role: AccessibleRole.text;
                 accessible-id: "timing-category-name";
-                accessible-label: root.timing-category;
+                accessible-label: FacesData.timing-category;
             }
         }
 
@@ -209,7 +335,7 @@ export component FacesPane inherits Rectangle {
                 accessible-label: "Categories";
             }
 
-            Rectangle {
+            if FacesData.categories.length > 0: Rectangle {
                 background: Palette.control-background;
                 border-radius: Metrics.corner-radius;
                 border-width: 1px;
@@ -223,30 +349,24 @@ export component FacesPane inherits Rectangle {
                 VerticalLayout {
                     alignment: start;
 
-                    for category[index] in root.categories: VerticalLayout {
-                        // Between rows and never above the first: a line under the last row would be a line
-                        // with nothing beneath it.
+                    for category[index] in FacesData.categories: VerticalLayout {
+                        // Between rows and never above the first.
                         if index > 0: Rectangle { height: 1px; background: Palette.border; }
-                        PickRow { category: category; }
+                        PickRow {
+                            category: category;
+                            enabled: FacesData.rows-enabled;
+                            picked => { if FacesData.rows-enabled { FacesData.category-picked(category.id); } }
+                        }
                     }
                 }
             }
 
-            // Under the list, at the column's leading edge, following it rather than sitting at the bottom of
-            // the column: a short list keeps the button near what it adds to.
-            //
-            // Full column width, unlike the button it collapses to: the name field stretches into it and Save
-            // rides at the far end.
-            HorizontalLayout {
-                alignment: start;
-                Button { text: "Create"; accessible-id: "create-category"; }
-            }
-
-            Footnote {
-                note-id: "faces-placeholder-note";
-                text: "Placeholder categories, and the clock is stopped. This app does not open the database "
-                    + "or the radio yet.";
-            }
+            CreateControl { }
         }
+    }
+
+    if FacesData.notice-title != "": Notice {
+        width: root.width;
+        height: root.height;
     }
 }

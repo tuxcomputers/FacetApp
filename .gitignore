@@ -13,3 +13,6 @@ google-client.json
 /dist/
 
 .DS_Store
+
+# Python bytecode, written whenever a driver imports scripts/atspi_tree.py
+__pycache__/

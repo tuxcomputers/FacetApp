@@ -19,6 +19,7 @@ Needs accessibility permission for whatever runs it.
 """
 
 import argparse
+import os
 import sys
 import time
 
@@ -91,7 +92,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--right", action="store_true", help="click the right half instead of the left")
     parser.add_argument("--double", action="store_true", help="post a double click")
-    parser.add_argument("--app", default="Facet", help="the running app (default: Facet)")
+    parser.add_argument("--app", default=os.environ.get("FACET_APP_NAME", "Facet"), help="the running app (default: $FACET_APP_NAME, else Facet)")
     arguments = parser.parse_args()
 
     pid = pid_of(arguments.app)

@@ -43,7 +43,7 @@ LOOKUP_SECONDS = 5.0
 LOOKUP_INTERVAL = 0.2
 
 
-def application(name="FacetLinux"):
+def application(name="facet-linux"):
     """The running app's accessible root, or a refusal saying which of the two things went wrong.
 
     **Not found and not running are different answers**, for the reason `platform_app_is_declared`
@@ -142,8 +142,29 @@ def find(root, matches, whole_tree=False):
     return None
 
 
+def identifier_of(node):
+    """The element's AT-SPI `AccessibleId`, or an empty string when it has none.
+
+    **This is where a Slint control's `accessible-id` arrives**, AccessKit publishing it as
+    `AccessibleId` (`accesskit_unix` 0.22, `author_id`). Slint puts the `accessible-label` in the
+    accessible *name*, so for the Rust app the name is the words and this is the identifier, where the
+    GTK app overwrote the name to carry one. Asked for defensively because a GTK node answers an
+    empty string and an older libatspi has no such call at all.
+    """
+    try:
+        return node.get_accessible_id() or ""
+    except Exception:                                                   # noqa: BLE001
+        return ""
+
+
 def by_name(wanted):
-    return lambda node: node.name == wanted
+    """An element whose identifier is `wanted`, or failing that whose accessible name is.
+
+    **The identifier first, the name second, and both deliberately.** Slint carries the identifier
+    in `AccessibleId` and the label in the name; GTK carried the identifier in the name. A tab or a
+    dialogue button is still addressed by its words on both, so the name stays a match.
+    """
+    return lambda node: identifier_of(node) == wanted or node.name == wanted
 
 
 def by_description(wanted):
@@ -163,9 +184,18 @@ def require(root, matches, described):
     **Exits rather than returning None** so that a missing element can never be mistaken for an
     action that did nothing -- which is the distinction every check downstream of this is drawing.
     """
-    node = find(root, matches)
-    if node is not None:
-        return node
+    # **Waited for, briefly, rather than asked once.** AccessKit publishes a Slint tree change after the
+    # frame that made it, so an element revealed by the press just before (the name field behind
+    # Create) is absent for a moment. Measured 2026-09-25: `at-set.py category-name-field` half a second
+    # after Create found nothing, and the same call a second later typed into it.
+    deadline = time.monotonic() + LOOKUP_SECONDS
+    while True:
+        node = find(root, matches)
+        if node is not None:
+            return node
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(LOOKUP_INTERVAL)
     # **Says which of the two it is.** A name that exists only on a tab that is not on show is a
     # check that forgot to switch tabs, and it is a different fault from a name that is nowhere --
     # one is the script's mistake and the other is the app's. Reporting them the same way sends

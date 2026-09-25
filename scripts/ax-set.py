@@ -12,7 +12,7 @@ to commit it: press the Save button beside it (scripts/ax-press.py), or move foc
 
 Exits non-zero when nothing matches. Needs accessibility permission for whatever runs it.
 """
-import subprocess, sys
+import os, subprocess, sys
 from ApplicationServices import (
     AXUIElementCreateApplication, AXUIElementCopyAttributeValue,
     AXUIElementSetAttributeValue, kAXErrorSuccess,
@@ -44,7 +44,7 @@ if focus:
     sys.argv.remove("--focus")
 
 identifier, value = sys.argv[1], sys.argv[2]
-pid = int(subprocess.check_output(["pgrep", "-x", "Facet"]).split()[0])
+pid = int(subprocess.check_output(["pgrep", "-x", os.environ.get("FACET_APP_NAME", "Facet")]).split()[0])
 app = AXUIElementCreateApplication(pid)
 target = None
 for window in (attribute(app, "AXWindows") or []):
