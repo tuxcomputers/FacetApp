@@ -18,7 +18,7 @@ and that repository is frozen at `~/harry.git/TimeFlipApp` on GitHub as `tuxcomp
 decision, the requirements it was judged against and every measurement behind it are in
 [`docs/rust-port.md`](docs/rust-port.md).
 
-**`~/harry.git/TimeFlipLinux` is the reference tree, and it is where to read the Swift app.** It is a
+**`~/harry.git/TimeFlipLinux` is the reference tree on the Mac, and it is where to read the Swift app.** It is a
 git worktree of that repository pinned to `feature/linuxPort`, which is the furthest state of the app and
 of the Linux port. **It is checked out as ordinary files**, so read it with `cat`, `grep` and `rg` rather
 than `git show`, and it does not move when somebody switches branches in `TimeFlipApp` itself.
@@ -27,6 +27,12 @@ than `git show`, and it does not move when somebody switches branches in `TimeFl
 rg 'func historyFrame' ~/harry.git/TimeFlipLinux/Sources/FacetCore
 cat ~/harry.git/TimeFlipLinux/Tests/FacetTests/DeviceHistoryRulesTests.swift
 ```
+
+**On the Linux box there is no `TimeFlipLinux`.** The same reference is `~/harry.git/TimeFlipApp`, which is
+checked out on `feature/linuxPort` itself, so substitute that path in everything this file says about the
+reference tree. Read it as ordinary files and never commit to it, as on the Mac. Nothing runs the Swift app
+there, so the rule about not switching its branch is the Mac's. [`docs/system-linux.md`](docs/system-linux.md)
+has the measurement.
 
 **The two are separate applications and are named apart.** The Swift one is **TimeFlip**; the Rust one
 in this repository is **Facet**. That was done on 2026-09-21 so the Rust app could take the Facet name
@@ -44,7 +50,7 @@ outright rather than carry a transitional one.
 half is why two strings in the Swift app still say Facet: the calendar's name and the text written into
 each event. Renaming those would orphan the calendar that account already has.
 
-**`~/harry.git/TimeFlipApp` sits on `renameToTimeFlip` and is the working app**, built and run day to day
+**On the Mac, `~/harry.git/TimeFlipApp` sits on `renameToTimeFlip` and is the working app**, built and run day to day
 because Facet cannot track time yet. **Do not switch its branch: somebody is using it.** Other branches
 are still reachable there with `git show feature/rustPort:<path>`, which in practice is only wanted for
 the two probes, and those are already in `probe/` here.
@@ -210,7 +216,7 @@ sessions cost.**
    and the code had to work anyway. **Its comments say which measurement forced each departure.**
 3. **[`docs/TimeFlip2 BLE Protocol v4.3.md`](docs/TimeFlip2%20BLE%20Protocol%20v4.3.md)**, the vendor spec.
 4. **[`docs/timeflip.md`](docs/timeflip.md)**, this project's summary of the BLE surface.
-5. **The Swift implementation**, in the reference tree at `~/harry.git/TimeFlipLinux`. Worth reading for a question the four above
+5. **The Swift implementation**, in the reference tree at `~/harry.git/TimeFlipLinux` (`~/harry.git/TimeFlipApp` on the Linux box). Worth reading for a question the four above
    cannot answer, and anything found there that matters gets written into 1 in the same change.
 
 **Query the evidence database rather than only reading the prose around it.** It holds real rows from this
