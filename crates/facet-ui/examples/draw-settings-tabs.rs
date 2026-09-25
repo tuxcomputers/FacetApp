@@ -18,9 +18,9 @@
 //!     FACET_TAB_HEIGHT=1200 cargo run -p facet-ui --example draw-settings-tabs
 //!     FACET_DATABASE=path/to/appdata.sqlite cargo run -p facet-ui --example draw-settings-tabs
 //!
-//! FACET_DATABASE fills the Faces tab from that database, which must already exist. Rendering it may
-//! finalise segments an earlier launch left open on an app face, as launching the app does. Without it the
-//! Faces tab draws with no categories.
+//! FACET_DATABASE fills the Faces and Categories tabs from that database, which must already exist. Rendering
+//! it may finalise segments an earlier launch left open on an app face, as launching the app does. Without it
+//! those tabs draw with no categories.
 //!
 //! Writes target/settings-tabs/<n>-<tab>.png, one per tab, numbered from 1 in tab order so a listing sorts the
 //! way the window reads. The default height is the one the window opens at, so
@@ -89,15 +89,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let width = 640u32;
     let ui = SettingsWindow::new()?;
-    let faces = std::env::var_os("FACET_DATABASE").map(|path| {
+    let tabs = std::env::var_os("FACET_DATABASE").map(|path| {
+        let path: std::path::PathBuf = path.into();
         let notice = facet_ui::notice::Notice::attach(&ui);
-        facet_ui::faces::Faces::attach(&ui, path.into(), Rc::new(None), true, notice)
+        let faces =
+            facet_ui::faces::Faces::attach(&ui, path.clone(), Rc::new(None), true, Rc::clone(&notice));
+        let categories = facet_ui::categories::Categories::attach(&ui, path, Rc::new(None), notice);
+        (faces, categories)
     });
     ui.window().set_size(LogicalSize::new(width as f32, height as f32));
     window.set_size(PhysicalSize::new(width, height));
     ui.show()?;
-    if let Some(faces) = &faces {
+    if let Some((faces, categories)) = &tabs {
         faces.refresh();
+        categories.refresh();
     }
 
     // **Emptied first**, so a tab that is renamed or renumbered does not leave its old file beside the new one
