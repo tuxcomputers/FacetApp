@@ -94,11 +94,26 @@ still worth knowing.
 **Nothing was elided on any tab**, which was the other named risk. The Report tab's two calendars came out
 identical to each other, so the derivation from the day cell holds on this box.
 
-**The images are not committed**, `target/` being ignored, so this is the comparison: run it there and
-check the numbers. **If they match, that is one line in [port-findings.md](port-findings.md)** saying the
-shared window is measured identical, because *measured identical* is a fact somebody would otherwise pay
-to establish twice. If they do not, the difference is the finding.
+**The Linux images are committed now**, at
+[`docs/settings-tabs/linux/`](settings-tabs/linux/), six PNGs and a README saying what they are. `target/`
+is ignored, so putting them in the tree is what makes the comparison possible at all from two machines
+that never see each other's disks.
 
-**Worth opening the real window afterwards as well.** The software renderer rasterises its own fonts, so
-it takes the window server out of the comparison deliberately -- which is the point, and also means it
-cannot answer what fontconfig against Core Text does to the running app.
+**So: run the command, then copy `target/settings-tabs/*.png` into `docs/settings-tabs/mac/` and commit
+them.** That folder is the one thing this item actually needs back; the numbers above are for checking
+without opening an image viewer.
+
+**Then compare, and write the answer down either way.** If they match, that is one line in
+[port-findings.md](port-findings.md) saying the shared window is measured identical, because *measured
+identical* is a fact somebody would otherwise pay to establish twice. If they do not, the difference is
+the finding and the two images are the evidence beside it.
+
+**They are a dated snapshot rather than a golden file**, and the README says so: nothing diffs them
+automatically and nothing should. Once the comparison is written up they stop being load-bearing, and a
+stale image is not evidence about a window that has moved on since.
+
+**Worth opening the real window afterwards as well, and it is a separate exercise.** The software renderer
+rasterises its own fonts, so it takes the window server out of the comparison deliberately -- which is the
+point, and also means it cannot answer what fontconfig against Core Text does to the running app. Fonts
+are the likeliest difference between the two machines and the one thing these images are guaranteed not
+to show. That needs somebody at the screen on both boxes.

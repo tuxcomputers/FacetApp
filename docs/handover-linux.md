@@ -119,10 +119,21 @@ needed only a `png` dev-dependency: `renderer-software` is a slint default, so t
 the derivation from the day cell holds here. **The stepper alignment, which this item named as the thing
 that would break quietly, is intact**: `AM`, `min` and `secs` all line up.
 
+**The six images are committed**, at [`settings-tabs/linux/`](settings-tabs/linux/) with a README
+saying what they are and how to regenerate them. `target/` is ignored, so putting them in the tree is
+what makes a comparison possible between two machines that never see each other's disks. They are a
+dated snapshot rather than a golden file: nothing diffs them automatically, and once the comparison is
+written up they stop being load-bearing.
+
 **It stays open because one machine cannot answer it.** The question is whether the two *match*, and
-that needs the Mac to run the same command now that it can. [handover-mac.md](handover-mac.md) item 4
-asks for it and carries these numbers to check against. Nothing goes in
-[port-findings.md](port-findings.md) until there is a comparison to record, in either direction.
+that needs the Mac to run the same command now that it can, and to commit its own six into
+`settings-tabs/mac/`. [handover-mac.md](handover-mac.md) item 4 asks for exactly that and carries these
+numbers to check against. Nothing goes in [port-findings.md](port-findings.md) until there is a
+comparison to record, in either direction.
+
+**These cannot answer the font question**, which is the likeliest difference of the four this item
+names: the software renderer rasterises its own. That wants the real window open on both machines, with
+somebody at each screen, and is a separate exercise from this one.
 
 ---
 
