@@ -36,3 +36,25 @@ for something is to write it down where the other will look.
    finished state.
 
 ---
+
+## 6. Run the suite on `feature/catergoryTab`, with `04-categories` in it
+
+**On `feature/catergoryTab`.** `04-categories` is converted and passes on Linux, and the whole run is 169 of 169
+at `06f9f11` (`last-run-linux.md`). CI's stamp check now fails only on the Mac side: `crates/` and
+`Tests/Scripted/` have changed since the Mac's run.
+
+**What is wanted:**
+
+1. **Run `Tests/Scripted/run.sh` and commit `last-run-mac.md` straight away.**
+2. **Watch the notice helpers, which now serve macOS too.** The Rust app has no native alerts, so
+   `platform_alert_buttons`, `platform_alert_message`, `platform_press_title` and `platform_press_sheet` read
+   the `notice-choice-<n>` buttons from the tree on both platforms (`platform_notice_choices` in
+   `platform.sh`). They parse `value=` or `title=` for the label. Linux prints `value=`, and it is a guess what
+   `ax-dump.py` prints for a Slint Button. If `04` fails on "the notice offers three buttons", that is where
+   to look.
+3. **`set_field_cut`** is the ordinary `ax-set.py` write on macOS, on the belief that writing `AXValue` bypasses
+   the field's own 35-character cut. Say if the cut happens anyway: the check reads the table, so it passes
+   either way.
+4. **Say if your window clips the Categories lists.** On Linux the window opens 400 points tall, and rows the
+   pane clips are absent from the tree. `04` now folds whichever section it is not working in. A taller Mac
+   window should not care.
