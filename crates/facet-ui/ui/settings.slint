@@ -10,6 +10,13 @@
 // silent pass CLAUDE.md has a section about.
 
 import { Palette, ScrollView, AboutSlint } from "std-widgets.slint";
+
+// The UI's one typeface, compiled into the binary so every platform draws the same glyphs. Every weight
+// a `font-weight` in these files uses has a file here; a weight without one is synthesised or falls back.
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-Medium.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/Inter-Bold.ttf";
 import { Metrics } from "metrics.slint";
 import { AppPane } from "app-settings.slint";
 import { DevicePane } from "device.slint";
@@ -67,6 +74,7 @@ export component SettingsWindow inherits Window {
     min-height: Metrics.window-minimum-height;
     preferred-height: Metrics.window-default-height;
     title: "Facet Settings";
+    default-font-family: "Inter";
     background: Palette.background;
 
     in-out property <int> active-tab: 0;

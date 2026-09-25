@@ -11,8 +11,8 @@ conditions; the acknowledgement is made because it is deserved.
 THIRD-PARTY COMPONENTS WITH THEIR OWN TERMS
 ===========================================
 
-Two things distributed with Facet are not covered by the Apache licence above.
-Anyone redistributing Facet, modified or unmodified, has to satisfy both.
+Three things distributed with Facet are not covered by the Apache licence above.
+Anyone redistributing Facet, modified or unmodified, has to satisfy all three.
 
 
 1. Slint
@@ -67,7 +67,21 @@ TimeFlip first. Without that permission, remove or replace the icons before
 sharing it on.
 
 
-3. Rust dependencies
+3. The Inter typeface
+---------------------
+
+The user interface draws its text in Inter (https://github.com/rsms/inter),
+version 4.1, Copyright (c) 2016 The Inter Project Authors. Four weights are
+compiled into the binary from crates/facet-ui/ui/fonts/.
+
+Inter is licensed under the SIL Open Font License, Version 1.1, whose full text
+is crates/facet-ui/ui/fonts/OFL.txt. That licence requires its text to
+accompany the font files wherever they are redistributed, including in source
+form, and forbids selling the fonts on their own. It places no conditions on the
+software they are bundled with, so Facet's own code stays under Apache 2.0.
+
+
+4. Rust dependencies
 --------------------
 
 Everything else Facet links is permissively licensed, overwhelmingly
