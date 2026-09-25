@@ -71,6 +71,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # Slint's font discovery (fontique) links fontconfig through yeslogic-fontconfig-sys, whose build
+      # script needs fontconfig.pc. The runner image ships the runtime library without it.
+      - name: Install the system libraries the build links
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libfontconfig1-dev
       - name: Build the core
         run: cargo build --locked
       - name: Test the core
@@ -90,6 +94,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # Slint's font discovery (fontique) links fontconfig through yeslogic-fontconfig-sys, whose build
+      # script needs fontconfig.pc. The runner image ships the runtime library without it.
+      - name: Install the system libraries the build links
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libfontconfig1-dev
       - name: Build the core
         run: cargo build --locked
       - name: Test the core
