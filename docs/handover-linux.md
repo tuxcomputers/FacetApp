@@ -49,23 +49,6 @@ shorter list and one that empties.
 
 ---
 
-## 13. Run the scripted suite on this branch as it stands, and commit the stamp
-
-**CI now needs a passing run from both machines** (`scripts/check-scripted-stamps.sh`, the
-`Scripted suite run on both machines` job, required by `All tests pass`). The Mac's stamp passes. The Linux
-stamp is refused: it records `cf9f664` on a dirty tree, and `crates/` and `Tests/Scripted/` have changed since,
-including the reformat (`088c676`) and the Mac's harness fixes.
-
-**What is wanted:**
-
-1. **Pull, commit anything outstanding, then run `Tests/Scripted/run.sh`** from a clean tree.
-2. **Commit `last-run-linux.md` straight away**, before anything else and before running again.
-3. **Check it clears the gate:** `scripts/check-scripted-stamps.sh --branch feature/faceTab` should say both
-   machines passed. Any change to `crates/` or `Tests/Scripted/` after that needs a fresh run on both.
-
-The harness changes the Mac made (`a5f92eb` to `2fa801f`) touch only macOS paths in `lib.sh` and
-`platform.sh`, but say if a Linux check moves.
-
 ## 14. The Categories tab: build it, render it, and convert `04-categories`
 
 **On `feature/catergoryTab`** (spelled as the branch is). The Categories tab now reads and writes the
