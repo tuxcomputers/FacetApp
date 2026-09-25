@@ -246,7 +246,7 @@ font rather than to the layout, and at a heading's size it came out as a dot. Dr
 viewbox, it is the size it is asked to be.
 
 **The renderer is the way to look at any of this.** `cargo run -p facet-mac --example draw-settings-tabs`
-draws each tab through Slint's software renderer into `target/settings-tabs/<tab>.png`, with no window and no
+draws each tab through Slint's software renderer into `target/settings-tabs/<n>-<tab>.png`, with no window and no
 menu bar, so a layout question does not cost a launch on the owner's screen. It is evidence about arrangement
 rather than about appearance: the fonts are rasterised by Slint and not by the platform.
 

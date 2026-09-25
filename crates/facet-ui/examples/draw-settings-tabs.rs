@@ -22,7 +22,8 @@
 //! finalise segments an earlier launch left open on an app face, as launching the app does. Without it the
 //! Faces tab draws with no categories.
 //!
-//! Writes target/settings-tabs/<tab>.png, one per tab. The default height is the one the window opens at, so
+//! Writes target/settings-tabs/<n>-<tab>.png, one per tab, numbered from 1 in tab order so a listing sorts the
+//! way the window reads. The default height is the one the window opens at, so
 //! what it draws is what somebody opening Settings sees; FACET_TAB_HEIGHT draws a taller one, which is how to
 //! see the whole of a tab that scrolls.
 
@@ -42,6 +43,9 @@ use slint::{LogicalSize, PhysicalSize, PlatformError};
 const DEFAULT_HEIGHT: u32 = 680;
 
 /// The tabs, by the index `active-tab` takes and the name the file gets.
+///
+/// **The file is prefixed with the index plus one**, so `1-faces.png` to `6-about.png` sort in tab order
+/// rather than alphabetically. The number comes from the index, so reordering the tabs renumbers the files.
 const TABS: [(i32, &str); 6] = [
     (0, "faces"),
     (1, "categories"),
@@ -100,7 +104,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         faces.refresh();
     }
 
+    // **Emptied first**, so a tab that is renamed or renumbered does not leave its old file beside the new one
+    // for `cp target/settings-tabs/*.png` to carry into docs/ as a seventh tab.
     let directory = Path::new("target/settings-tabs");
+    if directory.exists() {
+        std::fs::remove_dir_all(directory)
+            .map_err(|error| format!("{} could not be emptied: {error}", directory.display()))?;
+    }
     std::fs::create_dir_all(directory)?;
 
     let buffer = RefCell::new(vec![Rgba::default(); (width * height) as usize]);
@@ -119,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
 
-        let path = directory.join(format!("{name}.png"));
+        let path = directory.join(format!("{}-{name}.png", index + 1));
         write_png(&path, width, height, &buffer.borrow())?;
         println!("wrote {}", path.display());
     }
