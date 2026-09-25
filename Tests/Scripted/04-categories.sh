@@ -47,11 +47,31 @@ begin_rename() { open_name_field "category-name-$1"; }
 # believing it addressed the other.
 begin_retired_rename() { open_name_field "retired-category-name-$1"; }
 
-# The Inactive section folds by default and a re-read redraws it, so anything working on a retired row opens it
-# first rather than assuming the last press left it open. The whole heading is the control.
+# **One section open at a time while working in it**, because a row scrolled out of the pane is not in the tree
+# at all: Slint leaves out whatever the scroll view clips, so a row below the fold cannot be found, let alone
+# pressed. Measured 2026-09-25 on the Linux box, whose window opens 400 points tall: after the namesakes the
+# Inactive rows sat below the pane and `retired-category-active-6` was simply absent. Folding the other section
+# is what a person with a short window does too. The whole heading is the control.
+section_is_open() { tree_has "id=$1"; }
+
 show_inactive() {
-    if ! tree_has "id=retired-category-name-"; then
+    if section_is_open "category-detail-row-"; then
+        press categories-active-section-heading
+        sleep 1
+    fi
+    if ! section_is_open "retired-category-row-"; then
         press categories-inactive-section-heading
+        sleep 1
+    fi
+}
+
+show_active() {
+    if section_is_open "retired-category-row-"; then
+        press categories-inactive-section-heading
+        sleep 1
+    fi
+    if ! section_is_open "category-detail-row-"; then
+        press categories-active-section-heading
         sleep 1
     fi
 }
@@ -203,6 +223,7 @@ press "retired-category-active-$ID"
 sleep 1
 expect_log "ticking it there brings it back" "$since" "%$RENAMED reinstated"
 check "the table says active" "1" "$(sql "SELECT active FROM category WHERE category_id = $ID;")"
+show_active
 check_contains "and its row is back on the active table" "$(tree)" "id=category-name-$ID "
 
 # **A retired category keeps everything.** Nothing above deleted a row, which is the point of retiring.
@@ -217,6 +238,7 @@ check "its name survived the round trip" "$RENAMED" "$(sql "SELECT category_name
 # Creates a category and retires it, leaving exactly one retired row under `name`. Prints its id.
 make_retired() {
     local name="$1" id
+    show_active
     press create-category
     sleep 0.5
     set_field category-name-field "$name"
@@ -230,6 +252,7 @@ make_retired() {
 
 # Types `name` into the create control and saves it, which is what raises the notice.
 ask_about() {
+    show_active
     press create-category
     sleep 0.5
     set_field category-name-field "$1"
@@ -301,6 +324,7 @@ check "and the notice is gone" "no" "$(alert_is_open && echo yes || echo no)"
 # ---------------------------------------------------------------------------- several namesakes, two ways
 
 active_create_new=$(sql "SELECT category_id FROM category WHERE category_name = '$CREATE_NEW' AND active = 1;")
+show_active
 press "category-active-$active_create_new"
 sleep 1
 check "retiring the newer one leaves two deactivated under the name" "2 rows, 0 active" "$(tally "$CREATE_NEW")"
@@ -451,6 +475,7 @@ check "so it is still retired" "0" "$(sql "SELECT active FROM category WHERE cat
 # Both open over the pane and both write to the table. `0` is the seeded *None* row rather than a null, which is
 # how either is cleared while the foreign key still holds. Picking the one already chosen is what clears it.
 
+show_active
 press "category-colour-$ID"
 sleep 0.8
 check_contains "the colour list opens" "$(tree)" "id=colour-option-Red"
