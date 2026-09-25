@@ -13,16 +13,17 @@ Then copy the six files into the folder for the machine you are on.
 
 | | |
 |---|---|
-| [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11. Rendered 2026-09-25 at `cf58ebd` |
-| [`mac/`](mac/) | macOS 26.6.2, Apple silicon. Rendered 2026-09-25 at `26b9f40`, **with Inter packaged** |
-| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. **Stale**: both halves predate Inter, and it is rebuilt once `linux/` is re-rendered |
+| [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11, `x86_64`. Rendered 2026-09-25 at `759684b`, **with Inter packaged** |
+| [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-25 at `26b9f40`, **with Inter packaged** |
+| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-25; **every diff panel is empty** |
 
 **These are Slint's software renderer, not screenshots of the running app.** It draws into a buffer with
 no window server involved, so window chrome and compositing are out of the comparison.
 
-**Fonts are not.** The renderer rasterises the glyphs itself but takes the typeface from the system's font
-stack, unless the UI packages its own, which it now does: `facet-ui` compiles Inter into the binary. So a difference between two folders is a difference in layout *or*
-in the font each machine supplied, and `compare/` shows which.
+**Fonts were not, until Inter was packaged.** The renderer rasterises the glyphs itself but took the
+typeface from the system's font stack, which is what the first comparison caught. `facet-ui` now compiles
+Inter into the binary, so both machines draw the same face and a difference between two folders can only
+be a difference in layout.
 
 **What they cannot answer**: how the real window looks. Window chrome is the platform's, so running the
 real app on each is worth doing as well, and it needs somebody at the screen on both.
@@ -32,6 +33,31 @@ the point is a comparison made once, written up in
 [`port-findings.md`](../port-findings.md), and then these stop being load-bearing. **Do not treat a stale
 image here as evidence about a window that has changed since.** The date above is the date the answer is
 about; re-render rather than trusting them if the `.slint` sources have moved on.
+
+## The answer: identical, byte for byte
+
+**Measured 2026-09-25, Mac `26b9f40` against Linux `759684b`, both with Inter packaged.** The two sets are
+not merely alike:
+
+| | |
+|---|---|
+| Pixels differing by any amount | **0**, on all six tabs |
+| Greatest single-channel delta | **0** |
+| MD5 of each PNG | **identical**, Mac and Linux |
+| SHA-256 of the decoded RGB buffers | **identical** |
+
+**Not one pixel of anti-aliasing separates them**, which is a stronger result than the comparison was set
+up to detect: the `compare/` threshold exists to ignore edge noise and there is none to ignore. An
+`arm64` Mac and an `x86_64` Linux box produced the same file.
+
+**What that shows is that the shared UI is genuinely shared.** One set of `.slint` sources, one packaged
+typeface and one software renderer produce the same drawing on both platforms, so requirement 4 in
+[`rust-port.md`](../rust-port.md) is met in fact rather than only structurally. It also means a rendered
+tab can be treated as a reference: a future change that moves the layout on one machine and not the other
+shows up as a non-empty diff panel.
+
+**Two things it still does not cover.** Window chrome, and the real window's font rasterisation, which is
+the platform's rather than the renderer's. Both want the app open on each machine with somebody there.
 
 ## The comparison images
 

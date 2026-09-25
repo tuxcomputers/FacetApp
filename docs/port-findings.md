@@ -410,6 +410,50 @@ against a locked keychain prompts and can unlock it, so it cannot be used to che
 on. What settled it instead was watching for the `SecurityAgent` process during the read, which needs
 nobody to report what they saw.
 
+## The shared Settings window renders identically on both platforms, once a font is packaged
+
+**Measured 2026-09-25**, Mac `arm64` against Linux `x86_64`, both through Slint's software renderer via
+`cargo run -p facet-ui --example draw-settings-tabs`. Images and method in
+[`settings-tabs/`](settings-tabs/).
+
+**The first comparison did not match, and the difference was entirely the font.** Every horizontal
+measurement agreed to the pixel -- 640 x 680 tabs, the tab rule at y 44, the App panel at x 22 to 618,
+the stepper arrows at x 537-568 on all three rows. What differed was the typeface: the software renderer
+rasterises glyphs itself but **took the family from the host's font stack**, so the Mac drew a
+Helvetica-style face and Linux drew Noto Sans, which is wider and taller. The height difference
+accumulated down each tab and pushed the last panel up to **18px** lower on Linux.
+
+**So the layout was shared and the font was not.** Packaging one fixed it: `facet-ui` compiles Inter 4.1
+into the binary as four static weights, with `default-font-family: "Inter"` in `settings.slint`.
+
+**After that the two sets are byte-identical:**
+
+| | |
+|---|---|
+| Pixels differing by any amount | **0**, on all six tabs |
+| MD5 of each PNG, Mac against Linux | **identical** |
+
+**Not one pixel of anti-aliasing separates them**, which is stronger than the comparison was built to
+detect: its diff threshold exists to ignore edge noise and there was none to ignore. Two different
+instruction sets produced the same file.
+
+**Three things follow:**
+
+- **Requirement 4 is met in fact rather than structurally.** One set of `.slint` sources compiled into
+  two composition roots really does draw the same window, which is the claim the choice of Rust and Slint
+  rested on and had not been checked.
+- **A UI toolkit that draws its own widgets still does not draw its own text.** Slint's software renderer
+  is deterministic across architectures, and the one thing it delegated was the one thing that differed.
+  **Anything wanting identical output has to package its typeface**, and this is the measurement that
+  says so rather than an assumption about fonts.
+- **A rendered tab is now usable as a reference.** A change that moves the layout on one machine and not
+  the other shows up as a non-empty diff panel, which is a cheap check nobody had before.
+
+**What it does not cover**, and neither is a small caveat: **window chrome**, which is the platform's,
+and **the real window's font rasterisation**, which is fontconfig against Core Text rather than the
+software renderer. Both need the app open on each machine with somebody at the screen. The packaged font
+removes the *family* as a variable there too, but not the rasteriser.
+
 ## Design rules that follow from all of the above
 
 Short list, all of them enforceable from the first commit.
