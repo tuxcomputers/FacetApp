@@ -6,16 +6,23 @@ compared rather than asserted. This answers item 7 of
 structurally true is not the same as true.
 
 ```sh
-cargo run -p facet-ui --example draw-settings-tabs   # writes target/settings-tabs/
+scripts/switch-database.sh test -clean
+FACET_DATABASE="<data directory>/appdata.sqlite" cargo run -p facet-ui --example draw-settings-tabs
 ```
 
-Then copy the six files into the folder for the machine you are on.
+Then copy the six files into the folder for the machine you are on. The data directory is
+`~/Library/Application Support/Facet` on the Mac and `~/.local/share/Facet` on Linux.
+
+**The Faces tab is drawn from a freshly built test database**, so both machines render the same rows: the
+seeded Break and Meeting, with their icons, and nothing being timed. Without `FACET_DATABASE` the tab draws
+no categories at all, and a database with anything else in it draws something the other machine cannot
+reproduce.
 
 | | |
 |---|---|
 | [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11, `x86_64`. Rendered 2026-09-25 at `759684b`, **with Inter packaged** |
-| [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-25 at `26b9f40`, **with Inter packaged** |
-| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-25; **every diff panel is empty** |
+| [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-25 on `feature/faceTab` at `030f2ce`, against a clean test database |
+| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-25; every diff panel was empty. **Stale for `faces.png`**: the Faces tab has changed since, and `linux/` has not been re-rendered with it |
 
 **These are Slint's software renderer, not screenshots of the running app.** It draws into a buffer with
 no window server involved, so window chrome and compositing are out of the comparison.
