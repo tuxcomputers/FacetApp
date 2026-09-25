@@ -465,7 +465,15 @@ platform_menu_item() {
             while IFS= read -r title; do
                 [ -z "$title" ] && continue
                 # The title followed by two spaces or the end of the line, so that `Lock` cannot match `Unlock`.
-                printf '%s\n' "$menu" | grep -m1 -E "title=$title(  |\$)" && return 0
+                # Printed in the shape `tray-menu.py` prints on Linux, the title quoted and `(insensitive)`
+                # after a disabled item, so a check reads the same line on both platforms.
+                local line
+                line=$(printf '%s\n' "$menu" | grep -m1 -E "title=$title(  |\$)") || continue
+                case "$line" in
+                    *"  disabled"*) printf "%s   '%s'   (insensitive)\n" "$line" "$title" ;;
+                    *)              printf "%s   '%s'\n" "$line" "$title" ;;
+                esac
+                return 0
             done <<EOF
 $titles
 EOF
