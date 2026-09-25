@@ -1,0 +1,252 @@
+// The Faces tab: a wide left column for the thing being timed, and a narrow right column for the categories
+// to pick from.
+//
+// **Two arrangements, one layout.** With nothing paired the left column is the play/pause control alone;
+// following a cube it is the device drawn from above, the face it is resting on, and the lock on that face.
+// Both occupy the same square, so the column keeps its proportions either way rather than being two layouts
+// that happen to sit in one pane. Nothing is paired yet, so this draws the first of them.
+//
+// **The square is what everything in the column is sized from.** The column's width defines it and the glyph,
+// the figure under the glyph and the gap between them are fractions of it, so the group stays in proportion as
+// the window is resized rather than being a set of fixed points that only look right at one width.
+//
+// **The right column's list is deliberately not tinted**, unlike every panel on the Categories, App and Device
+// tabs. That is the Swift app's own split: a pick list is part of the page, and a panel of settings is a thing
+// on it.
+//
+// Nothing here reads and nothing here writes. The categories are the same placeholders the Categories tab
+// draws, and the clock is stopped.
+
+import { Palette, Button, ScrollView } from "std-widgets.slint";
+import { Metrics } from "metrics.slint";
+import { Swatch, Footnote } from "widgets.slint";
+import { CategoryRow } from "categories.slint";
+
+// The play/pause control, which is what the column holds when there is no cube to draw.
+//
+// **The glyph takes the category's colour; nothing behind it does.** It stands where the lit device would be,
+// and the device is what carries colour as a body, so a filled tile here would be inventing an object that is
+// not in the design.
+component PlayPauseGlyph inherits Rectangle {
+    in property <bool> running: false;
+    in property <color> colour;
+    in property <length> side;
+
+    width: root.side;
+    height: root.side;
+
+    accessible-role: button;
+    accessible-id: "timing-play-pause";
+    accessible-label: root.running ? "Pause" : "Play";
+    accessible-action-default => { root.pressed(); }
+
+    callback pressed();
+
+    if !root.running: Path {
+        width: root.side;
+        height: root.side;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M 20 8 L 88 50 L 20 92 Z";
+        fill: root.colour;
+    }
+
+    if root.running: HorizontalLayout {
+        spacing: root.side * 0.22;
+        padding-left: root.side * 0.16;
+        padding-right: root.side * 0.16;
+        Rectangle { background: root.colour; border-radius: root.side * 0.04; }
+        Rectangle { background: root.colour; border-radius: root.side * 0.04; }
+    }
+
+    TouchArea { clicked => { root.pressed(); } }
+}
+
+// One category as a row of the pick list. **The whole row is the control**: clicking one is how a category is
+// picked, so making somebody aim at a smaller target inside it would be the triangle-versus-heading mistake.
+component PickRow inherits Rectangle {
+    in property <CategoryRow> category;
+
+    height: 36px;
+
+    accessible-role: button;
+    accessible-id: "category-row-" + root.category.id;
+    accessible-label: root.category.name;
+    accessible-action-default => { root.picked(); }
+
+    callback picked();
+
+    background: touch.has-hover ? Palette.alternate-background : transparent;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 12px;
+
+        Rectangle {
+            width: 28px;
+            Swatch { colour: root.category.colour; size: 28px; radius: 6px; }
+        }
+
+        Text {
+            text: root.category.name;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Palette.foreground;
+        }
+    }
+
+    touch := TouchArea { clicked => { root.picked(); } }
+}
+
+export component FacesPane inherits Rectangle {
+    in property <[CategoryRow]> categories: [
+        { id: 1, name: "Meeting", colour: #0000ff, daily-limit: 0, last-used: "" },
+        { id: 2, name: "Code", colour: #008000, daily-limit: 0, last-used: "" },
+        { id: 3, name: "Admin", colour: #ffa500, daily-limit: 120, last-used: "" },
+        { id: 4, name: "Email", colour: #800080, daily-limit: 0, last-used: "" },
+        { id: 5, name: "Break", colour: #808080, daily-limit: 0, last-used: "" },
+    ];
+
+    // What is being timed, and for how long. Stopped, there being no clock behind it yet, and the figure
+    // carries seconds because the seeded `display_seconds` is on.
+    in property <bool> running: false;
+    in property <string> timing-category: "Nothing";
+    in property <color> timing-colour: #8e8e93;
+    in property <string> elapsed: "0:00:00";
+
+    accessible-role: tab-panel;
+    accessible-id: "settings-pane-faces";
+    accessible-label: "Faces";
+
+    // The left column is twice the width of the right, expressed as a ratio between the two rather than as a
+    // fraction of the pane, so it needs nothing measured and holds by itself as the window is resized.
+    property <length> gutter: 24px;
+    property <length> content-width: root.width - 2 * Metrics.tab-padding;
+    property <length> right-width: (root.content-width - root.gutter) / 3;
+    property <length> left-width: root.right-width * 2;
+
+    HorizontalLayout {
+        padding: Metrics.tab-padding;
+        spacing: root.gutter;
+        alignment: start;
+
+        // The Timing column.
+        VerticalLayout {
+            width: root.left-width;
+            spacing: Metrics.heading-spacing;
+            alignment: start;
+
+            Text {
+                text: "Timing";
+                font-size: Metrics.heading-font-size;
+                font-weight: 700;
+                color: Palette.foreground;
+                accessible-role: AccessibleRole.text;
+                accessible-id: "faces-timing-heading";
+                accessible-label: "Timing";
+            }
+
+            // The square, and everything in it sized from its side.
+            Rectangle {
+                height: root.left-width;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: root.left-width * 0.29 * 0.12;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        PlayPauseGlyph {
+                            running: root.running;
+                            colour: root.timing-colour;
+                            side: root.left-width * 0.29;
+                        }
+                    }
+
+                    Text {
+                        text: root.elapsed;
+                        horizontal-alignment: center;
+                        font-size: root.left-width * 0.29 * 0.3;
+                        font-weight: 500;
+                        color: Palette.foreground;
+                        opacity: 0.6;
+                        accessible-role: AccessibleRole.text;
+                        accessible-id: "timing-elapsed";
+                        accessible-label: root.elapsed;
+                    }
+                }
+            }
+
+            // Under the square, set large enough to fill the space the squared-off graphic leaves at the
+            // bottom of the column.
+            Text {
+                text: root.timing-category;
+                horizontal-alignment: center;
+                font-size: 40px;
+                font-weight: 600;
+                overflow: elide;
+                color: Palette.foreground;
+                accessible-role: AccessibleRole.text;
+                accessible-id: "timing-category-name";
+                accessible-label: root.timing-category;
+            }
+        }
+
+        // The Categories column.
+        VerticalLayout {
+            width: root.right-width;
+            spacing: Metrics.heading-spacing;
+            alignment: start;
+
+            Text {
+                text: "Categories";
+                font-size: Metrics.heading-font-size;
+                font-weight: 700;
+                color: Palette.foreground;
+                accessible-role: AccessibleRole.text;
+                accessible-id: "faces-categories-heading";
+                accessible-label: "Categories";
+            }
+
+            Rectangle {
+                background: Palette.control-background;
+                border-radius: Metrics.corner-radius;
+                border-width: 1px;
+                border-color: Palette.border;
+                clip: true;
+
+                accessible-role: list;
+                accessible-id: "category-list";
+                accessible-label: "Categories";
+
+                VerticalLayout {
+                    alignment: start;
+
+                    for category[index] in root.categories: VerticalLayout {
+                        // Between rows and never above the first: a line under the last row would be a line
+                        // with nothing beneath it.
+                        if index > 0: Rectangle { height: 1px; background: Palette.border; }
+                        PickRow { category: category; }
+                    }
+                }
+            }
+
+            // Under the list, at the column's leading edge, following it rather than sitting at the bottom of
+            // the column: a short list keeps the button near what it adds to.
+            //
+            // Full column width, unlike the button it collapses to: the name field stretches into it and Save
+            // rides at the far end.
+            HorizontalLayout {
+                alignment: start;
+                Button { text: "Create"; accessible-id: "create-category"; }
+            }
+
+            Footnote {
+                note-id: "faces-placeholder-note";
+                text: "Placeholder categories, and the clock is stopped. This app does not open the database "
+                    + "or the radio yet.";
+            }
+        }
+    }
+}

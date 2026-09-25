@@ -1,0 +1,273 @@
+// The Device tab: what the app knows about a cube, the way to go and find one, and the settings that live on
+// one.
+//
+// **Two sections, as the Swift app has them.**
+//
+// - **TimeFlip** is the cube itself: what the app knows about it, and what to press to get one. Its rows say
+//   plainly when the answer is that it knows nothing, and under them sit the controls that change with the
+//   state, Scan while there is nothing paired and Forget and Reset once there is.
+// - **Settings** are what the cube is set to: stored here and sent to it on connect, so they are readable and
+//   meaningful with no cube present, which is why they are drawn rather than hidden.
+//
+// **The whole Settings section is dead while no cube is connected**, every row of it, including the two that
+// no command carries. It is a section about a cube, so it answers the question about a cube the same way in
+// every row; a row staying live because of how it happens to be stored would ask somebody to work out which
+// kind each row is. Nothing is paired yet, so this tab draws that state and the section is dead throughout.
+//
+// Nothing here reads and nothing here writes. The numbers are what the DDL seeds and the words are what
+// `DeviceInfoRules` says for an unpaired app, stated as `in` properties so that wiring this up later is
+// setting them.
+
+import { CheckBox, Button, ScrollView } from "std-widgets.slint";
+import { Metrics } from "metrics.slint";
+import { Panel, SectionHeading, SettingsRow, StepperField, ValueText, Footnote } from "widgets.slint";
+
+export component DevicePane inherits Rectangle {
+    // Seeded `paired` is false, and every reading below is what that state reads as.
+    in property <bool> paired: false;
+    in property <string> device-name: "Not paired";
+    in property <string> connection: "Manual mode, no device";
+    in property <string> battery: "Not paired";
+    in property <string> manufacturer: "Not paired";
+    in property <string> model: "Not paired";
+    in property <string> hardware: "Not paired";
+    in property <string> firmware: "Not paired";
+    // Says what the radio is doing, and it is not decoration: an empty list means "nothing found",
+    // "Bluetooth is off" and "not allowed to use Bluetooth" all at once, and those want three different
+    // things done about them.
+    in property <string> scan-status: "";
+
+    // Seeded `pause_on_lock`, `low_battery_level`, `auto_pause_minutes` and `led_settings`.
+    in property <bool> pause-on-lock: true;
+    in property <int> battery-warning-percent: 10;
+    in property <int> auto-pause-minutes: 0;
+    in property <int> led-brightness-percent: 50;
+    in property <int> led-blink-seconds: 15;
+
+    // Every row of the Settings section is dead together, decided in one place for all of them.
+    in property <bool> cube-connected: false;
+
+    property <bool> timeflip-expanded: true;
+    property <bool> settings-expanded: true;
+    property <bool> more-expanded: false;
+    property <bool> led-expanded: false;
+
+    accessible-role: tab-panel;
+    accessible-id: "settings-pane-device";
+    accessible-label: "Device";
+
+    ScrollView {
+        // **The content is as wide as the view, not as wide as it would like to be.** Left to itself a scroll
+        // view sizes its viewport to the content's preferred width, and a wrapped footnote prefers the width of
+        // its whole sentence on one line. It then measured one line tall, wrapped to two at the real width, and
+        // the second line sat outside the panel it belongs to.
+        content-width: self.visible-width;
+
+        VerticalLayout {
+            padding: Metrics.tab-padding;
+            spacing: Metrics.section-spacing;
+            alignment: start;
+
+            Panel {
+                panel-id: "device-timeflip-section-panel";
+                label: "TimeFlip";
+
+                SectionHeading {
+                    title: "TimeFlip";
+                    heading-id: "device-timeflip-section-heading";
+                    expanded <=> root.timeflip-expanded;
+                }
+
+                if root.timeflip-expanded: VerticalLayout {
+                    spacing: Metrics.row-spacing;
+
+                    SettingsRow {
+                        label: "Name";
+                        ValueText { text: root.device-name; value-id: "device-name"; }
+                    }
+                    SettingsRow {
+                        label: "Connection";
+                        ValueText { text: root.connection; value-id: "device-connection"; }
+                    }
+                    SettingsRow {
+                        label: "Battery";
+                        ValueText { text: root.battery; value-id: "device-battery"; }
+                    }
+
+                    // **Folded, because four strings a cube reports about itself are the tab's least urgent
+                    // fact.** A row of the list rather than a panel of its own: the panel is already there, so
+                    // there is nothing of this group's own to close.
+                    SectionHeading {
+                        title: "More";
+                        heading-id: "device-more";
+                        nested: true;
+                        expanded <=> root.more-expanded;
+                    }
+                    if root.more-expanded: VerticalLayout {
+                        padding-left: Metrics.nested-indent;
+                        spacing: Metrics.row-spacing;
+
+                        SettingsRow {
+                            label: "Manufacturer";
+                            ValueText { text: root.manufacturer; value-id: "device-manufacturer"; }
+                        }
+                        SettingsRow {
+                            label: "Model";
+                            ValueText { text: root.model; value-id: "device-model"; }
+                        }
+                        SettingsRow {
+                            label: "Hardware";
+                            ValueText { text: root.hardware; value-id: "device-hardware"; }
+                        }
+                        SettingsRow {
+                            label: "Firmware";
+                            ValueText { text: root.firmware; value-id: "device-firmware"; }
+                        }
+                    }
+
+                    // **What the section offers changes with whether there is a cube.** Scan and All Devices
+                    // while there is nothing paired, Forget and Reset once there is: a scan sitting beside a
+                    // cube that is already paired is offering to solve a problem nobody has.
+                    //
+                    // The status sits on the button's own row at the trailing edge, because it is the answer
+                    // to the question the button asks, and because a row of its own made the panel taller by
+                    // an empty line whenever there was nothing to say.
+                    HorizontalLayout {
+                        spacing: Metrics.column-spacing;
+                        padding-top: 11px;
+                        padding-bottom: 11px;
+
+                        if !root.paired: Button {
+                            text: "Scan for Devices";
+                            accessible-id: "device-scan";
+                        }
+                        // **A filtered scan is the default and this is the way out of it.** The filter matches
+                        // the vendor name and the names this cube has carried, which is also what hides a cube
+                        // whose name the app has never seen.
+                        if !root.paired: CheckBox {
+                            text: "All Devices";
+                            accessible-id: "device-scan-all";
+                        }
+                        if root.paired: Button { text: "Forget Device"; accessible-id: "device-forget"; }
+                        if root.paired: Button { text: "Reset Device"; accessible-id: "device-reset"; }
+
+                        Rectangle { horizontal-stretch: 1; }
+
+                        // The words give way before the controls do: a window too narrow for both shortens the
+                        // message, not the button that starts the scan.
+                        ValueText { text: root.scan-status; value-id: "device-scan-status"; }
+                    }
+
+                    // The found devices go here, one row each, the whole row being the button. Empty until a
+                    // scan has found something, and absent rather than empty so it leaves no gap.
+                }
+            }
+
+            Panel {
+                panel-id: "device-settings-section-panel";
+                label: "Device settings";
+
+                SectionHeading {
+                    title: "Settings";
+                    heading-id: "device-settings-section-heading";
+                    expanded <=> root.settings-expanded;
+                }
+
+                if root.settings-expanded: VerticalLayout {
+                    spacing: Metrics.row-spacing;
+
+                    // Says what the app does to the cube when it locks it: the lock drives the pause, not the
+                    // other way round. No command carries it, so the whole of writing it is the table taking
+                    // it, and it is here rather than on the App tab because it is about the cube.
+                    SettingsRow {
+                        label: "Pause the device when locking it";
+                        dimmed: !root.cube-connected;
+                        CheckBox {
+                            checked: root.pause-on-lock;
+                            enabled: root.cube-connected;
+                            accessible-id: "device-pause-on-lock";
+                        }
+                    }
+
+                    SettingsRow {
+                        label: "Battery warning at";
+                        dimmed: !root.cube-connected;
+                        StepperField {
+                            value: root.battery-warning-percent;
+                            minimum: 1;
+                            maximum: 20;
+                            suffix: "%";
+                            enabled: root.cube-connected;
+                            field-id: "device-battery-warning";
+                        }
+                    }
+
+                    // **The label states the ceiling and takes it from the same place the field does**, so it
+                    // cannot come to promise a limit the wire does not keep. 0 disables it, which is the
+                    // vendor protocol's own disabled-by-default behaviour.
+                    SettingsRow {
+                        label: "Auto-pause (0 disable, max 240m)";
+                        dimmed: !root.cube-connected;
+                        StepperField {
+                            value: root.auto-pause-minutes;
+                            minimum: 0;
+                            maximum: 240;
+                            suffix: "min";
+                            enabled: root.cube-connected;
+                            field-id: "device-auto-pause";
+                        }
+                    }
+
+                    SectionHeading {
+                        title: "LED";
+                        heading-id: "device-led";
+                        nested: true;
+                        expanded <=> root.led-expanded;
+                    }
+                    if root.led-expanded: VerticalLayout {
+                        padding-left: Metrics.nested-indent;
+                        spacing: Metrics.row-spacing;
+
+                        // **Arrows rather than a slider**, which is the Swift app's finding and worth keeping
+                        // the reason for: a slider commits a value per pixel of travel, and one brightness
+                        // drag logged thirty-odd changes, every one of them a device write.
+                        SettingsRow {
+                            label: "Brightness";
+                            dimmed: !root.cube-connected;
+                            StepperField {
+                                value: root.led-brightness-percent;
+                                minimum: 1;
+                                maximum: 100;
+                                suffix: "%";
+                                enabled: root.cube-connected;
+                                field-id: "device-led-brightness";
+                            }
+                        }
+                        SettingsRow {
+                            label: "Blink Interval";
+                            dimmed: !root.cube-connected;
+                            StepperField {
+                                value: root.led-blink-seconds;
+                                minimum: 5;
+                                maximum: 60;
+                                suffix: "sec";
+                                enabled: root.cube-connected;
+                                field-id: "device-led-blink";
+                            }
+                        }
+                    }
+
+                    // **Not the Swift app's, and it is the one piece of wording here that is an addition.** Its
+                    // Settings section goes dead with no cube and says nothing about why. Every row being
+                    // greyed with no reason given reads as a fault rather than as a state, so this says which.
+                    // Inside the panel rather than under it: it has no reason to outlive its section.
+                    if !root.cube-connected: Footnote {
+                        note-id: "device-settings-gate-note";
+                        text: "These are what the cube is set to, and they are sent to it on connect. There is "
+                            + "no cube paired, so there is nothing to send them to yet.";
+                    }
+                }
+            }
+        }
+    }
+}

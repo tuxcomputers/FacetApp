@@ -1,0 +1,6 @@
+# Lines wrap at 110, the width the comments and code in this tree are written to.
+max_width = 110
+
+# Every width heuristic (struct literals, call arguments, chains, single-line ifs) takes the full
+# max_width, so `Showing { paused: false, locked: false }` stays on one line wherever it fits.
+use_small_heuristics = "Max"

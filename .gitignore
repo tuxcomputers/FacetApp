@@ -1,0 +1,15 @@
+/target/
+probe/*/target/
+**/*.rs.bk
+*.pdb
+
+# The console's OAuth download, and the copy the build bundles. See docs/google-oauth-setup.md.
+google-client.json
+
+# Local databases and run artefacts
+*.sqlite-shm
+*.sqlite-wal
+/logs/
+/dist/
+
+.DS_Store

@@ -1,0 +1,10 @@
+[package]
+name = "facet-core"
+description = "Platform-blind core. No platform crate may appear in these dependencies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rusqlite.workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "facet-linux"
+description = "Composition root and platform adapters for linux."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+facet-core.workspace = true
+facet-ui.workspace = true
+slint.workspace = true
+
+# **The tray, and not tray-icon.** tray-icon's Linux backend is libappindicator, which emits no click
+# events at all and offers no ksni option, so the design this app wants is not merely awkward there but
+# foreclosed. See docs/port-findings.md. This is the one place the three platforms do not share a crate.
+#
+# **The features are not a preference and must match Slint's.** slint 1.18 enables `system-tray` by
+# default, which pulls this same ksni on Linux with `async-io` and `blocking`. Cargo unifies features
+# across the graph, so asking for ksni's default `tokio` here enables both async backends at once and
+# ksni refuses to compile: *Features "tokio" and "async-io" cannot be enabled at the same time*. Measured
+# 2026-09-22; see docs/port-findings.md. Taking `blocking` as well is what lets the service be started
+# with an ordinary function call and no async runtime in this crate at all.
+ksni = { workspace = true, default-features = false, features = ["async-io", "blocking"] }

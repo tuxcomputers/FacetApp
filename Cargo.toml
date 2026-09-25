@@ -1,0 +1,70 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/facet-core",
+    "crates/facet-ui",
+    "crates/facet-mac",
+    "crates/facet-linux",
+    "crates/facet-windows",
+]
+
+# A bare `cargo build` builds the two crates that compile anywhere. The three platform crates are each
+# buildable on exactly one machine, a Mac not being able to compile the BlueZ or WinRT adapters, so build
+# the one for the machine you are on explicitly: `cargo build -p facet-mac`.
+#
+# **facet-ui is in here deliberately.** It is the shared Settings window, so a broken `.slint` file is a
+# break on all three platforms, and a bare `cargo build` on any machine should be what catches it rather
+# than whichever composition root happens to be built next.
+default-members = ["crates/facet-core", "crates/facet-ui"]
+
+# The probes are standalone programs, kept because a measurement is worth more with the thing that
+# produced it beside it. They resolve their own dependencies rather than the app's, so a re-run is not
+# tied to whatever the app is pinned to. Their lockfiles are gitignored, so a re-run resolves fresh and
+# may not use the versions the transcript in each README was produced with. btleplug 0.13.1 and slint
+# 1.18.0 last built 2026-09-20; keyring 4.2.0 built and run 2026-09-22.
+exclude = ["probe/timeflip-btleplug", "probe/slint-editable-table", "probe/keyring-secret-service"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/tuxcomputers/FacetApp"
+
+# Pinned here so every crate agrees, and so the decisions in docs/rust-port.md are visible in one
+# place rather than spread across four manifests.
+#
+# Resolved against crates.io on 2026-09-20 with cargo 1.98.1. The two marked measured are the ones a
+# probe in probe/ was actually built and run with; the rest exist at these versions and have not been
+# compiled into anything yet.
+[workspace.dependencies]
+facet-core = { path = "crates/facet-core" }
+facet-ui = { path = "crates/facet-ui" }
+
+# measured: probe/timeflip-btleplug drove the real cube with these
+btleplug = "0.13.1"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+uuid = "1.26.1"
+futures = "0.3.34"
+
+# measured: probe/slint-editable-table
+slint = "1.18.0"
+slint-build = "1.18.0"
+
+# chosen in docs/rust-port.md, not yet built against
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+tray-icon = "0.24.2"   # not 0.25: it wants muda 0.20 while slint pins 0.19, and two mudas means two ObjC classes of the same name
+# The Linux tray backend: AppIndicator emits no click events at all.
+#
+# **`default-features = false` is load-bearing and is here rather than in facet-linux**, because a member
+# cannot turn a workspace dependency's defaults off. ksni's default is `tokio`; slint 1.18 enables
+# `system-tray` by default, which pulls this same crate with `async-io` and `blocking`; and cargo unifies
+# features across the graph, so taking the default here enables both async backends at once and ksni
+# refuses to compile. facet-linux names the two features it wants. Measured 2026-09-22.
+ksni = { version = "0.3.6", default-features = false }
+# **Measured, and it raises a question the port has to answer.** probe/keyring-secret-service round-trips
+# a secret through the live Secret Service with this version. It also records what keyring's own docs say:
+# an application that wants to choose its store per platform "should not be linking to this library at
+# all" and should take keyring-core plus a specific store instead. That is a description of this app, so
+# the secret store port decides whether this line stays. Nothing depends on it yet.
+keyring = "4.2.0"
+sha2 = "0.11.0"

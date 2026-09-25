@@ -1,0 +1,35 @@
+[package]
+name = "facet-mac"
+description = "Composition root and platform adapters for macOS."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+facet-core.workspace = true
+facet-ui.workspace = true
+# **`renderer-software` here is redundant and always was**: slint enables it by default. It was named for
+# examples/draw-settings-tabs.rs, which moved to facet-ui on 2026-09-25 because nothing in it is about
+# macOS. Left on the line rather than removed, the Linux box being unable to compile this crate to check
+# that taking it off changes nothing; it is safe to simplify to `slint.workspace = true` from the Mac.
+slint = { workspace = true, features = ["renderer-software"] }
+tray-icon.workspace = true
+
+[build-dependencies]
+# Rasterises Facet.svg into the Dock icon at build time, so there is one drawing and no generated PNG in
+# the repository to drift from it. Already in the tree: it is the renderer Slint uses for SVG images.
+#
+# No slint-build here any more: the Settings window is facet-ui's, compiled once for every platform.
+resvg = "0.48.1"
+
+# Matching the versions tray-icon already pins, so no second copy of either is pulled in.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3"
+
+# Only for examples/draw-status-icons.rs, which renders the menu bar icon to a file so it can
+# be looked at without launching the app.
+[dev-dependencies]
+png = "0.18"

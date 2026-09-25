@@ -1,0 +1,50 @@
+// Every number the look of a Settings tab is made of, in one place.
+//
+// **Carried across from the Swift app's `SettingsMetrics`**, value for value, and for the reason that type
+// exists: three tabs that each kept their own copies drifted apart, and a 46pt row ended up sitting beside a
+// 32pt one. Reading them from here is what stops that happening a second time.
+//
+// A number changed here changes every tab, which is the point. Anything a single tab needs on its own stays
+// in that tab's file, named for what it is.
+
+export global Metrics {
+    // The height of one row, and the rhythm a list of plain rows reads at. A floor rather than an exact
+    // height: a row holding something taller is as tall as its contents.
+    out property <length> row-height: 24px;
+
+    // Between one row and the next. Whitespace, never a line: the Swift app took its hairlines out once the
+    // gap was doing the dividing on its own.
+    out property <length> row-spacing: 8px;
+
+    // Inside a panel, around the heading and the rows on it.
+    out property <length> panel-padding: 8px;
+
+    out property <length> corner-radius: 8px;
+
+    // Between the columns of a row that has several.
+    out property <length> column-spacing: 12px;
+
+    // Between a heading and what sits under it.
+    out property <length> heading-spacing: 12px;
+
+    // Between one section's panel and the next section's heading.
+    out property <length> section-spacing: 16px;
+
+    // Around the whole tab, between its content and the window.
+    out property <length> tab-padding: 20px;
+
+    // How far a fold's contents are indented past the heading that opens them.
+    out property <length> nested-indent: 16px;
+
+    // Between a disclosure triangle and the word beside it.
+    out property <length> title-spacing: 4px;
+
+    // The one width the Settings window ever has.
+    out property <length> window-width: 640px;
+    out property <length> window-default-height: 680px;
+    out property <length> window-minimum-height: 400px;
+
+    out property <length> body-font-size: 13px;
+    out property <length> heading-font-size: 13px;
+    out property <length> footnote-font-size: 11px;
+}

@@ -1,0 +1,195 @@
+// Does a Slint list survive being edited while its model is changing underneath?
+//
+// **The question open question 4 of docs/rust-port.md is really asking.** The pretty prototype was static,
+// and a static prototype flatters any toolkit. The real Categories and Faces tabs have editable cells over
+// rows that a database drives, and the Faces tab's Timing column ticks every second while somebody could be
+// renaming a category on the row above.
+//
+// CLAUDE.md states the rule this has to satisfy: a value being typed into is not re-read underneath whoever
+// is typing, because that "clamps 1 on the way to 15". In AppKit that is guaranteed by the field being a
+// view that owns its own text. In Slint the rows come from a ModelRc and an update goes through
+// set_row_data, which re-evaluates the row's bindings -- so whether the rule survives is a fact about the
+// toolkit rather than a thing the app can simply decide.
+//
+// **Every interesting event is reported to stdout by the Rust side**, so the transcript is the evidence and
+// nobody has to watch the screen to know what happened.
+
+import { LineEdit, Button, ScrollView, Palette } from "std-widgets.slint";
+
+struct Row {
+    id: int,
+    name: string,
+    tint: color,
+    clock: string,
+}
+
+export component TableWindow inherits Window {
+    title: "Slint editable table probe";
+    width: 560px;
+    height: 460px;
+    background: Palette.background;
+
+    in property <[Row]> rows;
+    // Which row is open for editing, or -1. One at a time, as the real cell behaves.
+    in-out property <int> editing-id: -1;
+    in property <string> status: "idle";
+    // **Both interaction paths in one binary**, set from the environment, because the difference between
+    // them is the finding: a Button takes a click and the TouchArea on the name did not. Off, the only way
+    // in is clicking the name, which is what EditableNameCell does.
+    in property <bool> show-edit-button: true;
+
+    callback start-edit(int);
+    callback committed(int, string);
+    callback abandoned(int);
+    callback typed(int, string);
+
+    // **A click anywhere else abandons the edit**, which is what EditableNameCell does.
+    //
+    // **This was removed for an hour on a wrong theory and is back.** It looked as though a full-window
+    // TouchArea sibling was swallowing clicks on the rows, because no row click was registering. Taking it
+    // out changed nothing, and the actual cause was that *synthetic* clicks do not reach a Slint TouchArea
+    // at all: the owner clicked a name by hand on 2026-09-20 and the edit opened immediately.
+    TouchArea {
+        clicked => {
+            if (root.editing-id != -1) { root.abandoned(root.editing-id); }
+        }
+    }
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        Text {
+            text: root.show-edit-button
+                ? "Press Edit, or click a name. The clock ticks every second, including on the row being edited."
+                : "Click a NAME to edit it. There is no Edit button. The clock ticks every second, including on the row being edited.";
+            wrap: word-wrap;
+            opacity: 0.7;
+        }
+
+        Rectangle {
+            background: Palette.alternate-background;
+            border-radius: 8px;
+            vertical-stretch: 1;
+            ScrollView {
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+                    alignment: start;
+                    for row[idx] in root.rows: Rectangle {
+                        height: 28px;
+                        // The row highlights while it is the one being edited, so a screenshot shows what
+                        // the transcript says.
+                        background: root.editing-id == row.id ? Palette.accent-background.with-alpha(0.15)
+                                                              : transparent;
+                        border-radius: 4px;
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            spacing: 10px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 12px;
+                                    height: 12px;
+                                    border-radius: 3px;
+                                    background: row.tint;
+                                }
+                            }
+
+                            // **An Edit button beside the name, because the TouchArea would not take a click.**
+                            // Measured 2026-09-20: a TouchArea wrapping the name, inside a row inside a
+                            // ScrollView, received no synthetic click at its own accessibility frame, with or
+                            // without a full-window TouchArea sibling present. A std-widgets Button in the same
+                            // place does. Whether that is hit-testing, the ScrollView, or synthetic events
+                            // specifically is unsettled -- it is recorded as a real obstacle to click-to-edit
+                            // rather than explained away, and the button is here so the harder question below
+                            // can still be reached.
+                            if root.show-edit-button && root.editing-id != row.id: Button {
+                                text: "Edit";
+                                accessible-id: "category-edit-" + row.id;
+                                clicked => { root.start-edit(row.id); }
+                            }
+
+                            // The name: a label that becomes a field, which is EditableNameCell's whole shape.
+                            Rectangle {
+                                width: 200px;
+                                if root.editing-id != row.id: TouchArea {
+                                    width: 100%;
+                                    height: 100%;
+                                    clicked => { root.start-edit(row.id); }
+                                    Text {
+                                        text: row.name;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: left;
+                                        accessible-role: text;
+                                        accessible-id: "category-name-" + row.id;
+                                        accessible-label: row.name;
+                                    }
+                                }
+                                // **`init => focus()` is required and is a real difference.** Measured
+                                // 2026-09-20: without it the LineEdit appears, is in the accessibility tree as
+                                // an AXTextField holding the right value, and receives no keystrokes at all --
+                                // there is simply no focused control. AppKit's EditableNameCell has nothing
+                                // equivalent, the field becoming first responder when it is installed.
+                                // **Escape has to be claimed explicitly**, which AppKit also needed here for
+                                // its own reason: a key equivalent is dispatched before the focused field sees
+                                // the key, so the Close button won and shut the window. Slint's LineEdit simply
+                                // does not treat Escape as anything, so a FocusScope around it claims the key
+                                // as it propagates up the focus chain.
+                                if root.editing-id == row.id: FocusScope {
+                                    key-pressed(event) => {
+                                        if (event.text == Key.Escape) {
+                                            root.abandoned(row.id);
+                                            return accept;
+                                        }
+                                        return reject;
+                                    }
+                                    field := LineEdit {
+                                    text: row.name;
+                                    accessible-id: "category-name-field-" + row.id;
+                                    init => { field.focus(); }
+                                    // Every keystroke is reported, which is how the transcript shows an edit
+                                    // being lost rather than merely ending.
+                                    edited(t) => { root.typed(row.id, t); }
+                                    accepted(t) => { root.committed(row.id, t); }
+                                    }
+                                }
+                            }
+
+                            Rectangle { horizontal-stretch: 1; }
+
+                            // The column that ticks. This is the Faces tab's Timing clock, and it is updated
+                            // on EVERY row including the one being edited, which is the sharp case.
+                            Text {
+                                text: row.clock;
+                                vertical-alignment: center;
+                                opacity: 0.55;
+                                accessible-role: text;
+                                accessible-id: "category-clock-" + row.id;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "status: " + root.status;
+                vertical-alignment: center;
+                accessible-role: text;
+                accessible-id: "probe-status";
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: "Abandon (Escape)";
+                accessible-id: "probe-abandon";
+                enabled: root.editing-id != -1;
+                clicked => { root.abandoned(root.editing-id); }
+            }
+        }
+    }
+}

@@ -1,0 +1,377 @@
+// The Report tab: a date range across the top, and what each category recorded over it underneath.
+//
+// **A picked day or range is a question, and the totals are the answer to it.** The range covers the app's own
+// days, not calendar days: 5 August to 7 August means 5 August at the daily reset up to 8 August at the daily
+// reset, so a one-day report shows exactly what the menu bar showed on that day.
+//
+// A pair of hand-drawn calendars rather than two date fields, which is the Swift app's shape and its reasoning:
+//
+// - **The end starts unset**, which is not a missing value to fill in but the common case said in one click.
+//   Pick a day on the left and the report covers that day; clicking in the right calendar turns it into a range.
+// - **The right calendar cannot reach a day before the start.** Every earlier day is drawn dimmed and refuses
+//   the click, so an inverted range is unreachable rather than rejected after the fact.
+// - **Both stop at today.** This is a time recorder, not a time planner.
+//
+// **The cells are sized from the width the tab is given, and everything else is a ratio of the cell.** Deriving
+// them all from one number is what stops a resize leaving small digits in a large cell. The ratios are the
+// Swift app's, which came in turn from the fixed design it replaced: a 28pt cell carrying 12pt digits.
+//
+// Nothing here reads the clock and nothing here reads the database. **The month is a placeholder**, stated as
+// `in` properties so that wiring a real one is setting them: which month, how long it is, and which column its
+// first day falls in. So are the totals.
+
+import { Palette, Button, ScrollView } from "std-widgets.slint";
+import { Metrics } from "metrics.slint";
+import { Divider, Swatch, Footnote } from "widgets.slint";
+
+// What one category came to over the range.
+export struct CategoryTotal {
+    id: int,
+    name: string,
+    colour: color,
+    time: string,
+}
+
+component DayCell inherits Rectangle {
+    in property <int> day;
+    in property <int> days-in-month;
+    in property <length> cell-size;
+    in property <length> font-size;
+    in property <length> corner;
+    in property <bool> allowed;
+    in property <bool> selected;
+    in property <string> calendar-name;
+
+    width: root.cell-size;
+    height: root.cell-size;
+    border-radius: root.corner;
+    background: root.selected ? Palette.accent-background : transparent;
+
+    accessible-role: button;
+    accessible-id: root.calendar-name + "-day-" + root.day;
+    accessible-label: root.calendar-name + " " + root.day;
+    accessible-action-default => { }
+
+    Text {
+        text: (root.day > 0 && root.day <= root.days-in-month) ? root.day : "";
+        font-size: root.font-size;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: root.selected ? Palette.accent-foreground : Palette.foreground;
+        // A day the calendar will not accept is drawn dimmed rather than left looking pressable, so an
+        // inverted range is unreachable instead of being rejected after the fact.
+        opacity: root.allowed ? 1.0 : 0.3;
+    }
+}
+
+component RangeCalendar inherits VerticalLayout {
+    in property <string> title;
+    in property <string> name;
+    // Said beside the title rather than in place of it: an unset end is a state, not a date somebody forgot.
+    in property <string> subtitle;
+    in property <string> month-title;
+    // Which column the first of the month falls in, Monday being column 0.
+    in property <int> first-weekday-offset;
+    in property <int> days-in-month;
+    in property <int> selected-day;
+    // Nothing after today can be picked. This is a time recorder, not a time planner.
+    in property <int> latest-day;
+    // Nothing before the start can be picked in the To calendar. 0 means no floor.
+    in property <int> earliest-day: 0;
+    in property <length> cell-size;
+
+    property <length> day-font: Math.round(root.cell-size / 1px * 12 / 28) * 1px;
+    property <length> weekday-font: Math.round(root.cell-size / 1px * 11 / 28) * 1px;
+    property <length> month-font: Math.round(root.cell-size / 1px * 13 / 28) * 1px;
+    property <length> arrow-size: Math.round(root.cell-size / 1px * 20 / 28) * 1px;
+    property <length> day-corner: Math.round(root.cell-size / 1px * 5 / 28) * 1px;
+
+    spacing: 4px;
+
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+
+        Text {
+            text: root.title;
+            font-size: Metrics.heading-font-size;
+            font-weight: 700;
+            color: Palette.foreground;
+            accessible-role: AccessibleRole.text;
+            accessible-id: "report-" + root.name + "-title";
+            accessible-label: root.title;
+        }
+        Text {
+            text: root.subtitle;
+            vertical-alignment: bottom;
+            font-size: Metrics.footnote-font-size;
+            color: Palette.foreground;
+            opacity: 0.55;
+        }
+    }
+
+    Rectangle {
+        background: Palette.control-background;
+        border-radius: Metrics.corner-radius;
+        border-width: 1px;
+        border-color: Palette.border;
+
+        accessible-role: groupbox;
+        accessible-id: "report-" + root.name;
+        accessible-label: root.title;
+
+        VerticalLayout {
+            padding: 8px;
+            spacing: 4px;
+
+            // The month, and the way to the ones either side of it.
+            HorizontalLayout {
+                alignment: stretch;
+
+                Rectangle {
+                    width: root.arrow-size;
+                    accessible-role: button;
+                    accessible-id: "report-" + root.name + "-previous-month";
+                    accessible-label: "Previous month";
+                    accessible-action-default => { }
+                    Text { text: "‹"; font-size: root.month-font; color: Palette.foreground; }
+                    TouchArea { }
+                }
+
+                Text {
+                    text: root.month-title;
+                    font-size: root.month-font;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    color: Palette.foreground;
+                }
+
+                Rectangle {
+                    width: root.arrow-size;
+                    accessible-role: button;
+                    accessible-id: "report-" + root.name + "-next-month";
+                    accessible-label: "Next month";
+                    accessible-action-default => { }
+                    Text { text: "›"; font-size: root.month-font; color: Palette.foreground; }
+                    TouchArea { }
+                }
+            }
+
+            HorizontalLayout {
+                for weekday in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]: Text {
+                    width: root.cell-size;
+                    text: weekday;
+                    font-size: root.weekday-font;
+                    horizontal-alignment: center;
+                    color: Palette.foreground;
+                    opacity: 0.55;
+                }
+            }
+
+            // Six weeks, always, so the box does not change height as the months are paged through.
+            for week in 6: HorizontalLayout {
+                for weekday in 7: DayCell {
+                    day: week * 7 + weekday - root.first-weekday-offset + 1;
+                    days-in-month: root.days-in-month;
+                    cell-size: root.cell-size;
+                    font-size: root.day-font;
+                    corner: root.day-corner;
+                    calendar-name: root.name;
+                    allowed: self.day >= max(1, root.earliest-day) && self.day <= min(root.latest-day, root.days-in-month);
+                    selected: self.day == root.selected-day && self.day <= root.days-in-month;
+                }
+            }
+        }
+    }
+}
+
+component TotalRow inherits Rectangle {
+    in property <CategoryTotal> total;
+
+    height: 36px;
+
+    accessible-role: groupbox;
+    accessible-id: "report-total-" + root.total.id;
+    accessible-label: root.total.name;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 12px;
+
+        // The stretches behind this figure fold out under it, which is a read at the moment of use: a closed
+        // group asks the database nothing at all.
+        Rectangle {
+            width: 16px;
+            Path {
+                width: 9px;
+                height: 9px;
+                viewbox-width: 9;
+                viewbox-height: 9;
+                commands: "M 2.5 0.5 L 7.5 4.5 L 2.5 8.5 Z";
+                fill: Palette.foreground;
+                opacity: 0.75;
+            }
+        }
+
+        Rectangle {
+            width: 28px;
+            Swatch { colour: root.total.colour; size: 28px; radius: 6px; }
+        }
+
+        Text {
+            text: root.total.name;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Palette.foreground;
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        Text {
+            text: root.total.time;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            color: Palette.foreground;
+            accessible-role: AccessibleRole.text;
+            accessible-id: "report-total-time-" + root.total.id;
+            accessible-label: root.total.time;
+        }
+    }
+}
+
+export component ReportPane inherits Rectangle {
+    // **Placeholder, and it is not read off a clock.** September 2026, whose first day is a Tuesday, with the
+    // range set to one day. Wiring a real month is setting these four.
+    in property <string> month-title: "September 2026";
+    in property <int> first-weekday-offset: 1;
+    in property <int> days-in-month: 30;
+    in property <int> selected-day: 21;
+    in property <int> today: 21;
+
+    in property <[CategoryTotal]> totals: [
+        { id: 2, name: "Code", colour: #008000, time: "2:14:30" },
+        { id: 1, name: "Meeting", colour: #0000ff, time: "1:05:00" },
+        { id: 3, name: "Admin", colour: #ffa500, time: "0:42:10" },
+        { id: 4, name: "Email", colour: #800080, time: "0:18:05" },
+    ];
+
+    accessible-role: tab-panel;
+    accessible-id: "settings-pane-report";
+    accessible-label: "Report";
+
+    // Seven columns out of what is left after the tab's own padding, the gap between the pair, and each
+    // calendar's own padding. **Rounded down**, so seven cells plus the padding can never come to more than the
+    // width they were fitted to and push the second calendar off the edge. Never below 28, the one size known
+    // to be legible: a window narrower than expected stops the calendars filling it rather than shrinking them.
+    property <length> cell-size: max(
+        28px,
+        Math.floor((((root.width - 2 * Metrics.tab-padding - 12px) / 2 - 16px) / 7) / 1px) * 1px
+    );
+
+    ScrollView {
+        content-width: self.visible-width;
+
+        VerticalLayout {
+            padding: Metrics.tab-padding;
+            spacing: 12px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                RangeCalendar {
+                    title: "From";
+                    name: "from";
+                    month-title: root.month-title;
+                    first-weekday-offset: root.first-weekday-offset;
+                    days-in-month: root.days-in-month;
+                    selected-day: root.selected-day;
+                    latest-day: root.today;
+                    cell-size: root.cell-size;
+                }
+
+                RangeCalendar {
+                    title: "To";
+                    name: "to";
+                    // Says what an unset end means rather than leaving the calendar to look like a second date
+                    // somebody forgot to choose.
+                    subtitle: "not set, reporting one day";
+                    month-title: root.month-title;
+                    first-weekday-offset: root.first-weekday-offset;
+                    days-in-month: root.days-in-month;
+                    selected-day: root.selected-day;
+                    earliest-day: root.selected-day;
+                    latest-day: root.today;
+                    cell-size: root.cell-size;
+                }
+            }
+
+            // A hairline between the question and its answer. Not a heading over the totals: what they are is
+            // said by the range above them, and "Totals" would be a word explaining a column of times that
+            // needs no explaining.
+            Divider { }
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 12px;
+
+                // Clicking a heading sorts by it, and the arrow says which way. Only the column in force
+                // carries one.
+                Text {
+                    text: "Category ▼";
+                    font-size: Metrics.footnote-font-size;
+                    vertical-alignment: center;
+                    color: Palette.foreground;
+                    opacity: 0.55;
+                    accessible-role: button;
+                    accessible-id: "report-sort-category";
+                    accessible-label: "Sort by category";
+                    accessible-action-default => { }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Text {
+                    text: "Time";
+                    font-size: Metrics.footnote-font-size;
+                    vertical-alignment: center;
+                    color: Palette.foreground;
+                    opacity: 0.55;
+                    accessible-role: button;
+                    accessible-id: "report-sort-time";
+                    accessible-label: "Sort by time";
+                    accessible-action-default => { }
+                }
+            }
+
+            // Only the categories that recorded something, biggest first. A category with nothing in the range
+            // is absent rather than shown as 0:00, and a range with nothing in it says so in words rather than
+            // drawing an empty table.
+            //
+            // A layout of its own, so the rows run together as a list rather than taking the gap the sections
+            // above them sit at.
+            VerticalLayout {
+                spacing: 0px;
+                for total in root.totals: TotalRow { total: total; }
+            }
+
+            if root.totals.length == 0: Text {
+                text: "No time recorded in this range.";
+                color: Palette.foreground;
+                opacity: 0.55;
+                accessible-role: AccessibleRole.text;
+                accessible-id: "report-totals-empty";
+                accessible-label: "No time recorded in this range.";
+            }
+
+            Footnote {
+                note-id: "report-placeholder-note";
+                text: "Placeholder month and placeholder totals. This app reads neither the clock nor the "
+                    + "database yet, so the calendars do not move and the figures are not anybody's time.";
+            }
+        }
+    }
+}

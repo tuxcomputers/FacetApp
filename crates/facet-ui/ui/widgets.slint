@@ -1,0 +1,230 @@
+// The pieces every Settings tab is built out of.
+//
+// **The shapes are the Swift app's**, kept because they are what the window already looked like and because two
+// tabs drawn at different rhythms read as two windows. What they are here is Slint rather than AppKit; the
+// measurements they draw at all come from `Metrics`.
+//
+// Every control a check must reach carries accessible-id AND accessible-role, because Slint refuses the id
+// without the role, and anything pressable answers accessible-action-default. A bare TouchArea is invisible to
+// an accessibility press and reports success anyway, which is the silent pass CLAUDE.md has a section about.
+
+import { Palette, SpinBox } from "std-widgets.slint";
+import { Metrics } from "metrics.slint";
+
+// A heading that folds what is under it, drawn as the first row of the panel it sits on.
+//
+// **The whole line is the target, not just the triangle.** CLAUDE.md states it as a rule and the Swift app paid
+// for it twice: a triangle is a small target for a gesture the words beside it are obviously about.
+export component SectionHeading inherits Rectangle {
+    in property <string> title;
+    in property <string> heading-id;
+    in-out property <bool> expanded: true;
+    // **A row of a list rather than a section of the tab.** The Device tab's More and LED are the second kind
+    // of collapsible group: they are lines of a panel that already exists, so there is nothing of their own to
+    // close and they sit at the weight of the rows around them rather than at a heading's.
+    in property <bool> nested: false;
+
+    callback toggled(bool);
+
+    min-height: Metrics.row-height;
+    accessible-role: button;
+    accessible-id: root.heading-id;
+    accessible-label: root.title;
+    accessible-action-default => { root.flip(); }
+
+    function flip() {
+        root.expanded = !root.expanded;
+        root.toggled(root.expanded);
+    }
+
+    HorizontalLayout {
+        spacing: Metrics.title-spacing;
+        alignment: start;
+
+        // Drawn rather than typed. A glyph for this is a character whose size and baseline are the font's to
+        // decide, and at a heading's size it came out as a speck.
+        Rectangle {
+            width: 12px;
+            Path {
+                width: 9px;
+                height: 9px;
+                viewbox-width: 9;
+                viewbox-height: 9;
+                commands: root.expanded
+                    ? "M 0.5 2.5 L 8.5 2.5 L 4.5 7.5 Z"
+                    : "M 2.5 0.5 L 7.5 4.5 L 2.5 8.5 Z";
+                fill: Palette.foreground;
+                opacity: 0.75;
+            }
+        }
+
+        Text {
+            text: root.title;
+            font-size: root.nested ? Metrics.body-font-size : Metrics.heading-font-size;
+            font-weight: root.nested ? 400 : 700;
+            vertical-alignment: center;
+            color: Palette.foreground;
+        }
+    }
+
+    // Behind nothing and over everything, so the words, the triangle and the space after them all press. It is
+    // declared last deliberately: Slint hit-tests the later sibling first.
+    TouchArea {
+        clicked => { root.flip(); }
+    }
+}
+
+// The tinted rounded box a group of settings sits on. Its heading goes inside it, as the first row, because a
+// heading that operates a panel belongs to it rather than floating above it as a caption.
+export component Panel inherits Rectangle {
+    in property <string> panel-id;
+    in property <string> label;
+
+    accessible-role: groupbox;
+    accessible-id: root.panel-id;
+    accessible-label: root.label;
+
+    background: Palette.alternate-background;
+    border-radius: Metrics.corner-radius;
+
+    VerticalLayout {
+        padding: Metrics.panel-padding;
+        spacing: Metrics.heading-spacing;
+        @children
+    }
+}
+
+// The label-and-value row the App and Device tabs are both made of: words on the left, the control or the
+// reading pinned to the right-hand edge.
+//
+// **The control is pinned rather than following the label**, which is what lines every answer up down the
+// right-hand side however long the words in front of it are. **No inset of its own**: the panel insets the
+// list, so a row that inset itself as well would indent every row twice over.
+export component SettingsRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> dimmed: false;
+
+    min-height: Metrics.row-height;
+
+    HorizontalLayout {
+        spacing: Metrics.column-spacing;
+
+        Text {
+            text: root.label;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Palette.foreground;
+            opacity: root.dimmed ? 0.45 : 1.0;
+        }
+
+        // The label gives way before the control does: a window too narrow for both shortens the words rather
+        // than the answer.
+        Rectangle { horizontal-stretch: 1; }
+
+        @children
+    }
+}
+
+// A reading: the right-hand half of a row that states something rather than offering a control.
+export component ValueText inherits Text {
+    in property <string> value-id;
+    text: "";
+    vertical-alignment: center;
+    horizontal-alignment: right;
+    overflow: elide;
+    color: Palette.foreground;
+    accessible-role: text;
+    accessible-id: root.value-id;
+    accessible-label: root.text;
+}
+
+// A footnote under a panel or at the end of a list: smaller, quieter, and allowed to wrap.
+//
+// **The box is what the layout sees, and the words inside it are given its width.** A wrapping Text placed
+// straight into a layout is measured at the width it would like, which for a sentence is one line, so it was
+// given one line's height and then wrapped to two inside it: the second line of the Debug note sat below the
+// panel it belongs to. Setting the width first and taking the height from the result is what fixes that, and
+// it is why this is a Rectangle around a Text rather than a Text.
+export component Footnote inherits Rectangle {
+    in property <string> text;
+    in property <string> note-id;
+
+    height: label.preferred-height;
+
+    label := Text {
+        width: 100%;
+        text: root.text;
+        font-size: Metrics.footnote-font-size;
+        wrap: word-wrap;
+        color: Palette.foreground;
+        opacity: 0.6;
+        accessible-role: AccessibleRole.text;
+        accessible-id: root.note-id;
+        accessible-label: root.text;
+    }
+}
+
+// A number with its unit beside it, and the one stepped control every tab uses.
+//
+// **Fixed width, and it does not stretch.** A control that filled the row would put the arrows at the window
+// edge and leave the number stranded a long way from the words naming it, which is the opposite of what pinning
+// the control to the right is for. The Swift app's SteppedNumberField is 90 for the box and 34 for the unit;
+// the box here carries its own arrows, so it takes the difference.
+//
+// **Arrows rather than a slider**, which is the Swift app's finding: a slider commits a value per pixel of
+// travel, and one brightness drag logged thirty-odd changes, every one of them a device write.
+export component StepperField inherits HorizontalLayout {
+    in property <int> value;
+    in property <int> minimum: 0;
+    in property <int> maximum: 100;
+    in property <string> suffix;
+    in property <string> field-id;
+    in property <bool> enabled: true;
+
+    spacing: Metrics.title-spacing;
+    horizontal-stretch: 0;
+
+    SpinBox {
+        width: 110px;
+        horizontal-stretch: 0;
+        value: root.value;
+        minimum: root.minimum;
+        maximum: root.maximum;
+        enabled: root.enabled;
+        accessible-id: root.field-id;
+    }
+
+    // Left-aligned in a fixed slot, so the units line up down the tab however long the word is.
+    Text {
+        width: 34px;
+        text: root.suffix;
+        vertical-alignment: center;
+        color: Palette.foreground;
+        opacity: root.enabled ? 1.0 : 0.45;
+    }
+}
+
+// A hairline. The Swift app draws these between a question and its answer, never between rows.
+export component Divider inherits Rectangle {
+    height: 1px;
+    background: Palette.border;
+}
+
+// A category's colour. The Swift app draws the category's icon on it; **this app ships no activity icons**,
+// they being TimeFlip's copyrighted set whose permission does not travel with the code (see NOTICE), so the
+// swatch is the colour alone. Nothing stands in for the icon: an outline where one will go reads as a control,
+// which is what it did on the Categories tab.
+//
+// The outline is what keeps a pale colour from disappearing into the row behind it.
+export component Swatch inherits Rectangle {
+    in property <color> colour;
+    in property <length> size: 28px;
+    in property <length> radius: 6px;
+
+    width: root.size;
+    height: root.size;
+    background: root.colour;
+    border-radius: root.radius;
+    border-width: 1px;
+    border-color: #00000033;
+}
