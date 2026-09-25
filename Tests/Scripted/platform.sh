@@ -200,8 +200,33 @@ platform_press() {
     esac
 }
 
+# **The in-window notice's buttons, one per line as `<index><TAB><label>`.** The Rust app has no native alerts:
+# a question is a Slint overlay in the Settings window, `notice-choice-<n>` for each button, in the same tree
+# on both platforms. Read from the dump, taking whichever of `value=` and `title=` carries the label, so the
+# one parser serves the AT-SPI line and the AX one.
+platform_notice_choices() {
+    platform_tree | awk -F'  ' '{
+        for (i = 1; i <= NF; i++) if ($i ~ /^id=notice-choice-/) {
+            index_ = substr($i, 18)
+            for (j = i + 1; j <= NF; j++) if ($j ~ /^(value|title)=/) { print index_ "\t" substr($j, index($j, "=") + 1); break }
+        }
+    }'
+}
+
+# Presses the notice button labelled `$1`, by its identifier. Non-zero when no notice offers it.
+platform_press_notice() {
+    local index
+    index=$(platform_notice_choices | awk -F'\t' -v want="$1" '$2 == want { print $1; exit }')
+    [ -n "$index" ] || return 1
+    platform_press "notice-choice-$index"
+}
+
 # Press a control by the words on it, which is how every dialogue button is addressed.
+#
+# **A notice's button first**, addressed by identifier once its label has been found, because a bare label is
+# not unique in this window: `Cancel` is also the create control's.
 platform_press_title() {
+    platform_press_notice "$1" && return 0
     case "$PLATFORM" in
         mac)   python3 scripts/ax-press.py --title "$1" 2>&1 ;;
         # **No flag needed on this side**, and that is a fact about the platform rather than a shortcut:
@@ -221,6 +246,7 @@ platform_press_desc() {
 
 # A button of the dialogue that is up, addressed as part of the dialogue rather than of the window.
 platform_press_sheet() {
+    platform_press_notice "$1" && return 0
     case "$PLATFORM" in
         mac)   python3 scripts/ax-press.py --sheet --title "$1" 2>&1 ;;
         # **A dialogue is a top-level of its own here, not a sheet on the window**, so there is nothing
@@ -249,6 +275,15 @@ platform_set_field() {
     case "$PLATFORM" in
         mac)   python3 scripts/ax-set.py "$1" "$2" 2>&1 ;;
         linux) python3 scripts/at-set.py "$1" "$2" 2>&1 ;;
+    esac
+}
+
+# Write into a field that is expected to keep only the start of it, as a length limit does. The macOS write sets
+# `AXValue` outright and the field's own cut never sees it, so there it is the ordinary write.
+platform_set_field_cut() {
+    case "$PLATFORM" in
+        mac)   python3 scripts/ax-set.py "$1" "$2" 2>&1 ;;
+        linux) python3 scripts/at-set.py --allow-cut "$1" "$2" 2>&1 ;;
     esac
 }
 
@@ -295,15 +330,30 @@ platform_tree_frames() {
 }
 
 # The buttons of the dialogue that is up, one per line. Non-zero when there is no dialogue.
+#
+# **The in-window notice is the dialogue now**, so it is read first and a native alert only when there is none.
 platform_alert_buttons() {
+    local choices
+    choices=$(platform_notice_choices)
+    if [ -n "$choices" ]; then
+        printf '%s\n' "$choices" | cut -f2
+        return 0
+    fi
     case "$PLATFORM" in
         mac)   python3 scripts/ax-alert.py 2>/dev/null ;;
         linux) python3 scripts/at-alert.py 2>/dev/null ;;
     esac
 }
 
-# Its wording instead.
+# Its wording instead: the notice's title and message together, a message running over several lines in the
+# dump when it holds line breaks.
 platform_alert_message() {
+    local notice
+    notice=$(platform_tree | awk '/id=notice-title/ { on = 1 } /id=notice-choice-/ { on = 0 } on')
+    if [ -n "$notice" ]; then
+        printf '%s\n' "$notice"
+        return 0
+    fi
     case "$PLATFORM" in
         mac)   python3 scripts/ax-alert.py --message 2>/dev/null ;;
         linux) python3 scripts/at-alert.py --message 2>/dev/null ;;

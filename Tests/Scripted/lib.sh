@@ -1501,6 +1501,14 @@ post_key() {
 }
 # The unfocused write, for a field something has already clicked into. Reports a failure for the reason the two
 # above do: a value that never reached the field fails later, somewhere else, as something it is not.
+set_field_cut() {
+    local output status
+    output=$(platform_set_field_cut "$1" "$2")
+    status=$?
+    [ "$status" -ne 0 ] && red "  writing $2 into $1 failed (exit $status)${output:+: $output}"
+    return $status
+}
+
 set_field() {
     local output status
     output=$(platform_set_field "$1" "$2")

@@ -46,7 +46,7 @@ WINDOW_TITLE = "Facet Settings"
 TYPED_ROLES = {"entry", "text", "password text"}
 
 
-def type_into(node, name, text):
+def type_into(node, name, text, allow_cut=False):
     """Type `text` into a field that cannot be written, and read back what it now holds.
 
     **Real keystrokes, so this is the sharp case in CLAUDE.md**: XTEST delivers to whatever holds the X
@@ -73,7 +73,12 @@ def type_into(node, name, text):
         pyatspi.Registry.generateKeyboardEvent(ord("a"), None, pyatspi.KEY_SYM)
     finally:
         pyatspi.Registry.generateKeyboardEvent(control, None, pyatspi.KEY_RELEASE)
-    pyatspi.Registry.generateKeyboardEvent(0, text, pyatspi.KEY_STRING)
+    if text:
+        pyatspi.Registry.generateKeyboardEvent(0, text, pyatspi.KEY_STRING)
+    else:
+        # Emptying is typing nothing over a selection, which XTEST cannot send as a string: BackSpace
+        # deletes what the select-all above selected.
+        pyatspi.Registry.generateKeyboardEvent(0xFF08, None, pyatspi.KEY_SYM)
 
     # **Read back, not trusted.** The field clamps its own length, and a keystroke that landed elsewhere
     # leaves it holding what it held before; both are a write that did not happen as asked.
@@ -88,6 +93,11 @@ def type_into(node, name, text):
         if held == text:
             print(f"typed {text!r} into {name!r}")
             return 0
+    # **A cut is only accepted when it was asked for**, and only as a leading part of what was typed: a field that
+    # holds to a length is doing its job, and one holding anything else is a keystroke that went astray.
+    if allow_cut and held and text.startswith(held):
+        print(f"typed {text!r} into {name!r}, and it kept the first {len(held)}: {held!r}")
+        return 0
     sys.exit(f"typed {text!r} into {name!r}, but it holds {held!r}")
 
 
@@ -106,6 +116,8 @@ def main():
     parser.add_argument("name", help="the identifier of the field")
     parser.add_argument("value", help="what to put in it")
     parser.add_argument("--app", default="facet-linux", help="the application to drive")
+    parser.add_argument("--allow-cut", action="store_true",
+                        help="accept a text field keeping only the start of what was typed, as a length limit does")
     arguments = parser.parse_args()
 
     root = application(arguments.app)
@@ -129,7 +141,7 @@ def main():
 
     if value is None:
         if role_of(node) in TYPED_ROLES:
-            return type_into(node, arguments.name, arguments.value)
+            return type_into(node, arguments.name, arguments.value, arguments.allow_cut)
         sys.exit(
             f"{arguments.name!r} is a {role_of(node)}, which is neither editable text nor a value.\n"
             f"  a button is pressed with at-press.py; a label cannot be written at all."
