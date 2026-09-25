@@ -117,33 +117,3 @@ rasterises its own fonts, so it takes the window server out of the comparison de
 point, and also means it cannot answer what fontconfig against Core Text does to the running app. Fonts
 are the likeliest difference between the two machines and the one thing these images are guaranteed not
 to show. That needs somebody at the screen on both boxes.
-
-## 5. Run the Faces checks on the Mac, and give the Slint window its macOS answers
-
-**On `feature/faceTab`.** `00-setup`, `05-faces-timing`, `06-time-entries` and `12-daily-limit` are back in
-`Tests/Scripted/` and pass 71 of 71 on Linux. They have not been run here, and two helpers in `lib.sh` still
-give the Swift window's answer on macOS.
-
-**What is wanted:**
-
-1. **`settings_is_open` and `close_settings`.** On macOS both still look for a `close-settings` control, which
-   the Slint window does not have. On Linux they now ask the window manager (`wmctrl`), because a hidden Slint
-   window stays on the accessibility bus whole. Measure what AX does with a hidden Slint window, then give both
-   helpers a macOS answer.
-2. **`window_width settings-window`.** On Linux it reads the frame line, the window carrying no identifier.
-   Check what `ax-dump.py --frames` prints for the Slint window here.
-3. **`platform_menu_titles`** now maps to the Rust tray's words (`Settings...`, `Quit Facet`,
-   `About Facet`). macOS presses by `AXIdentifier` and may not care; say if it does.
-4. **`activate_status_item`** is the left click as Pause's accelerator, `status-item-click.py` on macOS. Check
-   that it lands as one toggle rather than two (the press-and-release pair `5184cbd` guards against).
-5. **Then run `Tests/Scripted/run.sh`** and say what came back. Commit the stamp **before** running again
-   (README), so it records a clean tree.
-
-6. **Say whether AX reports the Faces tab's play/pause glyph disabled** while a daily limit is spent, which
-   `12` leaves it (`ax-dump.py` prints `disabled` when it is). On Linux it draws greyed and AT-SPI still
-   says `enabled` and `sensitive`, although Slint 1.18's bridge calls `set_disabled` for
-   `accessible-enabled`. A `disabled` here puts the loss in `accesskit_unix` rather than Slint, and tells
-   the Linux box where to look.
-
-`docs/port-findings.md` has the four AT-SPI facts, and the tray hang that answers nothing on about one
-Linux launch in fifteen. Say if the Mac's tray ever does the same.
