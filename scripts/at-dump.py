@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print a running GTK app's accessibility tree, which is what a UI script sees.
 
-    scripts/at-dump.py                      # the whole of FacetLinux
+    scripts/at-dump.py                      # the whole of facet-linux
     scripts/at-dump.py --frames             # with each element's position and size
     scripts/at-dump.py --app "Some App"     # somebody else's tree
 
@@ -24,7 +24,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 import pyatspi                                                          # noqa: E402
 
-from atspi_tree import application, extents, role_of, walk              # noqa: E402
+from atspi_tree import identifier_of, application, extents, role_of, walk              # noqa: E402
 
 # **The same line shape as `ax-dump.py`, attribute for attribute**, and that is load-bearing rather
 # than a courtesy. `lib.sh` does not read this output as prose: `element` greps `id=X `, `on_tab`
@@ -89,16 +89,26 @@ def compact(number):
 
 def describe(node, with_frames):
     parts = []
-    if node.name:
+    # **A Slint control carries its identifier in `AccessibleId` and its words in the name**, so there
+    # the name is the value: `id=timing-category-name  value=Break` is the same line the macOS dump
+    # prints for the same element. A node without an identifier is printed the GTK way below.
+    identifier = identifier_of(node)
+    if identifier:
+        parts.append(f"id={identifier}")
+        if node.name and node.name != identifier:
+            parts.append(f"value={node.name}")
+    elif node.name:
         parts.append(f"id={node.name}")
 
     words = text_of(node)
-    if words and words != node.name:
+    if words and words not in (node.name, identifier):
         parts.append(f"title={words}")
 
     # The description first, because it is where this app puts a control's value; a spin button that
     # has a real Value interface as well answers with the number, and both never appear at once.
-    if node.description:
+    if identifier and node.name and node.name != identifier:
+        pass  # the value is the name, printed above
+    elif node.description:
         parts.append(f"value={node.description}")
     else:
         number = number_of(node)
@@ -132,7 +142,7 @@ def describe(node, with_frames):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--app", default="FacetLinux", help="the application to dump")
+    parser.add_argument("--app", default="facet-linux", help="the application to dump")
     parser.add_argument("--frames", action="store_true", help="include position and size")
     parser.add_argument(
         "--all-tabs",

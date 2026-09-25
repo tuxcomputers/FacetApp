@@ -362,8 +362,11 @@ platform_open_menu() {
 # Pause reads *Resume* while paused and Lock reads *Unlock* while locked, and they are the same item either way.
 platform_menu_titles() {
     case "$1" in
-        open-settings)    printf 'Settings…\n' ;;
-        quit-app)         printf 'Quit\n' ;;
+        # The Rust tray's own words, from `crates/facet-linux/src/tray.rs`. The Swift app said `Settings…`
+        # and `Quit`, and a title that matches nothing is a press that reports it found no item.
+        open-settings)    printf 'Settings...\n' ;;
+        quit-app)         printf 'Quit Facet\n' ;;
+        open-about)       printf 'About Facet\n' ;;
         toggle-pause)     printf 'Pause\nResume\n' ;;
         toggle-cube-lock) printf 'Lock\nUnlock\n' ;;
         status-item)      printf '\n' ;;
@@ -420,8 +423,9 @@ platform_menu_tree() {
             python3 scripts/tray-menu.py 2>/dev/null | while IFS= read -r line; do
                 local identifier=""
                 case "$line" in
-                    *"'Settings…'"*)        identifier="open-settings" ;;
-                    *"'Quit'"*)             identifier="quit-app" ;;
+                    *"'Settings...'"*)      identifier="open-settings" ;;
+                    *"'Quit Facet'"*)       identifier="quit-app" ;;
+                    *"'About Facet'"*)      identifier="open-about" ;;
                     *"'Pause'"*|*"'Resume'"*) identifier="toggle-pause" ;;
                     *"'Lock'"*|*"'Unlock'"*)  identifier="toggle-cube-lock" ;;
                 esac
@@ -475,6 +479,35 @@ platform_click_right() {
             echo "  activation and the panel owns the secondary click, so there is no gesture to" >&2
             echo "  post. The checks that need it are item 12 of docs/linux-port.md." >&2
             return 1 ;;
+    esac
+}
+
+# **The left click on the status item.** On Linux that is the SNI `Activate` call a panel makes, sent to
+# the app directly: `tray-menu.py --activate`. Said out loud when it fails.
+platform_click_left() {
+    case "$PLATFORM" in
+        mac)   python3 scripts/status-item-click.py 2>&1 ;;
+        linux) python3 scripts/tray-menu.py --activate 2>&1 ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------- accessibility
+
+# **Slint reaches the accessibility bus only while an assistive technology is enabled**, measured
+# 2026-09-22 (docs/port-findings.md): with `toolkit-accessibility` false the app is simply not on the bus,
+# and every press fails as though the window never opened. So a run turns it on, and `run.sh` puts back
+# whatever it found. macOS has no equivalent switch.
+platform_accessibility_state() {
+    case "$PLATFORM" in
+        mac)   echo "not applicable" ;;
+        linux) gsettings get org.gnome.desktop.interface toolkit-accessibility ;;
+    esac
+}
+
+platform_set_accessibility() {
+    case "$PLATFORM" in
+        mac)   return 0 ;;
+        linux) gsettings set org.gnome.desktop.interface toolkit-accessibility "$1" ;;
     esac
 }
 

@@ -42,7 +42,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("name", help="the identifier of the control to hold")
     parser.add_argument("seconds", type=float, help="how long to hold it")
-    parser.add_argument("--app", default="FacetLinux", help="the application to drive")
+    parser.add_argument("--app", default="facet-linux", help="the application to drive")
     arguments = parser.parse_args()
 
     root = application(arguments.app)

@@ -8,22 +8,20 @@ They need no AI, no Claude, and nothing installed beyond what building the app a
 
 ---
 
-**Status, 2026-09-21: the harness is here and the checks are not.** `run.sh`, `lib.sh`, `platform.sh`,
-`testlog.sh` and `seed-private.sh` came across from the Swift suite. The 32 numbered checks did not,
-because a check for a feature the Rust app does not have yet cannot pass, and a tree full of red nobody
-can act on teaches nothing. [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists all 32 with
+**Status, 2026-09-25: four checks are back, and they pass on Linux.** `00-setup`, `05-faces-timing`,
+`06-time-entries` and `12-daily-limit` were converted from the Swift suite for the Faces tab, and a full
+`run.sh` on the Linux box passed 71 of 71 (run 4 in `logs/testlog.sqlite`). They have not been run on the
+Mac yet. The rest of the 32 numbered checks are still missing, because a check for a feature the Rust app
+does not have yet cannot pass. [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists all 32 with
 what each proved, and each goes back as its feature lands.
 
-**So read this for how the suite works and why, not as instructions you can follow today.** Every
-numbered script named below is one of the missing ones. Where a file is gone rather than merely
-unwritten, the text says so.
+**So read this for how the suite works and why.** Where a numbered script named below is one of the
+missing ones, or a file is gone rather than merely unwritten, the text says so.
 
-**Running `run.sh` today is harmless, and that was checked rather than assumed** (2026-09-21). It finds
-no checks, prints `No scripts matched.` and exits 2, and it does so *before* it kills anything, rebuilds
-any database or launches the app. So there is no way to lose the test database by trying it.
-
-**Audited against the tree on 2026-09-21.** What was Swift and is now cargo has been corrected; what
-described a file that no longer exists is marked rather than quietly left to mislead.
+**On Linux a run needs `wmctrl`, and it types real keystrokes.** A Slint text field cannot be written
+over AT-SPI, so `at-set.py` focuses it and types into it (see
+[`port-findings.md`](../../docs/port-findings.md)). `run.sh` turns `toolkit-accessibility` on for the run,
+because a Slint window is not on the bus without it, and puts back whatever it found.
 
 ---
 

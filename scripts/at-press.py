@@ -4,7 +4,7 @@
     scripts/at-press.py create-category         # by identifier, which is the accessible name here
     scripts/at-press.py --desc Break            # by the value it shows, for rows addressed by content
     scripts/at-press.py --tab Categories        # select a notebook tab, which has no action of its own
-    scripts/at-press.py --app FacetLinux quit-app
+    scripts/at-press.py --app facet-linux quit-app
 
 The Linux counterpart of `ax-press.py`, taking the same arguments for the same jobs. It performs the
 control's first accessible action, which is what a click does: pressing a button, ticking a check box,
@@ -39,7 +39,17 @@ from atspi_tree import (                                                # noqa: 
 
 def select_tab(root, label):
     """Select the notebook page whose tab carries this label."""
-    tabs = require(root, lambda node: role_of(node) == "page tab list", "a notebook")
+    tabs = find(root, lambda node: role_of(node) == "page tab list", whole_tree=True)
+    if tabs is None:
+        # **Slint has no tab list**: its `page tab` elements sit directly under the frame, each with an
+        # action of its own (docs/port-findings.md, the three driver faults). So a tab there is pressed,
+        # found by its words, and a missing one is named rather than reported as selected.
+        tab = find(root, lambda node: role_of(node) == "page tab" and node.name == label, whole_tree=True)
+        if tab is None:
+            sys.exit(f"no tab called {label!r}, and no notebook to look in either")
+        tab.queryAction().doAction(0)
+        print(f"selected tab {label!r}")
+        return 0
     pages = [child for child in tabs if child is not None]
     for index, page in enumerate(pages):
         if page.name == label:
@@ -53,7 +63,7 @@ def select_tab(root, label):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("name", nargs="?", help="the identifier to press")
-    parser.add_argument("--app", default="FacetLinux", help="the application to drive")
+    parser.add_argument("--app", default="facet-linux", help="the application to drive")
     parser.add_argument("--desc", action="store_true", help="match the description instead")
     parser.add_argument("--tab", help="select this notebook tab rather than pressing anything")
     arguments = parser.parse_args()

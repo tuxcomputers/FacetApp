@@ -98,6 +98,11 @@ echo "$(git rev-parse --abbrev-ref HEAD) at $(git rev-parse --short HEAD)"
 # start again because somebody deleted logs/testlog.sqlite.
 rm -f logs/device-gate
 
+# **What toolkit-accessibility was before this run**, so it can be put back at the end. `lib.sh` turns it on
+# because a Slint window is not on the accessibility bus without it; leaving it on would change the owner's
+# desktop as a side effect of a test run.
+ACCESSIBILITY_BEFORE=$(platform_accessibility_state)
+
 # The app holds the database open, so it goes first whichever way this run is going: rebuilding under a
 # running app would leave it writing to a file nothing points at any more.
 if platform_app_is_running; then
@@ -135,11 +140,13 @@ else
     # the query then fails with "no such table". Every check after that measured from an empty baseline and produced a
     # malformed query. The suite owns its databases; the app is what is being tested, not what prepares the ground.
     rm -f "$DEBUG_DB"
-    for ddl in database/5*.sql; do
+    for ddl in crates/facet-core/resources/database/5*.sql; do
         { echo "PRAGMA foreign_keys = ON;"; cat "$ddl"; } | sqlite3 "$DEBUG_DB"
     done
 
-    if [ ! -f "$HOME/.config/facet/scripted-seed.json" ]; then
+    # Only said when there is a Google check to fail; before `10` is carried over it would be a warning
+    # about nothing.
+    if [ -e Tests/Scripted/10-google-calendar.sh ] && [ ! -f "$HOME/.config/facet/scripted-seed.json" ]; then
         echo "Note: a new database has no Google account, so 10-google-calendar will FAIL."
         echo "      Connect one on the App tab once; it is captured and reseeded from then on."
     fi
@@ -212,6 +219,14 @@ if [ "$KEEP_RUNNING" -eq 0 ]; then
         sleep 1
         platform_app_is_running && platform_kill_app
     }
+fi
+
+if [ "$PLATFORM" = "linux" ] && [ "$(platform_accessibility_state)" != "$ACCESSIBILITY_BEFORE" ]; then
+    if platform_set_accessibility "$ACCESSIBILITY_BEFORE"; then
+        echo "toolkit-accessibility put back to $ACCESSIBILITY_BEFORE."
+    else
+        echo "toolkit-accessibility could not be put back to $ACCESSIBILITY_BEFORE; set it by hand." >&2
+    fi
 fi
 
 # **After the quit, not before it.** Each script copies its own window as it ends, so nothing covers what the app

@@ -5,7 +5,12 @@
 **The suite that drives a running copy of the app, with a real cube, by accessibility.** It is the only
 thing that can say the app works on hardware; everything the crate tests prove is proven against doubles.
 
-**What is in this repository today is the harness and not the checks.** `Tests/Scripted/` carries
+**Four checks are back, 2026-09-25: `00`, `05`, `06` and `12`**, the Faces tab's half of the no-cube range,
+passing 71 of 71 on Linux. What each one had to drop because the Rust app does not have it yet (menu bar
+colours, the Categories tab's limit field, Google) is said in its own header. `07-history-timer` stays out:
+it is the cube's history fetch, and it comes back with the device range.
+
+**What else is in this repository is the harness.** `Tests/Scripted/` carries
 `run.sh`, `lib.sh`, `testlog.sh`, `seed-private.sh`, `stepper-timing.py` and the suite's own README, all
 carried over from `feature/linuxPort` where they had already been made to drive **two** platforms. The 32
 checks are not here, because a check for a feature the Rust app does not have yet cannot pass, and a tree
