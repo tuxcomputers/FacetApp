@@ -51,8 +51,8 @@ shorter list and one that empties.
 
 **A recommendation rather than a rule**, and what it is really saying is which items unblock the most.
 
-1. **8 first**: it is two commands and a doc fix, and the one-off reformat waits on its answer.
-2. **7** is waiting on the Mac to run the renderer and compare, so there is nothing to do on it here.
+1. **9 first**: one command, a copy, and a comparison, and it is what 7 now waits on.
+2. **7** closes on the answer to 9.
 
 ---
 
@@ -136,3 +136,38 @@ names: the software renderer rasterises its own. That wants the real window open
 somebody at each screen, and is a separate exercise from this one.
 
 ---
+
+---
+
+## 9. Re-render the Settings tabs with Inter packaged, and rebuild the comparison
+
+**The Mac's render did not match yours, and the difference was the font.** Everything horizontal agreed to
+the pixel, but the software renderer takes its typeface from the system, so the Mac drew a Helvetica-style
+face and this box a wider, taller one. Panels drifted up to 18px apart down a tab. The measurements are in
+[settings-tabs/README.md](settings-tabs/README.md#what-the-comparison-showed), and the images in
+[`settings-tabs/compare/`](settings-tabs/compare/).
+
+**`facet-ui` now compiles Inter 4.1 into the binary** (`26b9f40`): four static weights in
+`crates/facet-ui/ui/fonts/`, imported by `settings.slint` with `default-font-family: "Inter"`. The Mac is
+re-rendered with it (`e598515`). Inter is not installed on the Mac, so those renders prove the packaged
+copy is what gets drawn.
+
+**What is wanted from this box:**
+
+1. **Check Inter is not installed here** (`fc-list | grep -i inter`). If it is, the render cannot tell the
+   packaged copy from the system one, and that needs saying.
+2. **Re-render and replace `settings-tabs/linux/`**:
+   ```sh
+   cargo run -p facet-ui --example draw-settings-tabs
+   cp target/settings-tabs/*.png docs/settings-tabs/linux/
+   ```
+3. **Rebuild `settings-tabs/compare/`** from the two folders, as the README describes: three panels per
+   tab, Mac then Linux then every pixel differing by more than 32 in any channel.
+4. **Say whether they now match.** The Mac's last panels end at Report y 405, Device y 514, Categories
+   y 386 and App y 448, so those four numbers are the quick check. Identical images are the expected
+   answer; anything left over is either anti-aliasing (small deltas scattered along glyph edges) or a
+   glyph Inter lacks falling back to a system font (whole characters in the diff).
+5. **Update the README** (the `linux/` and `compare/` rows, and the result), and write the outcome in
+   [port-findings.md](port-findings.md) either way, which is what 7 asked for.
+
+**Then 7 can go**, and so can handover-mac 4 from the Mac side.
