@@ -5,11 +5,11 @@ Written by `Tests/Scripted/run.sh` at the end of every run, and committed.
 run, and a stamp that does not describe a real run is worse than no stamp at all.
 
     branch:   feature/reportTab
-    commit:   1811aa2c088f6b75a5c7437f38ac2157ce441f73
+    commit:   37ad5ee7dac363e595d0908e924f5b65aa435b78
     tree:     clean
     database: rebuilt from the DDL
-    started:  2026-09-26 14:26:52
-    finished: 2026-09-26 14:30:53
+    started:  2026-09-26 15:07:08
+    finished: 2026-09-26 15:11:09
     outcome:  passed
     scripts:  6 of 6 run, 0 with failures
     short:    0 ran fewer checks than they declare
