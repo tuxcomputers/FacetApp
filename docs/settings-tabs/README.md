@@ -38,8 +38,8 @@ reproduce.
 | | |
 |---|---|
 | [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11, `x86_64`. Rendered 2026-09-26 on `feature/reportTab`, against a clean test database with `FACET_NOW` at noon on 25 September 2026. `3-report.png` has its weeks starting on Sunday; the other five came out byte-identical to the set before, the 680 minimum height included |
-| [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-26 on `feature/reportTab` at `3189bac`, against a clean test database with `FACET_NOW` at noon on 25 September 2026. `3-report.png` is the Report tab read from the database; the other five are unchanged. **Stale for `3-report.png`**, which still starts its weeks on Monday, until re-rendered after the Sunday change |
-| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-26 from Mac `9df4256` and Linux `3f2d8de`; every diff panel is empty, and all six PNGs were byte-identical across the two machines. **Stale for `3-report.png`** since the weeks moved to Sunday, until `mac/` is re-rendered and this is rebuilt |
+| [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-26 on `feature/reportTab` at `88b21e0`, against a clean test database with `FACET_NOW` at noon on 25 September 2026. `3-report.png` has its weeks starting on Sunday; the other five are unchanged |
+| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. `3-report.png` rebuilt 2026-09-26 from Mac and Linux at `88b21e0`, the other five from Mac `9df4256` and Linux `3f2d8de`; every diff panel is empty, and all six PNGs are byte-identical across the two machines |
 
 **These are Slint's software renderer, not screenshots of the running app.** It draws into a buffer with
 no window server involved, so window chrome and compositing are out of the comparison.
