@@ -100,6 +100,12 @@ pub fn daily_reset_time(connection: &Connection) -> Result<(i64, i64), rusqlite:
     Ok((hour, minute))
 }
 
+/// Whether durations and clock times show seconds, from `setting.display_seconds.enabled`. An absent row or
+/// field reads as true.
+pub fn shows_seconds(connection: &Connection) -> Result<bool, rusqlite::Error> {
+    Ok(integer(connection, "display_seconds", "enabled")?.unwrap_or(1) != 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +173,19 @@ mod tests {
         assert_eq!(blip_seconds(&connection).expect("blip_time should read"), 30);
         assert_eq!(daily_reset_time(&connection).expect("daily_reset_time should read"), (23, 0));
         assert!(is_cube_paired(&connection).expect("paired should read"));
+    }
+
+    #[test]
+    fn seconds_are_shown_unless_the_setting_turns_them_off() {
+        let connection = seeded();
+        assert!(shows_seconds(&connection).expect("display_seconds should read"));
+        connection
+            .execute(
+                "UPDATE setting SET setting_value = '{\"enabled\":false}' WHERE setting_name = 'display_seconds'",
+                [],
+            )
+            .expect("the row should be writable");
+        assert!(!shows_seconds(&connection).expect("display_seconds should read"));
     }
 
     fn seeded() -> Connection {
