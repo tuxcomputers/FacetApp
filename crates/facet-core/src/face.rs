@@ -63,6 +63,28 @@ pub fn set_locked(connection: &Connection, face: i64, locked: bool) -> Result<bo
     Ok(changed > 0)
 }
 
+/// Puts Unassigned on every unlocked face holding `category_id`, and returns those faces in order.
+///
+/// Locked faces keep the category.
+pub fn clear_category(connection: &Connection, category_id: i64) -> Result<Vec<i64>, rusqlite::Error> {
+    let mut statement = connection
+        .prepare("SELECT face_id FROM face WHERE category_id = ?1 AND locked = 0 ORDER BY face_id")?;
+    let faces: Vec<i64> =
+        statement.query_map(params![category_id], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    connection.execute(
+        "UPDATE face SET category_id = 0 WHERE category_id = ?1 AND locked = 0",
+        params![category_id],
+    )?;
+    Ok(faces)
+}
+
+/// The locked faces holding `category_id`, in order.
+pub fn locked_faces_holding(connection: &Connection, category_id: i64) -> Result<Vec<i64>, rusqlite::Error> {
+    let mut statement = connection
+        .prepare("SELECT face_id FROM face WHERE category_id = ?1 AND locked = 1 ORDER BY face_id")?;
+    statement.query_map(params![category_id], |row| row.get(0))?.collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,6 +129,18 @@ mod tests {
         assert!(set_locked(&connection, 2, false).expect("the lock should change"));
         assert!(assign(&connection, 0, 2).expect("the update should run"));
         assert_eq!(category_id(&connection, 2).expect("face 2 should read"), None);
+    }
+
+    #[test]
+    fn clearing_a_category_leaves_locked_faces_holding_it() {
+        let connection = seeded();
+        let meeting = category_id(&connection, 2).expect("face 2 should read").expect("face 2 holds Meeting");
+        assign(&connection, meeting, 5).expect("should assign");
+        assign(&connection, meeting, 13).expect("should assign");
+        assert_eq!(locked_faces_holding(&connection, meeting).expect("should read"), vec![2]);
+        assert_eq!(clear_category(&connection, meeting).expect("should clear"), vec![5, 13]);
+        assert_eq!(category_id(&connection, 5).expect("should read"), None);
+        assert_eq!(category_id(&connection, 2).expect("should read"), Some(meeting));
     }
 
     #[test]

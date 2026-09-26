@@ -44,18 +44,12 @@ export global FacesData {
     in-out property <bool> creating: false;
     in-out property <string> typed-name;
 
-    // A notice over the tab. Shown while `notice-title` is not empty; one button per choice.
-    in property <string> notice-title;
-    in property <string> notice-message;
-    in property <[string]> notice-choices;
-
     callback category-picked(int);
     callback play-pause-pressed();
     callback create-opened();
     callback name-edited(string);
     callback create-saved(string);
     callback create-cancelled();
-    callback notice-chosen(int);
 }
 
 component PlayPauseGlyph inherits Rectangle {
@@ -180,59 +174,6 @@ component CreateControl inherits Rectangle {
                 text: "Save";
                 accessible-id: "save-category";
                 clicked => { FacesData.create-saved(FacesData.typed-name); }
-            }
-        }
-    }
-}
-
-// A notice over the pane, for the questions Create can raise.
-component Notice inherits Rectangle {
-    background: #00000040;
-
-    accessible-role: groupbox;
-    accessible-id: "faces-notice";
-    accessible-label: FacesData.notice-title;
-
-    // Swallows clicks on the backdrop so nothing under the notice can be pressed.
-    TouchArea { }
-
-    Rectangle {
-        width: min(root.width - 80px, 420px);
-        height: box.preferred-height;
-        background: Palette.background;
-        border-radius: Metrics.corner-radius;
-        border-width: 1px;
-        border-color: Palette.border;
-
-        box := VerticalLayout {
-            padding: 20px;
-            spacing: 12px;
-
-            Text {
-                text: FacesData.notice-title;
-                font-weight: 700;
-                wrap: word-wrap;
-                color: Palette.foreground;
-                accessible-role: AccessibleRole.text;
-                accessible-id: "faces-notice-title";
-                accessible-label: FacesData.notice-title;
-            }
-            if FacesData.notice-message != "": Text {
-                text: FacesData.notice-message;
-                wrap: word-wrap;
-                color: Palette.foreground;
-                accessible-role: AccessibleRole.text;
-                accessible-id: "faces-notice-message";
-                accessible-label: FacesData.notice-message;
-            }
-            HorizontalLayout {
-                alignment: end;
-                spacing: 8px;
-                for choice[index] in FacesData.notice-choices: Button {
-                    text: choice;
-                    accessible-id: "faces-notice-choice-" + index;
-                    clicked => { FacesData.notice-chosen(index); }
-                }
             }
         }
     }
@@ -363,10 +304,5 @@ export component FacesPane inherits Rectangle {
 
             CreateControl { }
         }
-    }
-
-    if FacesData.notice-title != "": Notice {
-        width: root.width;
-        height: root.height;
     }
 }

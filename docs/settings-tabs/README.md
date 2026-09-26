@@ -27,16 +27,16 @@ same number means the same tab on both machines and in `compare/`. The example e
 copied in beside the new one. The data directory is
 `~/Library/Application Support/Facet` on the Mac and `~/.local/share/Facet` on Linux.
 
-**The Faces tab is drawn from a freshly built test database**, so both machines render the same rows: the
+**The Faces and Categories tabs are drawn from a freshly built test database**, so both machines render the same rows: the
 seeded Break and Meeting, with their icons, and nothing being timed. Without `FACET_DATABASE` the tab draws
 no categories at all, and a database with anything else in it draws something the other machine cannot
 reproduce.
 
 | | |
 |---|---|
-| [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11, `x86_64`. Rendered 2026-09-25 on `feature/faceTab` at `b9991f5`, against a clean test database |
-| [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-25 on `feature/faceTab` at `030f2ce`, against a clean test database |
-| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-25 from Mac `3c2ac11` and Linux `b9991f5`; every diff panel is empty, and all six PNGs, `1-faces.png` with its rasterised SVG icons included, are byte-identical across the two machines |
+| [`linux/`](linux/) | Linux Mint 22.3, MATE 1.26.1, X11, `x86_64`. Rendered 2026-09-25 on `feature/catergoryTab` at `4f7690c`, against a clean test database. `2-categories.png` is the Categories tab read from the database; the other five came out byte-identical to the set before |
+| [`mac/`](mac/) | macOS 26.6.2, Apple silicon, `arm64`. Rendered 2026-09-25 on `feature/catergoryTab` at `e5992ef`, against a clean test database. `2-categories.png` is the Categories tab read from the database; the other five are unchanged |
+| [`compare/`](compare/) | One image per tab: Mac, Linux, and the pixels that differ between them. Rebuilt 2026-09-25 from Mac `e5992ef` and Linux `4f7690c`; every diff panel is empty, and all six PNGs are byte-identical across the two machines, `2-categories.png` with its icons, disabled checkbox and stepper included |
 
 **These are Slint's software renderer, not screenshots of the running app.** It draws into a buffer with
 no window server involved, so window chrome and compositing are out of the comparison.

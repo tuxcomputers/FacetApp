@@ -1,44 +1,98 @@
 // The Categories tab: the categories themselves, as opposed to which of them is being timed.
 //
-// **Two sections, Active then Inactive**, each folding away behind its own triangle: Active open, because it
-// is the one somebody works in, and Inactive closed, because it is an archive to go looking in occasionally.
-// The create control sits between them rather than inside either list, because it belongs to the tab and not
-// to one section of it.
+// Two sections, Active then Inactive, each folding behind its whole heading; Active starts open and Inactive
+// folded. Create sits between them. The lists are fixed columns, so a long name leaves the next column at
+// the same x.
 //
-// **The lists are columns, not label-and-value rows.** That is the Swift app's own split and the reason this
-// tab does not use `SettingsRow`: a record of what each category *is* wants one property readable down the tab
-// at a glance, so the columns are fixed and a name of any length leaves the next column at the same x.
-//
-// Nothing here reads and nothing here writes. The categories below are placeholders, standing in for a
-// `category` table that this app does not open yet, and they are `in` properties so that wiring the database
-// later is setting them.
+// Everything shown comes from `CategoriesData`, which Rust fills from the database; every change is a
+// callback on it. The icon grid and the colour list open over the pane, and choosing closes them.
 
-import { Palette, CheckBox, Button, ScrollView } from "std-widgets.slint";
+import { Palette, CheckBox, Button, LineEdit, ScrollView } from "std-widgets.slint";
 import { Metrics } from "metrics.slint";
-import { Panel, SectionHeading, StepperField, Swatch, Footnote } from "widgets.slint";
+import { Panel, SectionHeading, StepperField, Swatch } from "widgets.slint";
 
-// One category, as much of it as a row of either list draws.
-export struct CategoryRow {
+// One row of the Active list.
+export struct ActiveCategory {
     id: int,
     name: string,
     colour: color,
-    // Minutes, and 0 means no limit rather than a limit of nothing. The caption over the column says so,
-    // because the field cannot tell the two apart on its own.
+    has-colour: bool,
+    colour-name: string,
+    icon: image,
+    has-icon: bool,
+    icon-label: string,
     daily-limit: int,
-    // Only the Inactive list draws this, and "Never" is a real answer rather than a missing one.
+    // Why the row cannot be changed: the locked faces holding it. Empty when it can.
+    locked-note: string,
+}
+
+// One row of the Inactive list.
+export struct RetiredCategory {
+    id: int,
+    name: string,
     last-used: string,
 }
 
-// The column widths both lists line up on. **The Swift app's**, and fixed for its reason: a column sized to
-// its own content would put the next one at a different x on every row.
+// One cell of the icon grid.
+export struct IconChoice {
+    id: int,
+    file: string,
+    label: string,
+    image: image,
+}
+
+// One row of the colour list.
+export struct ColourChoice {
+    id: int,
+    name: string,
+    colour: color,
+}
+
+export global CategoriesData {
+    in property <[ActiveCategory]> active;
+    in property <[RetiredCategory]> inactive;
+    in-out property <bool> active-expanded: true;
+    in-out property <bool> inactive-expanded: false;
+
+    // The row whose name is being typed into, or -1.
+    in-out property <int> editing-id: -1;
+    in-out property <string> editing-name;
+
+    // The row whose icon grid or colour list is open, or -1, and the choice it holds now.
+    in-out property <int> icon-for: -1;
+    in-out property <int> colour-for: -1;
+    in property <int> current-icon-id;
+    in property <int> current-colour-id;
+    in property <[IconChoice]> icons;
+    in property <[ColourChoice]> colours;
+
+    // The Create control.
+    in-out property <bool> creating: false;
+    in-out property <string> typed-name;
+
+    callback section-toggled(string, bool);
+    callback active-toggled(int, bool);
+    callback retired-toggled(int, bool);
+    callback rename-opened(int);
+    callback rename-edited(string);
+    callback rename-committed(int, string);
+    callback icon-opened(int);
+    callback icon-picked(int, int);
+    callback colour-opened(int);
+    callback colour-picked(int, int);
+    callback limit-edited(int, int);
+    callback create-opened();
+    callback name-edited(string);
+    callback create-saved(string);
+    callback create-cancelled();
+}
+
+// The column widths both lists line up on.
 global Columns {
-    // A checkbox is narrower than the word "Active" above it, so the column is the caption's width.
     out property <length> active: 44px;
     out property <length> icon: 20px;
     out property <length> name: 160px;
-    // Wide enough for the caption over it rather than for the swatch under it.
     out property <length> colour: 46px;
-    // Exactly one stepped field wide, since that is what fills it.
     out property <length> limit: 148px;
     out property <length> caption-size: 10px;
 }
@@ -53,13 +107,62 @@ component ColumnCaption inherits Text {
     overflow: elide;
 }
 
+// A name that opens a field on click. Return commits; Escape abandons.
+component NameCell inherits Rectangle {
+    in property <int> category-id;
+    in property <string> name;
+    in property <string> cell-id;
+    in property <bool> enabled: true;
+
+    width: Columns.name;
+    min-height: Metrics.row-height;
+
+    if CategoriesData.editing-id != root.category-id: Rectangle {
+        accessible-role: button;
+        accessible-id: root.cell-id;
+        accessible-label: root.name;
+        accessible-enabled: root.enabled;
+        accessible-action-default => { if root.enabled { CategoriesData.rename-opened(root.category-id); } }
+
+        Text {
+            width: 100%;
+            text: root.name;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Palette.foreground;
+        }
+        TouchArea { clicked => { if root.enabled { CategoriesData.rename-opened(root.category-id); } } }
+    }
+
+    if CategoriesData.editing-id == root.category-id: FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                CategoriesData.editing-id = -1;
+                return accept;
+            }
+            reject
+        }
+        LineEdit {
+            width: Columns.name;
+            text <=> CategoriesData.editing-name;
+            accessible-id: root.cell-id + "-field";
+            accessible-label: "Name";
+            edited(text) => { CategoriesData.rename-edited(text); }
+            accepted(text) => { CategoriesData.rename-committed(root.category-id, text); }
+            init => { self.focus(); self.select-all(); }
+        }
+    }
+}
+
 component ActiveRow inherits Rectangle {
-    in property <CategoryRow> category;
+    in property <ActiveCategory> category;
+    property <bool> editable: root.category.locked-note == "";
 
     min-height: Metrics.row-height;
     accessible-role: groupbox;
     accessible-id: "category-detail-row-" + root.category.id;
     accessible-label: root.category.name;
+    accessible-description: root.category.locked-note;
 
     HorizontalLayout {
         spacing: Metrics.column-spacing;
@@ -70,32 +173,66 @@ component ActiveRow inherits Rectangle {
             CheckBox {
                 x: 0;
                 checked: true;
+                enabled: root.editable;
                 accessible-id: "category-active-" + root.category.id;
+                accessible-label: root.category.name + " active";
+                toggled => { CategoriesData.active-toggled(root.category.id, self.checked); }
             }
         }
 
-        // The icon column, held open and drawn empty. **The activity icons are TimeFlip's copyrighted set and
-        // the permission to use them does not travel with the code** (see NOTICE), so this app ships none.
-        // Nothing is drawn in the slot rather than an outline standing in for one: an empty box beside a
-        // checkbox reads as a second checkbox, which is a control that does nothing.
-        Rectangle { width: Columns.icon; }
+        Rectangle {
+            width: Columns.icon;
+            accessible-role: button;
+            accessible-id: "category-icon-" + root.category.id;
+            accessible-label: root.category.icon-label;
+            accessible-enabled: root.editable;
+            accessible-action-default => { if root.editable { CategoriesData.icon-opened(root.category.id); } }
 
-        Text {
-            width: Columns.name;
-            text: root.category.name;
-            vertical-alignment: center;
-            overflow: elide;
-            color: Palette.foreground;
+            if root.category.has-icon: Image {
+                width: 18px;
+                height: 18px;
+                source: root.category.icon;
+                colorize: Palette.foreground;
+                image-fit: contain;
+            }
+            // No icon: a circle with a stroke through it, as the Swift app's "nosign".
+            if !root.category.has-icon: Path {
+                width: 14px;
+                height: 14px;
+                viewbox-width: 14;
+                viewbox-height: 14;
+                commands: "M 7 1 A 6 6 0 1 1 6.99 1 Z M 2.8 2.8 L 11.2 11.2";
+                stroke: Palette.foreground;
+                stroke-width: 1.2px;
+                opacity: 0.45;
+            }
+            TouchArea { clicked => { if root.editable { CategoriesData.icon-opened(root.category.id); } } }
+        }
+
+        NameCell {
+            category-id: root.category.id;
+            name: root.category.name;
+            cell-id: "category-name-" + root.category.id;
+            enabled: root.editable;
         }
 
         Rectangle {
             width: Columns.colour;
+            accessible-role: button;
+            accessible-id: "category-colour-" + root.category.id;
+            accessible-label: root.category.name + " colour, "
+                + (root.category.has-colour ? root.category.colour-name : "none");
+            accessible-enabled: root.editable;
+            accessible-action-default => { if root.editable { CategoriesData.colour-opened(root.category.id); } }
+
             Swatch {
                 x: 0;
                 colour: root.category.colour;
+                has-colour: root.category.has-colour;
                 size: 14px;
                 radius: 3px;
             }
+            TouchArea { clicked => { if root.editable { CategoriesData.colour-opened(root.category.id); } } }
         }
 
         StepperField {
@@ -103,13 +240,15 @@ component ActiveRow inherits Rectangle {
             minimum: 0;
             maximum: 1440;
             suffix: "min";
-            field-id: "category-daily-limit-" + root.category.id;
+            enabled: root.editable;
+            field-id: "category-limit-" + root.category.id;
+            edited(value) => { CategoriesData.limit-edited(root.category.id, value); }
         }
     }
 }
 
 component InactiveRow inherits Rectangle {
-    in property <CategoryRow> category;
+    in property <RetiredCategory> category;
 
     min-height: Metrics.row-height;
     accessible-role: groupbox;
@@ -126,15 +265,15 @@ component InactiveRow inherits Rectangle {
                 x: 0;
                 checked: false;
                 accessible-id: "retired-category-active-" + root.category.id;
+                accessible-label: root.category.name + " active";
+                toggled => { CategoriesData.retired-toggled(root.category.id, self.checked); }
             }
         }
 
-        Text {
-            width: Columns.name;
-            text: root.category.name;
-            vertical-alignment: center;
-            overflow: elide;
-            color: Palette.foreground;
+        NameCell {
+            category-id: root.category.id;
+            name: root.category.name;
+            cell-id: "retired-category-name-" + root.category.id;
         }
 
         Text {
@@ -149,22 +288,174 @@ component InactiveRow inherits Rectangle {
     }
 }
 
+// The Create button, which becomes a name field and Save. Return saves and Escape cancels.
+component CreateControl inherits Rectangle {
+    height: 28px;
+
+    if !CategoriesData.creating: HorizontalLayout {
+        alignment: start;
+        Button {
+            text: "Create";
+            accessible-id: "create-category";
+            clicked => { CategoriesData.create-opened(); }
+        }
+    }
+
+    if CategoriesData.creating: FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                CategoriesData.create-cancelled();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            LineEdit {
+                placeholder-text: "Category name";
+                text <=> CategoriesData.typed-name;
+                accessible-id: "category-name-field";
+                accessible-label: "Category name";
+                edited(text) => { CategoriesData.name-edited(text); }
+                accepted(text) => { CategoriesData.create-saved(text); }
+                init => { self.focus(); }
+            }
+            Button {
+                text: "Save";
+                accessible-id: "save-category";
+                clicked => { CategoriesData.create-saved(CategoriesData.typed-name); }
+            }
+        }
+    }
+}
+
+// A panel over the pane holding a picker. A click on the backdrop closes it without choosing.
+component PickerOverlay inherits Rectangle {
+    callback dismissed();
+    background: #00000030;
+    TouchArea { clicked => { root.dismissed(); } }
+
+    Rectangle {
+        width: min(root.width - 40px, 360px);
+        height: min(root.height - 40px, content.preferred-height);
+        background: Palette.background;
+        border-radius: Metrics.corner-radius;
+        border-width: 1px;
+        border-color: Palette.border;
+        clip: true;
+
+        content := VerticalLayout {
+            padding: 12px;
+            @children
+        }
+    }
+}
+
+component IconGrid inherits PickerOverlay {
+    dismissed => { CategoriesData.icon-for = -1; }
+
+    ScrollView {
+        min-height: 200px;
+        preferred-height: 6 * 50px;
+        content-width: self.visible-width;
+
+        VerticalLayout {
+            accessible-role: list;
+            accessible-id: "icon-grid";
+            accessible-label: "Icons";
+            spacing: 10px;
+
+            // Six to a row.
+            for row in Math.ceil(CategoriesData.icons.length / 6): HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                for column in 6: cell := Rectangle {
+                    property <int> index: row * 6 + column;
+                    property <IconChoice> choice: CategoriesData.icons[self.index];
+                    property <bool> selected: self.choice.id == CategoriesData.current-icon-id;
+                    width: 40px;
+                    height: 40px;
+                    visible: self.index < CategoriesData.icons.length;
+                    border-radius: 6px;
+                    border-width: self.selected ? 2px : 1px;
+                    border-color: self.selected ? Palette.accent-background : Palette.border;
+
+                    accessible-role: button;
+                    accessible-id: "icon-cell-" + self.choice.file;
+                    accessible-label: self.choice.label;
+                    accessible-action-default => {
+                        CategoriesData.icon-picked(CategoriesData.icon-for, self.choice.id);
+                    }
+
+                    Image {
+                        width: 24px;
+                        height: 24px;
+                        source: cell.choice.image;
+                        colorize: Palette.foreground;
+                        image-fit: contain;
+                    }
+                    TouchArea {
+                        clicked => { CategoriesData.icon-picked(CategoriesData.icon-for, cell.choice.id); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ColourList inherits PickerOverlay {
+    dismissed => { CategoriesData.colour-for = -1; }
+
+    ScrollView {
+        min-height: 200px;
+        preferred-height: 20 * 28px;
+        content-width: self.visible-width;
+
+        VerticalLayout {
+            accessible-role: list;
+            accessible-id: "colour-list";
+            accessible-label: "Colours";
+
+            for choice in CategoriesData.colours: Rectangle {
+                property <bool> selected: choice.id == CategoriesData.current-colour-id;
+                height: 28px;
+                background: touch.has-hover ? Palette.alternate-background : transparent;
+
+                accessible-role: button;
+                accessible-id: "colour-option-" + choice.name;
+                accessible-label: self.selected ? choice.name + ", selected" : choice.name;
+                accessible-action-default => { CategoriesData.colour-picked(CategoriesData.colour-for, choice.id); }
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 10px;
+                    Rectangle {
+                        width: 14px;
+                        Swatch { colour: choice.colour; size: 14px; radius: 3px; }
+                    }
+                    Text {
+                        text: choice.name;
+                        vertical-alignment: center;
+                        color: Palette.foreground;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: choice.id == CategoriesData.current-colour-id ? "\u{2713}" : "";
+                        vertical-alignment: center;
+                        color: Palette.foreground;
+                    }
+                }
+                touch := TouchArea {
+                    clicked => { CategoriesData.colour-picked(CategoriesData.colour-for, choice.id); }
+                }
+            }
+        }
+    }
+}
+
 export component CategoriesPane inherits Rectangle {
-    in property <[CategoryRow]> active: [
-        { id: 1, name: "Meeting", colour: #0000ff, daily-limit: 0, last-used: "" },
-        { id: 2, name: "Code", colour: #008000, daily-limit: 0, last-used: "" },
-        { id: 3, name: "Admin", colour: #ffa500, daily-limit: 120, last-used: "" },
-        { id: 4, name: "Email", colour: #800080, daily-limit: 0, last-used: "" },
-        { id: 5, name: "Break", colour: #808080, daily-limit: 0, last-used: "" },
-    ];
-    in property <[CategoryRow]> inactive: [
-        { id: 6, name: "Client calls", colour: #008080, daily-limit: 0, last-used: "3 Aug 2026" },
-        { id: 7, name: "Design", colour: #ff00ff, daily-limit: 0, last-used: "Never" },
-    ];
-
-    property <bool> active-expanded: true;
-    property <bool> inactive-expanded: false;
-
     accessible-role: tab-panel;
     accessible-id: "settings-pane-categories";
     accessible-label: "Categories";
@@ -179,37 +470,32 @@ export component CategoriesPane inherits Rectangle {
 
             Panel {
                 panel-id: "categories-active-section-panel";
-                // **"Active categories" rather than "Active".** The word on its own means nothing announced out
-                // of context, which is what a section label is for; the App tab's headings say what they are
-                // and pass none.
                 label: "Active categories";
 
                 SectionHeading {
                     title: "Active";
                     heading-id: "categories-active-section-heading";
-                    expanded <=> root.active-expanded;
+                    expanded <=> CategoriesData.active-expanded;
+                    toggled(open) => { CategoriesData.section-toggled("Active", open); }
                 }
 
-                if root.active-expanded: VerticalLayout {
+                if CategoriesData.active-expanded: VerticalLayout {
                     spacing: Metrics.row-spacing;
 
-                    HorizontalLayout {
+                    if CategoriesData.active.length > 0: HorizontalLayout {
                         spacing: Metrics.column-spacing;
                         alignment: start;
 
                         ColumnCaption { column-width: Columns.active; text: "Active"; }
-                        // Holds the icon column open with nothing in it.
                         Rectangle { width: Columns.icon; }
                         ColumnCaption { column-width: Columns.name; text: "Name"; }
                         ColumnCaption { column-width: Columns.colour; text: "Colour"; }
-                        // The caption says what 0 means, because a limit of nothing and no limit at all are
-                        // opposites and the field cannot tell them apart on its own.
                         ColumnCaption { column-width: Columns.limit; text: "Daily limit (0 = disabled)"; }
                     }
 
-                    for category in root.active: ActiveRow { category: category; }
+                    for category in CategoriesData.active: ActiveRow { category: category; }
 
-                    if root.active.length == 0: Text {
+                    if CategoriesData.active.length == 0: Text {
                         text: "No active categories.";
                         color: Palette.foreground;
                         opacity: 0.55;
@@ -217,13 +503,7 @@ export component CategoriesPane inherits Rectangle {
                 }
             }
 
-            // **In the gap between the two lists**, which is where the Swift app puts it: it belongs to the tab
-            // rather than to one section of it. Collapsed to a button until it is pressed, when it becomes a
-            // name field with Save at the far end.
-            HorizontalLayout {
-                alignment: start;
-                Button { text: "Create"; accessible-id: "create-category"; }
-            }
+            CreateControl { }
 
             Panel {
                 panel-id: "categories-inactive-section-panel";
@@ -232,13 +512,14 @@ export component CategoriesPane inherits Rectangle {
                 SectionHeading {
                     title: "Inactive";
                     heading-id: "categories-inactive-section-heading";
-                    expanded <=> root.inactive-expanded;
+                    expanded <=> CategoriesData.inactive-expanded;
+                    toggled(open) => { CategoriesData.section-toggled("Inactive", open); }
                 }
 
-                if root.inactive-expanded: VerticalLayout {
+                if CategoriesData.inactive-expanded: VerticalLayout {
                     spacing: Metrics.row-spacing;
 
-                    HorizontalLayout {
+                    if CategoriesData.inactive.length > 0: HorizontalLayout {
                         spacing: Metrics.column-spacing;
                         alignment: start;
 
@@ -247,21 +528,18 @@ export component CategoriesPane inherits Rectangle {
                         ColumnCaption { column-width: Columns.limit; text: "Last used"; }
                     }
 
-                    for category in root.inactive: InactiveRow { category: category; }
+                    for category in CategoriesData.inactive: InactiveRow { category: category; }
 
-                    if root.inactive.length == 0: Text {
+                    if CategoriesData.inactive.length == 0: Text {
                         text: "No inactive categories.";
                         color: Palette.foreground;
                         opacity: 0.55;
                     }
                 }
             }
-
-            Footnote {
-                note-id: "categories-placeholder-note";
-                text: "Placeholder categories. This app does not open the database yet, so nothing here is "
-                    + "read from it and nothing typed into it is kept.";
-            }
         }
     }
+
+    if CategoriesData.icon-for >= 0: IconGrid { width: root.width; height: root.height; }
+    if CategoriesData.colour-for >= 0: ColourList { width: root.width; height: root.height; }
 }

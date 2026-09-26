@@ -11,6 +11,7 @@ pub mod category;
 pub mod database;
 pub mod debug_log;
 pub mod face;
+pub mod reference;
 pub mod segment;
 pub mod setting;
 pub mod time_entry;

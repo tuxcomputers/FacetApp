@@ -8,6 +8,23 @@ pub fn svg(name: &str) -> Option<&'static [u8]> {
     ICONS.binary_search_by(|(candidate, _)| (*candidate).cmp(name)).ok().map(|index| ICONS[index].1)
 }
 
+thread_local! {
+    static DECODED: std::cell::RefCell<std::collections::HashMap<String, slint::Image>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The icon called `name`, decoded. Decoded once per thread and kept, the files being compiled in and never
+/// changing. `Ok(None)` for a name with no file; an error when the file will not decode.
+pub fn image(name: &str) -> Result<Option<slint::Image>, slint::LoadImageError> {
+    if let Some(image) = DECODED.with(|decoded| decoded.borrow().get(name).cloned()) {
+        return Ok(Some(image));
+    }
+    let Some(bytes) = svg(name) else { return Ok(None) };
+    let image = slint::Image::load_from_svg_data(bytes)?;
+    DECODED.with(|decoded| decoded.borrow_mut().insert(name.to_string(), image.clone()));
+    Ok(Some(image))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

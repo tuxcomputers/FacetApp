@@ -136,6 +136,33 @@ pub fn seconds_in_window(
     Ok(total as i64)
 }
 
+/// When `category_id` was last timed: the latest end of any of its time entries, as unix seconds. `None` when
+/// it has none.
+pub fn last_used(connection: &Connection, category_id: i64) -> Result<Option<i64>, rusqlite::Error> {
+    let latest: Option<f64> = connection.query_row(
+        "SELECT MAX(de.start_epoch + te.duration_seconds) FROM time_entry te \
+         JOIN device_event de ON de.device_event_id = te.device_event_id WHERE te.category_id = ?1",
+        params![category_id],
+        |row| row.get(0),
+    )?;
+    Ok(latest.map(|seconds| seconds as i64).filter(|&seconds| seconds > 0))
+}
+
+/// Unix seconds as local time, `25 Sep 2026, 15:04`.
+pub fn format_local(connection: &Connection, epoch: i64) -> Result<String, rusqlite::Error> {
+    const MONTHS: [&str; 12] =
+        ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let (day, month, rest): (i64, i64, String) = connection.query_row(
+        "SELECT CAST(strftime('%d', ?1, 'unixepoch', 'localtime') AS INTEGER), \
+                CAST(strftime('%m', ?1, 'unixepoch', 'localtime') AS INTEGER), \
+                strftime('%Y, %H:%M', ?1, 'unixepoch', 'localtime')",
+        params![epoch],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let month = usize::try_from(month - 1).ok().and_then(|index| MONTHS.get(index)).unwrap_or(&"?");
+    Ok(format!("{day} {month} {rest}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +232,28 @@ mod tests {
         let connection = seeded();
         let id = segment::start_segment(&connection, 13, 1_000, &NO_LOG).expect("should start");
         assert_eq!(consider(&connection, id, &NO_LOG).expect("should run"), Consideration::StillRunning);
+    }
+
+    #[test]
+    fn last_used_is_the_end_of_the_latest_entry() {
+        let connection = seeded();
+        let category = meeting(&connection);
+        assert_eq!(last_used(&connection, category).expect("should read"), None);
+        face::assign(&connection, category, 13).expect("should assign");
+        run(&connection, 13, 1_000, 1_100);
+        run(&connection, 13, 2_000, 2_050);
+        assert_eq!(last_used(&connection, category).expect("should read"), Some(2_050));
+    }
+
+    #[test]
+    fn local_times_read_day_month_year_and_minutes() {
+        let connection = seeded();
+        let epoch: i64 = connection
+            .query_row("SELECT CAST(strftime('%s', '2026-09-25 15:04:00', 'utc') AS INTEGER)", [], |r| {
+                r.get(0)
+            })
+            .expect("should compute");
+        assert_eq!(format_local(&connection, epoch).expect("should format"), "25 Sep 2026, 15:04");
     }
 
     #[test]

@@ -63,7 +63,7 @@ is, and it is the same version as the Mac's.
 | Targets | One: `x86_64-unknown-linux-gnu`. **Nothing here cross-compiles** |
 | Installed by | rustup, into `~/.cargo` and `~/.rustup` |
 | `clippy` | **Installed**, 0.1.98. `cargo clippy` exits 0 on the crates this box builds |
-| `rustfmt` | **Installed**, 1.9.0-stable (`48a229ceae`). **`cargo fmt --check` exits 1**, and see below |
+| `rustfmt` | **Installed**, 1.9.0-stable (`48a229ceae`). `cargo fmt --check` exits 0 since the reformat, and see below |
 
 **The toolchain versions match the Mac exactly**, which is worth stating rather than assuming: both are
 on cargo and rustc 1.98.1 with the same commit hashes, so a compiler-version difference is not
@@ -175,14 +175,15 @@ platform and this machine cannot compile the CoreBluetooth or WinRT adapters.
 | `cargo build -p facet-linux` | 5.11s | On top of the above, once the crate had a tray in it |
 | `cargo test` | 30s | 19 tests, the slow one being `facet-ui` compiling Slint |
 | `cargo clippy` | 5.34s | Exit 0 |
-| `cargo fmt --check` | instant | **Exit 1, and see below** |
+| `cargo fmt --check` | instant | Exit 0 since the reformat (`088c676`), and see below |
 
 Measured 2026-09-20 and re-measured 2026-09-22, the workspace having gained `facet-ui` and a Linux tray
 in between. The 15.93s is still a true cold figure; the rest are what they cost from a warm `target/`.
 
-**`cargo fmt --check` exits 1, and that is a reformat waiting to happen rather than a standard nobody
-agreed.** There **is** a `rustfmt.toml` now, adopted 2026-09-25, and it is written to the style the tree
-already has rather than against it:
+**`cargo fmt --check` exits 0, and CI refuses a tree it would change.** Re-measured here 2026-09-25 on
+`main` after the one-off reformat (`088c676`) landed from the Mac. CI's Format job runs the same check and
+is required (`c0c596f`). **So run `cargo fmt` before every commit on this box.** The standard is
+`rustfmt.toml`, adopted 2026-09-25 and written to the style the tree already had rather than against it:
 
 ```toml
 max_width = 110
@@ -214,12 +215,15 @@ tree back towards its own style rather than fighting it. The one real departure 
 `facet-core/src/database.rs`, whose struct variants get exploded one field per line whatever the
 heuristics say.
 
-**Do not run `cargo fmt` here.** The reformat lands as one commit containing nothing else, from the Mac.
+**That table is the record of the reformat before it happened**, and the two machines agreeing on it is
+why one reformat from the Mac was enough. `facet-linux` builds cleanly after it, re-checked here because the
+Mac formatted that crate without being able to compile it.
 
 **`cargo clippy` is the gate that is already green**: exit 0 across `facet-core`, `facet-ui` and
 `facet-linux` with all targets, carrying two warnings, both `manual Range::contains` in
 `facet-ui/src/status_icon.rs`. Those are in code moved verbatim from `facet-mac` and were left alone so
-the move stayed reviewable as a move. **CI gates on neither yet.**
+the move stayed reviewable as a move. Re-measured 2026-09-25 on `main`: still exit 0, and still those two.
+**CI gates on formatting and not on clippy.**
 
 **The probes are excluded from the workspace** and resolve their own dependencies:
 

@@ -7,42 +7,20 @@
 //! [`Faces::attach`]).
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use facet_core::category::{self, Category, CreateDecision};
+use facet_core::category::{self, Category};
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag, plain};
 use facet_core::{segment, setting, timing};
 use rusqlite::Connection;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
+use crate::create::Creator;
+use crate::notice::Notice;
 use crate::{FaceCategory, FacesData, SettingsWindow, icons};
-
-/// A question the notice is asking, and what each of its buttons means.
-enum Pending {
-    AlreadyActive,
-    RetiredNamesakes { name: String, first_id: i64, choices: Vec<Choice> },
-}
-
-#[derive(Clone, Copy)]
-enum Choice {
-    Reactivate,
-    CreateNew,
-    Cancel,
-}
-
-impl Choice {
-    fn title(self) -> &'static str {
-        match self {
-            Choice::Reactivate => "Reactivate",
-            Choice::CreateNew => "Create new one",
-            Choice::Cancel => "Cancel",
-        }
-    }
-}
 
 /// What the menu bar shows for the app's own clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,8 +40,7 @@ pub struct Faces {
     log: Rc<Option<DebugLog>>,
     has_given_up_on_cube: bool,
     tick: slint::Timer,
-    icons: RefCell<HashMap<String, slint::Image>>,
-    pending: RefCell<Option<Pending>>,
+    creator: Rc<Creator>,
     on_timing_changed: RefCell<Option<Box<dyn Fn()>>>,
     this: RefCell<Weak<Faces>>,
 }
@@ -79,15 +56,15 @@ impl Faces {
         database: PathBuf,
         log: Rc<Option<DebugLog>>,
         has_given_up_on_cube: bool,
+        notice: Rc<Notice>,
     ) -> Rc<Faces> {
         let faces = Rc::new(Faces {
             ui: ui.as_weak(),
+            creator: Creator::new(database.clone(), Rc::clone(&log), notice),
             database,
             log,
             has_given_up_on_cube,
             tick: slint::Timer::default(),
-            icons: RefCell::new(HashMap::new()),
-            pending: RefCell::new(None),
             on_timing_changed: RefCell::new(None),
             this: RefCell::new(Weak::new()),
         });
@@ -127,12 +104,6 @@ impl Faces {
         data.on_create_saved(move |text| {
             if let Some(faces) = weak.upgrade() {
                 faces.save(&text);
-            }
-        });
-        let weak = Rc::downgrade(&faces);
-        data.on_notice_chosen(move |index| {
-            if let Some(faces) = weak.upgrade() {
-                faces.choose(index);
             }
         });
         faces
@@ -314,117 +285,16 @@ impl Faces {
     fn save(&self, typed: &str) {
         let Some(ui) = self.ui.upgrade() else { return };
         ui.global::<FacesData>().set_creating(false);
-        let Some(connection) = self.connect() else { return };
-        let Some(decision) = self.report(category::decide_create(&connection, typed)) else { return };
-        match decision {
-            CreateDecision::Ignore => {}
-            CreateDecision::Insert(name) => {
-                let created = self.report(category::insert(&connection, &name));
-                self.log.record(Tag::Click, || {
-                    format!("Button clicked: Save new category {} -> {created:?}", plain(&name))
-                });
-                self.refresh();
-                if let Some(id) = created {
-                    self.pick(id);
+        let weak = self.this.borrow().clone();
+        // Creating on the Faces tab starts timing whatever was written.
+        self.creator.save(typed, move |written| {
+            if let Some(faces) = weak.upgrade() {
+                faces.refresh();
+                if let Some(id) = written {
+                    faces.pick(id);
                 }
             }
-            CreateDecision::AlreadyActive(existing) => {
-                self.log.record(Tag::Click, || {
-                    format!(
-                        "Button clicked: Save new category {} -> already active as category_id {}",
-                        plain(&existing.name),
-                        existing.id
-                    )
-                });
-                *self.pending.borrow_mut() = Some(Pending::AlreadyActive);
-                self.show_notice(
-                    "That category already exists",
-                    &format!("\u{201c}{}\u{201d} is already in the list.", existing.name),
-                    &["OK"],
-                );
-            }
-            CreateDecision::RetiredNamesakes(existing) => {
-                let first = &existing[0];
-                let choices = if existing.len() == 1 {
-                    vec![Choice::Reactivate, Choice::CreateNew, Choice::Cancel]
-                } else {
-                    vec![Choice::CreateNew, Choice::Cancel]
-                };
-                self.log.record(Tag::Click, || {
-                    format!(
-                        "Button clicked: Save new category {} -> asking, {} retired under that name",
-                        plain(&first.name),
-                        existing.len()
-                    )
-                });
-                let message = if existing.len() == 1 {
-                    "There is one category with the same name.".to_string()
-                } else {
-                    format!("There are {} categories with the same name.", existing.len())
-                };
-                let titles: Vec<&str> = choices.iter().map(|c| c.title()).collect();
-                self.show_notice(
-                    &format!(
-                        "The category \u{201c}{}\u{201d} already exists as a deactivated category",
-                        first.name
-                    ),
-                    &message,
-                    &titles,
-                );
-                *self.pending.borrow_mut() = Some(Pending::RetiredNamesakes {
-                    name: category::normalise(typed),
-                    first_id: first.id,
-                    choices,
-                });
-            }
-        }
-    }
-
-    fn choose(&self, index: i32) {
-        let pending = self.pending.borrow_mut().take();
-        self.show_notice("", "", &[]);
-        let Some(Pending::RetiredNamesakes { name, first_id, choices }) = pending else { return };
-        let Some(&choice) = usize::try_from(index).ok().and_then(|i| choices.get(i)) else { return };
-        let Some(connection) = self.connect() else { return };
-        let started = match choice {
-            Choice::Reactivate => {
-                let reinstated =
-                    self.report(category::set_active(&connection, first_id, true)).unwrap_or(false);
-                self.log.record(Tag::Click, || {
-                    format!(
-                        "Button clicked: Reactivate category_id {first_id} -> {}",
-                        if reinstated { "done" } else { "REFUSED" }
-                    )
-                });
-                reinstated.then_some(first_id)
-            }
-            Choice::CreateNew => {
-                let created = self.report(category::insert(&connection, &name));
-                self.log.record(Tag::Click, || {
-                    format!("Button clicked: Create new one {} -> {created:?}, leaving category_id {first_id} retired", plain(&name))
-                });
-                created
-            }
-            Choice::Cancel => {
-                self.log
-                    .record(Tag::Click, || format!("Button clicked: Cancel, {} not created", plain(&name)));
-                return;
-            }
-        };
-        self.refresh();
-        if let Some(id) = started {
-            self.pick(id);
-        }
-    }
-
-    fn show_notice(&self, title: &str, message: &str, choices: &[&str]) {
-        if let Some(ui) = self.ui.upgrade() {
-            let data = ui.global::<FacesData>();
-            let choices: Vec<SharedString> = choices.iter().map(|&c| c.into()).collect();
-            data.set_notice_choices(ModelRc::new(VecModel::from(choices)));
-            data.set_notice_message(message.into());
-            data.set_notice_title(title.into());
-        }
+        });
     }
 
     fn row(&self, category: &Category) -> FaceCategory {
@@ -443,17 +313,11 @@ impl Faces {
 
     /// The decoded icon called `name`. `None`, and a logged failure, when it has no file or will not decode.
     fn icon(&self, name: &str) -> Option<slint::Image> {
-        if let Some(image) = self.icons.borrow().get(name) {
-            return Some(image.clone());
-        }
-        let Some(bytes) = icons::svg(name) else {
-            self.log.record_failure(Tag::Settings, || format!("Faces: no icon file for {}", plain(name)));
-            return None;
-        };
-        match slint::Image::load_from_svg_data(bytes) {
-            Ok(image) => {
-                self.icons.borrow_mut().insert(name.to_string(), image.clone());
-                Some(image)
+        match icons::image(name) {
+            Ok(Some(image)) => Some(image),
+            Ok(None) => {
+                self.log.record_failure(Tag::Settings, || format!("Faces: no icon file for {}", plain(name)));
+                None
             }
             Err(error) => {
                 self.log.record_failure(Tag::Settings, || {
@@ -522,7 +386,8 @@ mod tests {
         database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
 
         let ui = SettingsWindow::new().expect("the window should build");
-        let faces = Faces::attach(&ui, path.clone(), Rc::new(None), true);
+        let notice = Notice::attach(&ui);
+        let faces = Faces::attach(&ui, path.clone(), Rc::new(None), true, Rc::clone(&notice));
         let changes = Rc::new(std::cell::Cell::new(0));
         let counted = Rc::clone(&changes);
         faces.set_on_timing_changed(move || counted.set(counted.get() + 1));
@@ -569,9 +434,9 @@ mod tests {
         assert!(data.get_running());
 
         faces.save("meeting");
-        assert_eq!(data.get_notice_title(), "That category already exists");
-        faces.choose(0);
-        assert_eq!(data.get_notice_title(), "");
+        assert_eq!(notice.title(), "That category already exists");
+        notice.choose(0);
+        assert_eq!(notice.title(), "");
 
         std::fs::remove_file(&path).expect("the test database should be removable");
     }

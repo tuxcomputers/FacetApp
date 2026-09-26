@@ -18,13 +18,12 @@ what `ax-dump.py --frames` already does and is known to work on this app.
 """
 
 import re
-import subprocess
 import os
 import sys
 import time
 
 import Quartz
-from AppKit import NSWorkspace
+from AppKit import NSApplicationActivateIgnoringOtherApps, NSWorkspace
 from ApplicationServices import AXUIElementCopyAttributeValue, AXUIElementCreateApplication
 
 
@@ -63,13 +62,13 @@ def main():
     identifier, seconds = sys.argv[1], float(sys.argv[2])
     app_name = sys.argv[4] if len(sys.argv) > 4 else os.environ.get("FACET_APP_NAME", "Facet")
 
-    pid = next(
-        (a.processIdentifier() for a in NSWorkspace.sharedWorkspace().runningApplications()
-         if a.localizedName() == app_name),
+    running = next(
+        (a for a in NSWorkspace.sharedWorkspace().runningApplications() if a.localizedName() == app_name),
         None,
     )
-    if pid is None:
+    if running is None:
         sys.exit(f"{app_name} is not running")
+    pid = running.processIdentifier()
 
     app = AXUIElementCreateApplication(pid)
     target = next(
@@ -87,8 +86,17 @@ def main():
     point = (position[0] + size[0] / 2, position[1] + size[1] / 2)
 
     # The app has to be in front, or the first click is spent activating it rather than pressing anything.
-    subprocess.run(["osascript", "-e", f'tell application "{app_name}" to activate'], check=False)
-    time.sleep(0.4)
+    # By process rather than by name: a bare binary has no bundle for AppleScript to find. Nothing is posted
+    # unless it is in front.
+    running.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+    for _ in range(20):
+        time.sleep(0.1)
+        frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if frontmost is not None and frontmost.processIdentifier() == pid:
+            break
+    else:
+        sys.exit(f"{app_name} would not come to the front, so no click was posted")
+    time.sleep(0.2)
 
     for kind in (Quartz.kCGEventMouseMoved, Quartz.kCGEventLeftMouseDown):
         Quartz.CGEventPost(
