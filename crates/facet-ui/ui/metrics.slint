@@ -42,7 +42,9 @@ export global Metrics {
     // The one width the Settings window ever has.
     out property <length> window-width: 640px;
     out property <length> window-default-height: 680px;
-    out property <length> window-minimum-height: 400px;
+    // No shorter than it opens: the Report's two calendars fill 400 on their own, and MATE opened the window at
+    // the minimum, clipping the totals below them out of sight and out of the accessibility tree (2026-09-26).
+    out property <length> window-minimum-height: 680px;
 
     out property <length> body-font-size: 13px;
     out property <length> heading-font-size: 13px;
