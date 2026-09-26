@@ -8,8 +8,8 @@
 #
 # - **It opens on the app day**, the day the current `daily_reset_time` window started on, where the Swift app
 #   opened on the calendar date. That is a check of its own now, off the totals line selecting the tab writes.
-# - **Weekday headings are Monday first** whatever the locale. The headings are drawn text with no identifier,
-#   so what is checked is that the first day cell in the From calendar is a Monday.
+# - **Weeks start on Sunday** whatever the locale. The headings are drawn text with no identifier, so what is
+#   checked is that the first day cell in the From calendar is a Sunday.
 # - **The reset carries a minute**, `{"hour":3,"minute":0}`, so the day is worked out from both.
 # - **A label is `value=` on this dump**, where the macOS one printed `desc=` (see `scripts/at-dump.py`).
 # - **Every category totalled must be drawn**, the count on screen against the count the totals line gives.
@@ -40,9 +40,9 @@ since=$(mark)
 select_tab Report
 expect_log "it opens on the app day ($TODAY, the day starting at $RESET_AT)" "$since" "Report totals $TODAY $RESET_AT%"
 
-# Monday first: the first cell the From calendar draws is the Monday on or before the first of the month.
-first_cell=$(tree | grep -o "id=report-from-[0-9-]*" | head -1 | sed 's/id=report-from-//')
-check "the calendar starts its weeks on a Monday ($first_cell)" "1" "$(sql "SELECT strftime('%w', '${first_cell:-none}');")"
+# Sunday first: the first cell the From calendar draws is the Sunday on or before the first of the month.
+first_cell=$(tree | grep -oE "id=report-from-[0-9]{4}-[0-9]{2}-[0-9]{2}" | head -1 | sed 's/id=report-from-//')
+check "the calendar starts its weeks on a Sunday ($first_cell)" "0" "$(sql "SELECT strftime('%w', '${first_cell:-none}');")"
 
 # **The day the newest entry belongs to, not today's date.** The app's day starts at `daily_reset_time` (3 AM by
 # default), so a run at half past midnight is reporting on the *previous* calendar day. Worked out the same way
