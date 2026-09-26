@@ -48,3 +48,42 @@ for whichever machine gets to them. This is what the *other* machine is being as
 shorter list and one that empties.
 
 ---
+
+## 17. The App tab: build it, try its dialogs, Secret Service and Google on MATE, and convert `08`
+
+**On `feature/appTab`.** The App tab now does everything the Swift one did, Google included, and a lot of it
+runs through things only Linux can say work there. The Mac could not compile `facet-linux`, whose `main.rs`
+changed throughout.
+
+**What changed under you:**
+
+- **The logger is a `Trace`** (`7dbde1e`): every controller takes `Rc<Trace>`, helpers take any `Record`, and
+  the Debug logging box switches recording while the app runs. `CLAUDE.md`'s logger rule says so now.
+- **Ports in `facet_core::port`**: `Opener`, `FileChooser`, `SecretStore`, `Http`, `LoopbackListener`.
+- **A new crate, `facet-adapters`** (a default member): `rfd` dialogs (XDG portal, no wayland feature),
+  `keyring` 4.2, `ureq` 3 with rustls, and a std loopback listener. `LinuxOpener` is in `facet-linux`
+  and uses `xdg-open`, opening the folder when revealing a file.
+- **Google**: the refresh token goes to the secret store under `au.com.tux.facet.google-refresh`, account
+  `refresh-token`. Credentials come from `FACET_GOOGLE_CLIENT_JSON`, then `~/.config/facet/google-client.json`,
+  then a copy `scripts/generate-credentials.sh` bundles in.
+
+**What is wanted:**
+
+1. **`cargo build -p facet-linux`**, and say what broke if anything did.
+2. **The App settings section**: the four controls write through and read back (`App setting <name>.<field>
+   -> ...` in the trace), and a stored change redraws the menu bar.
+3. **Debug**: ticking logging off and on writes `Logging turned off` / `Logging turned on`. **Choose** opens
+   the portal's folder picker, **Save a copy** its save dialog, **Reveal** opens the folder in the file
+   manager, **Clear** asks first. Say whether the portal answers under MATE at all; `rfd` needs
+   `xdg-desktop-portal` and a backend for it.
+4. **Google**, if this box has `~/.config/facet/google-client.json`: Sign in opens the browser, the redirect
+   comes back, the token lands in the Secret Service, the section says Connected. Then Create calendar,
+   rename it, delete it, and Disconnect. `secret-tool search service au.com.tux.facet.google-refresh` shows the
+   token.
+5. **Convert `Tests/Scripted/08-app-settings.sh`** (44 checks in Swift). The ids are the Swift ones; the
+   notable differences are the notice for a refused write ("That setting was not saved") and that the
+   stepper has no `-up`/`-down` ids. `10-google-calendar` needs calendar sync, which is not built; `11`
+   (reconnect) and the calendar part of `03` could convert if you have an account to hand.
+6. **Run the suite and commit the stamp.**
+
+The Mac has run none of this against a real Google account yet either: that needs somebody at the browser.
