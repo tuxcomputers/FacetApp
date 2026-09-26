@@ -46,6 +46,8 @@ facet-adapters = { path = "crates/facet-adapters" }
 # and the XDG portal backend Linux uses does not need it.
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 dirs = "7.0.0"
+# HTTPS for the Google calls, rustls with ring.
+ureq = "3.4.2"
 
 # measured: probe/timeflip-btleplug drove the real cube with these
 btleplug = "0.13.1"
@@ -72,7 +74,8 @@ ksni = { version = "0.3.6", default-features = false }
 # a secret through the live Secret Service with this version. It also records what keyring's own docs say:
 # an application that wants to choose its store per platform "should not be linking to this library at
 # all" and should take keyring-core plus a specific store instead. That is a description of this app, so
-# the secret store port decides whether this line stays. Nothing depends on it yet.
+# the secret store port decides whether this line stays. facet-adapters' KeyringSecretStore uses it for the
+# Google refresh token.
 keyring = "4.2.0"
 sha2 = "0.11.0"
 # PKCE verifiers and OAuth state values.

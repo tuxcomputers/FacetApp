@@ -9,4 +9,6 @@ repository.workspace = true
 [dependencies]
 facet-core.workspace = true
 dirs.workspace = true
+keyring.workspace = true
 rfd.workspace = true
+ureq.workspace = true
