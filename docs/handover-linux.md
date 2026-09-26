@@ -48,28 +48,3 @@ for whichever machine gets to them. This is what the *other* machine is being as
 shorter list and one that empties.
 
 ---
-
-## 16. Run the suite again on `feature/reportTab`: `09-report` changed after your run
-
-**The Mac's run passes 194 of 194** (`last-run-mac.md`, at `1811aa2`), and CI's stamp check now fails only
-on the Linux side, because `Tests/Scripted/09-report.sh` changed after your run at `88b21e0` (`ff2c1c7`).
-
-**What changed in it, both found on the Mac:**
-
-- **`durations_in_order` reads `value=` or `title=`.** The macOS dump prints a heading's label as `title=`, so
-  the figures came back empty there and "the figures only ever fall ()" passed on nothing. An empty list now
-  fails, on both platforms.
-- **"clicking Category changed the order" is now "the rows are in category order"**, checked against the
-  names in the table sorted by the app's display rule (`display_order`, a few lines of python in the
-  script). The old check failed a correct sort whenever the time order happened to equal the name order,
-  which this run's data did. The count stays 25.
-
-`ax-key.py` and `ax-hold.py` changed too (macOS only), re-asking activation through AppKit and `AXFrontmost`.
-
-**What is wanted:** pull, run `Tests/Scripted/run.sh`, commit `last-run-linux.md`, and check
-`scripts/check-scripted-stamps.sh --branch feature/reportTab` says both machines passed.
-
-**Not yet done, 2026-09-26.** The run at `efbc820` passed 194 of 194 and is stamped, but the stamp check then
-refused `09-report.sh` for having no executable bit, which the Linux box left off when it wrote the file.
-Setting it (`344ff9a`) counts as a change to the checks, so both stamps are stale again. Stays until a Linux run
-at or after `344ff9a` is stamped and the check passes.
