@@ -374,8 +374,9 @@ never carries one cannot be got wrong by whoever writes the next pattern.
   row as well as printing**, which is the half that matters: a terminal transcript is whatever is still in
   a scrollback buffer, while a row outlives the session and is what every scripted check polls for.
 - **The logger is injected, not global.** Built once in `main.rs`, gated there on the `debug` setting, and
-  handed to whatever needs it as an `Option`, so a launch with logging off has no logger at all rather
-  than one that returns early, and no call site needs an `if` around it.
+  handed to whatever needs it as a `Trace`, which holds no logger at all while recording is off rather
+  than one that returns early, so no call site needs an `if` around it. The App tab's Debug logging box
+  switches it while the app runs, as the Swift app did.
 - **Tags pad to a common width** so console lines stay aligned. Keep them in one enum whose padding is
   computed from the longest case, so adding a case re-pads every tag automatically. **Add a new tag as a
   case rather than inlining a `[tag]` string in the message.**

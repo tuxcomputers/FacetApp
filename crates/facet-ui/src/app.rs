@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
 use facet_core::app_settings::{self, Value, Values};
-use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag};
+use facet_core::debug_log::{Record, Tag, Trace};
+use facet_core::{database, setting};
 use rusqlite::Connection;
 use slint::ComponentHandle;
 
@@ -22,10 +22,12 @@ use crate::{AppData, SettingsWindow};
 pub struct App {
     ui: slint::Weak<SettingsWindow>,
     database: PathBuf,
-    log: Rc<Option<DebugLog>>,
+    log: Rc<Trace>,
     notice: Rc<Notice>,
     /// What the window holds, from [`App::open`] until the window closes.
     held: RefCell<Option<Values>>,
+    /// Whether debug logging is on, as the window holds it.
+    held_debug: RefCell<Option<bool>>,
     on_changed: RefCell<Vec<Box<dyn Fn()>>>,
     this: RefCell<Weak<App>>,
 }
@@ -52,18 +54,14 @@ impl Row {
 
 impl App {
     /// Wires the tab's callbacks on `ui` to `database`. Call once, at launch.
-    pub fn attach(
-        ui: &SettingsWindow,
-        database: PathBuf,
-        log: Rc<Option<DebugLog>>,
-        notice: Rc<Notice>,
-    ) -> Rc<App> {
+    pub fn attach(ui: &SettingsWindow, database: PathBuf, log: Rc<Trace>, notice: Rc<Notice>) -> Rc<App> {
         let app = Rc::new(App {
             ui: ui.as_weak(),
             database,
             log,
             notice,
             held: RefCell::new(None),
+            held_debug: RefCell::new(None),
             on_changed: RefCell::new(Vec::new()),
             this: RefCell::new(Weak::new()),
         });
@@ -97,6 +95,12 @@ impl App {
             }
         });
         let weak = Rc::downgrade(&app);
+        data.on_debug_toggled(move |on| {
+            if let Some(app) = weak.upgrade() {
+                app.debug_toggled(on);
+            }
+        });
+        let weak = Rc::downgrade(&app);
         data.on_blip_seconds_edited(move |seconds| {
             if let Some(app) = weak.upgrade() {
                 app.change(Row::BlipSeconds, i64::from(seconds));
@@ -122,6 +126,64 @@ impl App {
         let Some(values) = self.report(app_settings::read(&connection)) else { return };
         *self.held.borrow_mut() = Some(values.clone());
         self.show(&values);
+        let Some(debug) = self.report(setting::debug_trace(&connection)) else { return };
+        *self.held_debug.borrow_mut() = Some(debug.enabled);
+        data.set_debug_enabled(debug.enabled);
+        let directory = if debug.directory.is_empty() {
+            self.log.file().parent().map(|folder| tilde(&folder.display().to_string())).unwrap_or_default()
+        } else {
+            debug.directory
+        };
+        data.set_debug_directory(directory.into());
+        self.show_trace();
+    }
+
+    /// Enables the trace file's buttons only while the file exists.
+    fn show_trace(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.global::<AppData>().set_has_debug_trace(self.log.file().is_file());
+        }
+    }
+
+    /// Writes `debug.enabled` through and, once the table holds it, starts or stops recording.
+    fn debug_toggled(&self, on: bool) {
+        let Some(held) = *self.held_debug.borrow() else { return };
+        let stored = self
+            .connect()
+            .and_then(|connection| {
+                self.report(app_settings::write(
+                    &connection,
+                    "debug",
+                    "enabled",
+                    &Value::Flag(on),
+                    &*self.log,
+                ))
+            })
+            .unwrap_or(false);
+        if !stored {
+            if let Some(ui) = self.ui.upgrade() {
+                ui.global::<AppData>().set_debug_enabled(held);
+            }
+            self.refused("Debug logging");
+            return;
+        }
+        *self.held_debug.borrow_mut() = Some(on);
+        if let Err(error) = self.log.set_recording(on) {
+            self.log.record_failure(Tag::Settings, || {
+                format!("Logging could not be turned {}: {error}", if on { "on" } else { "off" })
+            });
+        }
+        self.show_trace();
+    }
+
+    fn refused(&self, title: &str) {
+        self.notice.tell(
+            "That setting was not saved",
+            &format!(
+                "The database would not take the new value for \u{201c}{title}\u{201d}, so the setting is unchanged \
+                 and the row has gone back to what is stored.\n\nNothing else has been affected. Trying again is safe."
+            ),
+        );
     }
 
     fn show(&self, values: &Values) {
@@ -161,15 +223,7 @@ impl App {
             .unwrap_or(false);
         if !stored {
             self.show(&held);
-            self.notice.tell(
-                "That setting was not saved",
-                &format!(
-                    "The database would not take the new value for \u{201c}{}\u{201d}, so the setting is unchanged \
-                     and the row has gone back to what is stored.\n\nNothing else has been affected. Trying again \
-                     is safe.",
-                    row.title()
-                ),
-            );
+            self.refused(row.title());
             return;
         }
         match row {
@@ -206,6 +260,14 @@ impl App {
     }
 }
 
+/// `path` with the home folder written as `~`.
+fn tilde(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && path.starts_with(&home) => format!("~{}", &path[home.len()..]),
+        _ => path.to_string(),
+    }
+}
+
 fn to_i32(value: i64) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
 }
@@ -236,7 +298,13 @@ mod tests {
         let connection = database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
         let ui = SettingsWindow::new().expect("the window should build");
         let notice = Notice::attach(&ui);
-        let app = App::attach(&ui, path.clone(), Rc::new(None), Rc::clone(&notice));
+        let trace_file =
+            std::env::temp_dir().join(format!("facet-ui-app-trace-{}.sqlite", std::process::id()));
+        if trace_file.exists() {
+            std::fs::remove_file(&trace_file).expect("a stale trace should be removable");
+        }
+        let trace = Rc::new(Trace::new(trace_file.clone(), None));
+        let app = App::attach(&ui, path.clone(), Rc::clone(&trace), Rc::clone(&notice));
         let changes = Rc::new(std::cell::Cell::new(0));
         let counted = Rc::clone(&changes);
         app.set_on_changed(move || counted.set(counted.get() + 1));
@@ -264,6 +332,16 @@ mod tests {
         assert_eq!(notice.title(), "That setting was not saved");
         assert_eq!(changes.get(), 4);
 
+        assert!(!data.get_debug_enabled());
+        assert!(!data.get_has_debug_trace());
+        app.debug_toggled(true);
+        assert!(trace.is_recording());
+        assert!(setting::debug_trace(&connection).expect("should read").enabled);
+        assert!(data.get_has_debug_trace());
+        app.debug_toggled(false);
+        assert!(!trace.is_recording());
+
+        std::fs::remove_file(&trace_file).expect("the test trace should be removable");
         std::fs::remove_file(&path).expect("the test database should be removable");
     }
 }

@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use facet_core::category::{self, Category};
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag, plain};
+use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::{segment, setting, timing};
 use rusqlite::Connection;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -37,7 +37,7 @@ pub struct MenuBarTiming {
 pub struct Faces {
     ui: slint::Weak<SettingsWindow>,
     database: PathBuf,
-    log: Rc<Option<DebugLog>>,
+    log: Rc<Trace>,
     has_given_up_on_cube: bool,
     tick: slint::Timer,
     creator: Rc<Creator>,
@@ -54,7 +54,7 @@ impl Faces {
     pub fn attach(
         ui: &SettingsWindow,
         database: PathBuf,
-        log: Rc<Option<DebugLog>>,
+        log: Rc<Trace>,
         has_given_up_on_cube: bool,
         notice: Rc<Notice>,
     ) -> Rc<Faces> {
@@ -387,7 +387,7 @@ mod tests {
 
         let ui = SettingsWindow::new().expect("the window should build");
         let notice = Notice::attach(&ui);
-        let faces = Faces::attach(&ui, path.clone(), Rc::new(None), true, Rc::clone(&notice));
+        let faces = Faces::attach(&ui, path.clone(), Rc::new(Trace::none()), true, Rc::clone(&notice));
         let changes = Rc::new(std::cell::Cell::new(0));
         let counted = Rc::clone(&changes);
         faces.set_on_timing_changed(move || counted.set(counted.get() + 1));
@@ -411,7 +411,8 @@ mod tests {
         assert!(data.get_has_category());
         assert!(data.get_running());
         assert_eq!(data.get_timing_category(), "Meeting");
-        assert_eq!(data.get_elapsed(), "0:00:00");
+        // A second can turn over between the start and the read.
+        assert!(["0:00:00", "0:00:01"].contains(&data.get_elapsed().as_str()), "{}", data.get_elapsed());
         assert!(data.get_glyph_enabled());
 
         assert_eq!(

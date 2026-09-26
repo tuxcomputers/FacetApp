@@ -94,14 +94,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tabs = std::env::var_os("FACET_DATABASE").map(|path| {
         let path: std::path::PathBuf = path.into();
         let notice = facet_ui::notice::Notice::attach(&ui);
-        let faces =
-            facet_ui::faces::Faces::attach(&ui, path.clone(), Rc::new(None), true, Rc::clone(&notice));
-        let categories = facet_ui::categories::Categories::attach(&ui, path.clone(), Rc::new(None), notice);
+        let faces = facet_ui::faces::Faces::attach(
+            &ui,
+            path.clone(),
+            Rc::new(facet_core::debug_log::Trace::none()),
+            true,
+            Rc::clone(&notice),
+        );
+        let categories = facet_ui::categories::Categories::attach(
+            &ui,
+            path.clone(),
+            Rc::new(facet_core::debug_log::Trace::none()),
+            notice,
+        );
         let report = match fixed_now {
-            Some(seconds) => {
-                facet_ui::report::Report::attach_with_clock(&ui, path, Rc::new(None), move || seconds)
+            Some(seconds) => facet_ui::report::Report::attach_with_clock(
+                &ui,
+                path,
+                Rc::new(facet_core::debug_log::Trace::none()),
+                move || seconds,
+            ),
+            None => {
+                facet_ui::report::Report::attach(&ui, path, Rc::new(facet_core::debug_log::Trace::none()))
             }
-            None => facet_ui::report::Report::attach(&ui, path, Rc::new(None)),
         };
         (faces, categories, report)
     });

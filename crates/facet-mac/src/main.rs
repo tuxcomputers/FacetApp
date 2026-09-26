@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag};
+use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
 use facet_core::setting;
 use facet_ui::app::App;
 use facet_ui::categories::Categories;
@@ -315,7 +315,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// An accessory app is not activated by showing a window, so without the activation the window
 /// appears behind the frontmost application and looks as though the menu item did nothing.
-fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
+fn show_settings(ui: &SettingsWindow, tab: &str, log: &impl Record) {
     // **Before the window, not after.** The Dock icon and the window are the same act to macOS: the policy
     // is what decides whether the app has a place in the Dock at all, and changing it out from under a
     // window already on screen leaves that window belonging to an app the Dock has only just heard of.
@@ -345,7 +345,7 @@ fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
 /// Royalty-free licence wants it reachable from the top level menu, and the status item's menu is that menu
 /// whether or not a window happens to be open. See NOTICE.md.
 #[cfg(target_os = "macos")]
-fn show_in_dock(wanted: bool, log: &Option<DebugLog>) {
+fn show_in_dock(wanted: bool, log: &impl Record) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
@@ -378,14 +378,14 @@ fn show_in_dock(wanted: bool, log: &Option<DebugLog>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn show_in_dock(_wanted: bool, _log: &Option<DebugLog>) {}
+fn show_in_dock(_wanted: bool, _log: &impl Record) {}
 
 /// Gives the status item's button an accessibility identifier, so a script can find it by name.
 ///
 /// The identifier is `status-item` because that is what `scripts/status-item-click.py` already looks
 /// for: the locator model converts rather than being reinvented.
 #[cfg(target_os = "macos")]
-fn name_the_status_item(tray: &TrayIcon, log: &Option<DebugLog>) {
+fn name_the_status_item(tray: &TrayIcon, log: &impl Record) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSAccessibility;
     use objc2_foundation::NSString;
@@ -412,7 +412,7 @@ fn name_the_status_item(tray: &TrayIcon, log: &Option<DebugLog>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn name_the_status_item(_tray: &TrayIcon, _log: &Option<DebugLog>) {}
+fn name_the_status_item(_tray: &TrayIcon, _log: &impl Record) {}
 
 /// Puts the Settings window in front of every other app's and gives it the keyboard.
 ///
@@ -420,7 +420,7 @@ fn name_the_status_item(_tray: &TrayIcon, _log: &Option<DebugLog>) {}
 /// `NSApplication::activate` is not enough: a choice from a status item's menu does not make the app active,
 /// so macOS declines the request and the window opens behind whatever was in front.
 #[cfg(target_os = "macos")]
-fn activate_app(log: &Option<DebugLog>) {
+fn activate_app(log: &impl Record) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSApplication;
     use objc2_foundation::NSString;
@@ -443,14 +443,14 @@ fn activate_app(log: &Option<DebugLog>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn activate_app(_log: &Option<DebugLog>) {}
+fn activate_app(_log: &impl Record) {}
 
 /// Redraws the status item for `showing`.
 ///
 /// **Says so when it cannot**, rather than leaving the menu bar showing the previous state. An icon
 /// that silently stops following the app is worse than no icon: it is a confident wrong answer, and
 /// this is the one surface that has to be right on all three platforms.
-fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &Option<DebugLog>) {
+fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &impl Record) {
     match status_icon::draw(showing) {
         Ok(icon) => {
             if let Err(error) = tray.set_icon(Some(icon)) {
@@ -492,7 +492,7 @@ fn data_directory() -> PathBuf {
 /// The app database is opened even when nothing is going to be recorded, because it is what says whether
 /// anything should be. Its connection is then dropped: nothing reads it yet, and holding one open would be
 /// this app keeping a file the Swift one may also want.
-fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
+fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
     let directory = data_directory();
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
@@ -507,6 +507,16 @@ fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
     let trace = setting::debug_trace(&connection)?;
     drop(connection);
 
+    // An empty directory means the folder the app already keeps its databases in, which cannot be seeded as
+    // a path because it differs per platform. A leading ~ is expanded here, at the point the file is
+    // opened, and never stored expanded: an absolute path names one machine and this database is copied
+    // between them. Resolved whether or not logging is on, so turning it on later has a file to open.
+    let folder = match trace.directory.as_str() {
+        "" => directory.clone(),
+        stored => expand_home(stored),
+    };
+    let file = folder.join("debug.sqlite");
+
     if !trace.enabled {
         // Said on stderr rather than recorded, there being nowhere to record it. It is the one message a
         // launch with logging off should still produce, because otherwise an empty table and a launch that
@@ -514,23 +524,12 @@ fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
         eprintln!(
             "[launch  ] Logging is off in the {which} database. Turn on debug.enabled in setting to record a trace."
         );
-        return Ok(None);
+        return Ok(Trace::new(file, None));
     }
 
-    // An empty directory means the folder the app already keeps its databases in, which cannot be seeded as
-    // a path because it differs per platform. A leading ~ is expanded here, at the point the file is
-    // opened, and never stored expanded: an absolute path names one machine and this database is copied
-    // between them.
-    let folder = match trace.directory.as_str() {
-        "" => directory.clone(),
-        stored => expand_home(stored),
-    };
     std::fs::create_dir_all(&folder)
         .map_err(|error| format!("{} could not be created: {error}", folder.display()))?;
-
-    let file = folder.join("debug.sqlite");
-    let log = DebugLog::open(&file)?;
-    let log = Some(log);
+    let log = Trace::new(file.clone(), Some(DebugLog::open(&file)?));
     log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
     Ok(log)
 }
@@ -562,7 +561,7 @@ fn expand_home(stored: &str) -> PathBuf {
 /// No stub for the other platforms: a Dock is a macOS object, and the only caller is the macOS half of
 /// [`show_in_dock`].
 #[cfg(target_os = "macos")]
-fn wear_the_facet_logo(mtm: objc2::MainThreadMarker, log: &Option<DebugLog>) {
+fn wear_the_facet_logo(mtm: objc2::MainThreadMarker, log: &impl Record) {
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::NSData;
 

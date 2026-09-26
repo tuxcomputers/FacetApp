@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
 use facet_core::category::{self, Category, ReinstateDecision, RenameDecision};
-use facet_core::debug_log::{DebugLog, Record, Tag, plain};
+use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::{database, face, reference, time_entry};
 use rusqlite::Connection;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -26,7 +26,7 @@ use crate::{
 pub struct Categories {
     ui: slint::Weak<SettingsWindow>,
     database: PathBuf,
-    log: Rc<Option<DebugLog>>,
+    log: Rc<Trace>,
     notice: Rc<Notice>,
     creator: Rc<Creator>,
     on_changed: RefCell<Option<Box<dyn Fn()>>>,
@@ -38,7 +38,7 @@ impl Categories {
     pub fn attach(
         ui: &SettingsWindow,
         database: PathBuf,
-        log: Rc<Option<DebugLog>>,
+        log: Rc<Trace>,
         notice: Rc<Notice>,
     ) -> Rc<Categories> {
         let categories = Rc::new(Categories {
@@ -633,7 +633,7 @@ mod tests {
         database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
         let ui = SettingsWindow::new().expect("the window should build");
         let notice = Notice::attach(&ui);
-        let tab = Categories::attach(&ui, path.clone(), Rc::new(None), Rc::clone(&notice));
+        let tab = Categories::attach(&ui, path.clone(), Rc::new(Trace::none()), Rc::clone(&notice));
         let changes = Rc::new(std::cell::Cell::new(0));
         let counted = Rc::clone(&changes);
         tab.set_on_changed(move || counted.set(counted.get() + 1));

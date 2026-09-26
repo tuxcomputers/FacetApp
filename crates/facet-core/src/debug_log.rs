@@ -14,8 +14,8 @@
 //! **answering nothing rather than failing**. Inserting is by bound parameter and so is safe either way;
 //! the hazard is entirely on the reading side, which is why the debug build asserts rather than escapes.
 
-use std::cell::Cell;
-use std::path::Path;
+use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, params};
 
@@ -135,6 +135,79 @@ impl Record for Option<DebugLog> {
         };
         let clock = stamped.as_deref().map(clock).unwrap_or("--:--:--");
         eprintln!("{clock} [{:width$}] {message}", tag.word(), width = Tag::WIDTH);
+    }
+}
+
+impl<T: Record + ?Sized> Record for std::rc::Rc<T> {
+    fn record(&self, tag: Tag, message: impl FnOnce() -> String) {
+        (**self).record(tag, message);
+    }
+
+    fn record_failure(&self, tag: Tag, message: impl FnOnce() -> String) {
+        (**self).record_failure(tag, message);
+    }
+}
+
+/// The launch's debug trace: where its file is, and the logger writing it while recording is on.
+///
+/// Recording can be switched while the app runs. Off holds no logger at all. The file is fixed for the
+/// launch; a folder chosen in the settings applies from the next launch.
+pub struct Trace {
+    file: PathBuf,
+    log: RefCell<Option<DebugLog>>,
+}
+
+impl Trace {
+    /// A trace kept in `file`, recording when `log` is given.
+    pub fn new(file: PathBuf, log: Option<DebugLog>) -> Trace {
+        Trace { file, log: RefCell::new(log) }
+    }
+
+    /// A trace that records nothing and has no file, for tests and renders.
+    pub fn none() -> Trace {
+        Trace::new(PathBuf::new(), None)
+    }
+
+    /// The trace file for this launch.
+    pub fn file(&self) -> &Path {
+        &self.file
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.log.borrow().is_some()
+    }
+
+    /// Starts or stops recording. Starting opens the file, creating its folder, and then records `Logging
+    /// turned on`; stopping records `Logging turned off` and then closes it. Asking for the state it is
+    /// already in does nothing.
+    pub fn set_recording(&self, on: bool) -> Result<(), database::Error> {
+        if on == self.is_recording() {
+            return Ok(());
+        }
+        if on {
+            if let Some(folder) = self.file.parent() {
+                std::fs::create_dir_all(folder).map_err(|error| database::Error::Open {
+                    path: folder.display().to_string(),
+                    source: rusqlite::Error::InvalidPath(PathBuf::from(error.to_string())),
+                })?;
+            }
+            *self.log.borrow_mut() = Some(DebugLog::open(&self.file)?);
+            self.record(Tag::Settings, || "Logging turned on".to_string());
+        } else {
+            self.record(Tag::Settings, || "Logging turned off".to_string());
+            *self.log.borrow_mut() = None;
+        }
+        Ok(())
+    }
+}
+
+impl Record for Trace {
+    fn record(&self, tag: Tag, message: impl FnOnce() -> String) {
+        self.log.borrow().record(tag, message);
+    }
+
+    fn record_failure(&self, tag: Tag, message: impl FnOnce() -> String) {
+        self.log.borrow().record_failure(tag, message);
     }
 }
 
@@ -293,6 +366,31 @@ mod tests {
             .collect::<Result<_, _>>()
             .expect("every row should read");
         assert_eq!(messages, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn recording_switches_on_and_off_and_says_so_in_the_file() {
+        let file = tempfile();
+        let trace = Trace::new(file.clone(), None);
+        assert!(!trace.is_recording());
+        trace.record(Tag::Settings, || "not written".to_string());
+        trace.set_recording(true).expect("recording should start");
+        assert!(trace.is_recording());
+        trace.record(Tag::Settings, || "written".to_string());
+        trace.set_recording(false).expect("recording should stop");
+        assert!(!trace.is_recording());
+        trace.record(Tag::Settings, || "not written either".to_string());
+
+        let connection = Connection::open(&file).expect("the trace should open");
+        let mut statement = connection
+            .prepare("SELECT message FROM debug_log ORDER BY debug_log_id")
+            .expect("should prepare");
+        let messages: Vec<String> = statement
+            .query_map([], |row| row.get(0))
+            .expect("should query")
+            .map(|m| m.expect("row"))
+            .collect();
+        assert_eq!(messages, ["Logging turned on", "written", "Logging turned off"]);
     }
 
     fn tempfile() -> std::path::PathBuf {

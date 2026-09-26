@@ -13,7 +13,7 @@ use std::rc::{Rc, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag, plain};
+use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::report::{self, Day, SortColumnState, SortOrder, Total};
 use facet_core::setting;
 use rusqlite::{Connection, params};
@@ -28,7 +28,7 @@ const REPORT_TAB: i32 = 2;
 pub struct Report {
     ui: slint::Weak<SettingsWindow>,
     database: PathBuf,
-    log: Rc<Option<DebugLog>>,
+    log: Rc<Trace>,
     /// The first day picked and the optional last. `None` until the tab is first drawn.
     range: Cell<Option<(Day, Option<Day>)>>,
     from_month: Cell<Option<Day>>,
@@ -47,7 +47,7 @@ pub struct Report {
 impl Report {
     /// Wires the tab's callbacks on `ui` to `database`, telling the time by the system clock. Call once, at
     /// launch.
-    pub fn attach(ui: &SettingsWindow, database: PathBuf, log: Rc<Option<DebugLog>>) -> Rc<Report> {
+    pub fn attach(ui: &SettingsWindow, database: PathBuf, log: Rc<Trace>) -> Rc<Report> {
         Report::attach_with_clock(ui, database, log, now)
     }
 
@@ -55,7 +55,7 @@ impl Report {
     pub fn attach_with_clock(
         ui: &SettingsWindow,
         database: PathBuf,
-        log: Rc<Option<DebugLog>>,
+        log: Rc<Trace>,
         clock: impl Fn() -> i64 + 'static,
     ) -> Rc<Report> {
         let report = Rc::new(Report {
@@ -423,7 +423,7 @@ mod tests {
         }
     }
 
-    const NO_LOG: Option<DebugLog> = None;
+    const NO_LOG: Option<facet_core::debug_log::DebugLog> = None;
 
     fn names(data: &ReportData<'_>) -> Vec<String> {
         let totals = data.get_totals();
@@ -458,7 +458,7 @@ mod tests {
         segment::close_open_segment(&connection, yesterday + 360, &NO_LOG).expect("should close");
 
         let ui = SettingsWindow::new().expect("the window should build");
-        let tab = Report::attach(&ui, path.clone(), Rc::new(None));
+        let tab = Report::attach(&ui, path.clone(), Rc::new(Trace::none()));
         tab.open();
         let data = ui.global::<ReportData>();
         assert_eq!(names(&data), ["Mail", "Code"]);
