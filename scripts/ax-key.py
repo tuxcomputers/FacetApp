@@ -20,13 +20,12 @@ Exits non-zero, with the reason, on anything that stops the key going out -- the
 nobody can name -- rather than posting nothing and saying it worked.
 """
 
-import subprocess
 import os
 import sys
 import time
 
 import Quartz
-from AppKit import NSWorkspace
+from AppKit import NSApplicationActivateIgnoringOtherApps, NSWorkspace
 
 # The virtual key codes for what a script actually needs. Named rather than numeric at the call site,
 # because `36` in a test script is a number nobody can check without a table.
@@ -94,16 +93,27 @@ def main():
         flags |= mask
         held.append(code)
 
-    running = any(
-        a.localizedName() == app_name for a in NSWorkspace.sharedWorkspace().runningApplications()
+    app = next(
+        (a for a in NSWorkspace.sharedWorkspace().runningApplications() if a.localizedName() == app_name), None
     )
-    if not running:
+    if app is None:
         sys.exit(f"{app_name} is not running")
 
     # The key goes to whatever is focused, so the app has to be in front first -- otherwise it lands in
     # whatever the caller is being driven from, which is the one failure that looks like the app ignoring it.
-    subprocess.run(["osascript", "-e", f'tell application "{app_name}" to activate'], check=False)
-    time.sleep(0.4)
+    # Activated by process rather than by name through AppleScript: a bare binary has no bundle, so AppleScript
+    # cannot find it by name, and the key then went to whatever was in front (2026-09-26).
+    app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+    frontmost = None
+    for _ in range(20):
+        time.sleep(0.1)
+        frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if frontmost is not None and frontmost.processIdentifier() == app.processIdentifier():
+            break
+    else:
+        named = frontmost.localizedName() if frontmost is not None else "nothing"
+        sys.exit(f"{app_name} would not come to the front ({named} is), so no key was posted")
+    time.sleep(0.2)
 
     def post(code, down, with_flags):
         event = Quartz.CGEventCreateKeyboardEvent(None, code, down)
