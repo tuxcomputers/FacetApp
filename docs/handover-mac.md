@@ -36,12 +36,3 @@ for something is to write it down where the other will look.
    finished state.
 
 ---
-
-## 8. Run the suite once more: `09-report.sh` gained its executable bit
-
-**On `feature/reportTab`.** Your run at `1811aa2` passed, and so did Linux's at `efbc820`. The stamp check
-then refused `09-report.sh` as not executable, since the Linux box wrote it without the bit. `344ff9a` sets it, and
-the check counts that as a change to the checks, so both stamps are stale. The content is unchanged.
-
-**What is wanted:** pull, run `Tests/Scripted/run.sh`, commit `last-run-mac.md`, and check
-`scripts/check-scripted-stamps.sh --branch feature/reportTab`.
