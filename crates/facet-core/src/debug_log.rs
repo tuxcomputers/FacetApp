@@ -37,6 +37,7 @@ pub enum Tag {
     Click,
     Limit,
     Report,
+    Google,
 }
 
 impl Tag {
@@ -55,6 +56,7 @@ impl Tag {
         Tag::Click,
         Tag::Limit,
         Tag::Report,
+        Tag::Google,
     ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
@@ -73,6 +75,7 @@ impl Tag {
             Tag::Click => "click",
             Tag::Limit => "limit",
             Tag::Report => "report",
+            Tag::Google => "google",
         }
     }
 
