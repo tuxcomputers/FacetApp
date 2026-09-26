@@ -105,7 +105,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &ui,
             path.clone(),
             Rc::new(facet_core::debug_log::Trace::none()),
+            Rc::clone(&notice),
+        );
+        let app = facet_ui::app::App::attach(
+            &ui,
+            path.clone(),
+            Rc::new(facet_core::debug_log::Trace::none()),
+            Rc::clone(&notice),
+            Rc::new(Nothing),
+            Rc::new(Nothing),
+        );
+        // No credentials and an empty store: the Not connected section, the same on every machine, with no
+        // Keychain or network touched.
+        let google = facet_ui::google::Google::attach(
+            &ui,
+            path.clone(),
+            Rc::new(facet_core::debug_log::Trace::none()),
             notice,
+            Rc::new(Nothing),
+            std::sync::Arc::new(Nothing),
+            std::sync::Arc::new(Nothing),
+            std::sync::Arc::new(Nothing),
+            None,
         );
         let report = match fixed_now {
             Some(seconds) => facet_ui::report::Report::attach_with_clock(
@@ -118,15 +139,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 facet_ui::report::Report::attach(&ui, path, Rc::new(facet_core::debug_log::Trace::none()))
             }
         };
-        (faces, categories, report)
+        (faces, categories, report, app, google)
     });
     ui.window().set_size(LogicalSize::new(width as f32, height as f32));
     window.set_size(PhysicalSize::new(width, height));
     ui.show()?;
-    if let Some((faces, categories, report)) = &tabs {
+    if let Some((faces, categories, report, app, google)) = &tabs {
         faces.refresh();
         categories.refresh();
         report.open();
+        app.open();
+        google.open();
     }
 
     // **Emptied first**, so a tab that is renamed or renumbered does not leave its old file beside the new one
@@ -180,4 +203,56 @@ fn write_png(
     }
     writer.write_image_data(&bytes)?;
     Ok(())
+}
+
+/// Stands in for every port the render never uses: it opens nothing, picks nothing, holds no secret and has
+/// no network.
+struct Nothing;
+
+impl facet_core::port::Opener for Nothing {
+    fn reveal(&self, _file: &Path) -> Result<(), String> {
+        Err("the render opens nothing".into())
+    }
+    fn open_url(&self, _url: &str) -> Result<(), String> {
+        Err("the render opens nothing".into())
+    }
+}
+
+impl facet_core::port::FileChooser for Nothing {
+    fn choose_folder(&self, _start: &Path, _message: &str) -> Option<std::path::PathBuf> {
+        None
+    }
+    fn choose_save_file(&self, _name: &str, _message: &str) -> Option<std::path::PathBuf> {
+        None
+    }
+}
+
+impl facet_core::port::SecretStore for Nothing {
+    fn store(&self, _secret: &str) -> Result<bool, String> {
+        Err("the render stores nothing".into())
+    }
+    fn look_up(&self) -> facet_core::port::SecretLookup {
+        facet_core::port::SecretLookup::Missing
+    }
+    fn clear(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+impl facet_core::port::Http for Nothing {
+    fn send(
+        &self,
+        _method: &str,
+        _url: &str,
+        _bearer: Option<&str>,
+        _body: Option<(&str, &str)>,
+    ) -> Result<facet_core::port::HttpResponse, String> {
+        Err("the render has no network".into())
+    }
+}
+
+impl facet_core::port::LoopbackListener for Nothing {
+    fn bind(&self) -> Result<Box<dyn facet_core::port::LoopbackSession>, String> {
+        Err("the render listens on nothing".into())
+    }
 }
