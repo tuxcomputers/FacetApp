@@ -39,12 +39,25 @@ pub struct Report {
     /// [`Report::refresh_if_showing`] redraws only when an entry has been recorded since. Read back from the
     /// table every time it is asked; a stale value costs one redraw.
     drawn_entries: Cell<Option<(i64, i64)>>,
+    /// Whole unix seconds now.
+    clock: Box<dyn Fn() -> i64>,
     this: RefCell<Weak<Report>>,
 }
 
 impl Report {
-    /// Wires the tab's callbacks on `ui` to `database`. Call once, at launch.
+    /// Wires the tab's callbacks on `ui` to `database`, telling the time by the system clock. Call once, at
+    /// launch.
     pub fn attach(ui: &SettingsWindow, database: PathBuf, log: Rc<Option<DebugLog>>) -> Rc<Report> {
+        Report::attach_with_clock(ui, database, log, now)
+    }
+
+    /// As [`Report::attach`], telling the time by `clock`, which answers whole unix seconds.
+    pub fn attach_with_clock(
+        ui: &SettingsWindow,
+        database: PathBuf,
+        log: Rc<Option<DebugLog>>,
+        clock: impl Fn() -> i64 + 'static,
+    ) -> Rc<Report> {
         let report = Rc::new(Report {
             ui: ui.as_weak(),
             database,
@@ -55,6 +68,7 @@ impl Report {
             order: Cell::new(SortOrder::default()),
             expanded: RefCell::new(HashSet::new()),
             drawn_entries: Cell::new(None),
+            clock: Box::new(clock),
             this: RefCell::new(Weak::new()),
         });
         *report.this.borrow_mut() = Rc::downgrade(&report);
@@ -101,7 +115,7 @@ impl Report {
     /// shown.
     pub fn refresh(&self) {
         let Some(connection) = self.connect() else { return };
-        let Some(today) = self.report(report::today(&connection, now())) else { return };
+        let Some(today) = self.report(report::today(&connection, (self.clock)())) else { return };
         let (start, end) = match self.range.get() {
             Some(range) => range,
             None => {
@@ -152,7 +166,7 @@ impl Report {
 
     fn month_stepped(&self, calendar: &str, delta: i64) {
         let Some(connection) = self.connect() else { return };
-        let Some(today) = self.report(report::today(&connection, now())) else { return };
+        let Some(today) = self.report(report::today(&connection, (self.clock)())) else { return };
         let Some((start, end)) = self.range.get() else { return };
         let is_from = calendar == "from";
         let shown = if is_from { self.shown_from(today, start) } else { self.shown_to(today, start, end) };
