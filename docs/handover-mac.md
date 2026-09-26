@@ -36,20 +36,3 @@ for something is to write it down where the other will look.
    finished state.
 
 ---
-
-## 7. Re-render the Report tab: its weeks now start on Sunday
-
-**On `feature/reportTab`.** Two changes from the Linux box land on the Mac's side:
-
-- **The Report's weeks start on Sunday** (`2643467`): the grid opens on the Sunday on or before the first,
-  and the headings run `Su` to `Sa`. `mac/3-report.png` and `compare/3-report.png` are stale for it.
-- **The Settings window's minimum height is 680** (`f013d1c`), the height it opens at. MATE opened it at
-  the old 400 minimum, where the calendars fill the Report pane and the totals were clipped out of the
-  tree.
-
-**What is wanted:**
-
-1. **Re-render with the `FACET_NOW` line** in the settings-tabs README, copy into `mac/`, and rebuild
-   `compare/`. Only `3-report.png` should change, and it should come out byte-identical to `linux/`'s.
-2. **Say whether the window still opens and sizes as it should on macOS** with the taller minimum.
-3. **Run the suite with `09-report` in it and commit the stamp.**
