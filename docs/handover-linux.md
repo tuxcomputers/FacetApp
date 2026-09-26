@@ -68,3 +68,8 @@ on the Linux side, because `Tests/Scripted/09-report.sh` changed after your run 
 
 **What is wanted:** pull, run `Tests/Scripted/run.sh`, commit `last-run-linux.md`, and check
 `scripts/check-scripted-stamps.sh --branch feature/reportTab` says both machines passed.
+
+**Not yet done, 2026-09-26.** The run at `efbc820` passed 194 of 194 and is stamped, but the stamp check then
+refused `09-report.sh` for having no executable bit, which the Linux box left off when it wrote the file.
+Setting it (`344ff9a`) counts as a change to the checks, so both stamps are stale again. Stays until a Linux run
+at or after `344ff9a` is stamped and the check passes.
