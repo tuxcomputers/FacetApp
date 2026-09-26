@@ -27,6 +27,7 @@ use facet_core::setting;
 use facet_ui::categories::Categories;
 use facet_ui::faces::Faces;
 use facet_ui::notice::Notice;
+use facet_ui::report::Report;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use ksni::blocking::{Handle, TrayMethods};
 
@@ -77,9 +78,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let report = Report::attach(&ui, data_directory().join("appdata.sqlite"), std::rc::Rc::clone(&log));
+    // A time entry recorded while the Report is on screen changes its figures.
+    let changed_report = std::rc::Rc::downgrade(&report);
+    faces.set_on_timing_changed(move || {
+        if let Some(report) = changed_report.upgrade() {
+            report.refresh_if_showing();
+        }
+    });
+
     let tab_log = std::rc::Rc::clone(&log);
     let tab_faces = std::rc::Rc::clone(&faces);
     let tab_categories = std::rc::Rc::clone(&categories);
+    let tab_report = std::rc::Rc::clone(&report);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
@@ -89,6 +100,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if tab == "Categories" {
             tab_categories.refresh();
+        }
+        if tab == "Report" {
+            tab_report.refresh();
         }
     });
 
@@ -122,9 +136,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_log = std::rc::Rc::clone(&log);
     let pump_faces = std::rc::Rc::clone(&faces);
     let pump_categories = std::rc::Rc::clone(&categories);
+    let pump_report = std::rc::Rc::clone(&report);
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
-        drain(&from_tray, &ui_weak, &pump_log, &pump_faces, &pump_categories);
+        drain(&from_tray, &ui_weak, &pump_log, &pump_faces, &pump_categories, &pump_report);
     });
 
     log.record(Tag::Launch, || "Facet is in the tray. Right click the icon for the menu".to_string());
@@ -148,6 +163,7 @@ fn drain(
     log: &Option<DebugLog>,
     faces: &Faces,
     categories: &Categories,
+    report: &Report,
 ) {
     while let Ok(message) = from_tray.try_recv() {
         match message {
@@ -173,6 +189,7 @@ fn drain(
                     show_settings(&ui, "Faces", log);
                     faces.refresh();
                     categories.refresh();
+                    report.open();
                 }
             }
             FromTray::OpenAbout => {
@@ -181,6 +198,7 @@ fn drain(
                     show_settings(&ui, "About", log);
                     faces.refresh();
                     categories.refresh();
+                    report.open();
                 }
             }
             FromTray::Quit => {
