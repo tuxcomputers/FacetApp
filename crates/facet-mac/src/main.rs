@@ -316,7 +316,7 @@ fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
         return;
     }
     ui.window().set_maximized(false);
-    activate_app();
+    activate_app(log);
     // Reported here rather than left to the tab callback, which does not fire for a tab that is
     // already selected, and since every ordinary open lands on Faces that is most opens.
     log.record(Tag::Settings, || format!("Settings opened on {tab}"));
@@ -402,18 +402,36 @@ fn name_the_status_item(tray: &TrayIcon, log: &Option<DebugLog>) {
 #[cfg(not(target_os = "macos"))]
 fn name_the_status_item(_tray: &TrayIcon, _log: &Option<DebugLog>) {}
 
+/// Puts the Settings window in front of every other app's and gives it the keyboard.
+///
+/// Orders the window front and makes it key, then activates the app ignoring other apps. The cooperative
+/// `NSApplication::activate` is not enough: a choice from a status item's menu does not make the app active,
+/// so macOS declines the request and the window opens behind whatever was in front.
 #[cfg(target_os = "macos")]
-fn activate_app() {
+fn activate_app(log: &Option<DebugLog>) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSApplication;
+    use objc2_foundation::NSString;
 
-    if let Some(mtm) = MainThreadMarker::new() {
-        NSApplication::sharedApplication(mtm).activate();
+    let Some(mtm) = MainThreadMarker::new() else {
+        log.record_failure(Tag::Settings, || {
+            "Not on the main thread, so Settings was not brought forward".to_string()
+        });
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let title = NSString::from_str("Facet Settings");
+    let window = app.windows().iter().find(|window| window.title().isEqualToString(&title));
+    match window {
+        Some(window) => window.makeKeyAndOrderFront(None),
+        None => log.record_failure(Tag::Settings, || "No Facet Settings window to bring forward".to_string()),
     }
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
 }
 
 #[cfg(not(target_os = "macos"))]
-fn activate_app() {}
+fn activate_app(_log: &Option<DebugLog>) {}
 
 /// Redraws the status item for `showing`.
 ///
