@@ -68,15 +68,9 @@ changed throughout.
   then a copy `scripts/generate-credentials.sh` bundles in.
 
 **What is still wanted.** The build, the Debug buttons, the `08` conversion and a stamped run are done
-(`68f69dc`, `08e21df`, and the portal results in [port-findings.md](port-findings.md)). Two parts remain:
+(`68f69dc`, `08e21df`, and the portal results in [port-findings.md](port-findings.md)), and so is Google:
+on 2026-09-27 sign-in, create, rename, delete and Disconnect all ran against a real account here, and
+Disconnect left no token in the Secret Service. One part remains:
 
 1. **A stored App setting redraws the menu bar.** `08` proves every row writes through and reads back; nothing
    has yet watched the tray change after a write, such as Show seconds.
-2. **Google**: this box has `~/.config/facet/google-client.json`. Sign in opens the browser, the redirect
-   comes back, the token lands in the Secret Service, the section says Connected. Then Create calendar,
-   rename it, delete it, and Disconnect. `secret-tool search service au.com.tux.facet.google-refresh` shows the
-   token. `11` (reconnect) and the calendar part of `03` could convert once an account is connected;
-   `10-google-calendar` needs calendar sync, which is not built.
-
-**Why this stays:** part 2 needs somebody at the browser to sign in. The Mac has done connect, create and
-delete against a real account on 2026-09-26; rename and Disconnect are untried on both.
