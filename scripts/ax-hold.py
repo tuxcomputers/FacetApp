@@ -24,7 +24,7 @@ import time
 
 import Quartz
 from AppKit import NSApplicationActivateIgnoringOtherApps, NSWorkspace
-from ApplicationServices import AXUIElementCopyAttributeValue, AXUIElementCreateApplication
+from ApplicationServices import AXUIElementCopyAttributeValue, AXUIElementCreateApplication, AXUIElementSetAttributeValue
 
 
 def attribute(element, name):
@@ -88,8 +88,11 @@ def main():
     # The app has to be in front, or the first click is spent activating it rather than pressing anything.
     # By process rather than by name: a bare binary has no bundle for AppleScript to find. Nothing is posted
     # unless it is in front.
-    running.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
-    for _ in range(20):
+    for attempt in range(20):
+        # Asked again every 0.2s, through AppKit and through accessibility: macOS can decline one request.
+        if attempt % 2 == 0:
+            running.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+            AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXFrontmost", True)
         time.sleep(0.1)
         frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
         if frontmost is not None and frontmost.processIdentifier() == pid:
