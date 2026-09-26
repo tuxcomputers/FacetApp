@@ -124,11 +124,11 @@ const MONTHS: [&str; 12] = [
 ];
 const WEEKDAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-/// The 42 days a month is drawn over: six weeks from the Monday on or before its first day, so the days of
+/// The 42 days a month is drawn over: six weeks from the Sunday on or before its first day, so the days of
 /// the months either side fill the first and last rows.
 pub fn month_grid(month: Day) -> Vec<Day> {
     let first = month.first_of_month();
-    let start = first.plus_days(-first.weekday());
+    let start = first.plus_days(-((first.weekday() + 1) % 7));
     (0..42).map(|offset| start.plus_days(offset)).collect()
 }
 
@@ -384,12 +384,14 @@ mod tests {
     }
 
     #[test]
-    fn a_month_is_drawn_over_six_weeks_from_a_monday() {
+    fn a_month_is_drawn_over_six_weeks_from_a_sunday() {
         let grid = month_grid(day(2026, 9, 15));
         assert_eq!(grid.len(), 42);
-        assert_eq!(grid[0], day(2026, 8, 31));
-        assert_eq!(grid[1], day(2026, 9, 1));
-        assert!(grid.iter().all(|d| d.weekday() == (d.ordinal() - grid[0].ordinal()) % 7));
+        assert_eq!(grid[0], day(2026, 8, 30));
+        assert_eq!(grid[2], day(2026, 9, 1));
+        assert!(grid.iter().all(|d| (d.weekday() + 1) % 7 == (d.ordinal() - grid[0].ordinal()) % 7));
+        // A month that starts on a Sunday starts the grid on its first day.
+        assert_eq!(month_grid(day(2026, 11, 15))[0], day(2026, 11, 1));
     }
 
     #[test]
