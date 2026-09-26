@@ -48,3 +48,29 @@ for whichever machine gets to them. This is what the *other* machine is being as
 shorter list and one that empties.
 
 ---
+
+## 15. The Report tab: build it, render it, and convert `09-report`
+
+**On `feature/reportTab`.** The Report tab now reads the database (`19459a1`, wired in `3189bac`). The
+Mac could not compile `facet-linux`, whose `main.rs` changed, and `NOTICE` and `LICENSE` are now `NOTICE.md`
+and `LICENSE.md` (`53bf21c`).
+
+**What is wanted:**
+
+1. **`cargo build -p facet-linux`**, then run it and open the Report tab once.
+2. **Re-render and rebuild `compare/`**, with the `FACET_NOW` line the settings-tabs README now gives: it
+   fixes the day the Report opens on (noon on 25 September 2026), so the calendars match whatever day each
+   machine renders on. Only `3-report.png` changed on the Mac (`9df4256`); the other five should still be
+   byte-identical.
+3. **Convert `Tests/Scripted/09-report.sh`** from the Swift suite (22 checks). What changed under it:
+   - **The app opens on the app day**, the day the current `daily_reset_time` window started on, where the
+     Swift app opened on the calendar date. The check's own working-out of the day from the newest entry
+     still names a day that can be pressed.
+   - **Day cells are `report-{from|to}-yyyy-mm-dd`** and totals `report-total-<id>-heading`, `-toggle` and
+     `-duration`, entries `report-entry-<id>`, as in Swift. A heading's label is `<name>, <duration>`.
+   - **The sort headings are `report-sort-category` and `report-sort-time`**, their label the heading text
+     with ` ▲` or ` ▼` on the column in force.
+   - **The log lines are the Swift app's**, tag `report`: `Report range ...`, `Report totals ... N
+     categories`, `Report category <name> opened|closed`, `Report sorted by <column>, <direction>`.
+   - **Weekday headings are Monday first** (`Mo` to `Su`), where Swift followed the locale.
+4. **Run the suite and commit the stamp.**
