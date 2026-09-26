@@ -75,3 +75,5 @@ ksni = { version = "0.3.6", default-features = false }
 # the secret store port decides whether this line stays. Nothing depends on it yet.
 keyring = "4.2.0"
 sha2 = "0.11.0"
+# PKCE verifiers and OAuth state values.
+getrandom = "0.4.3"
