@@ -67,23 +67,16 @@ changed throughout.
   `refresh-token`. Credentials come from `FACET_GOOGLE_CLIENT_JSON`, then `~/.config/facet/google-client.json`,
   then a copy `scripts/generate-credentials.sh` bundles in.
 
-**What is wanted:**
+**What is still wanted.** The build, the Debug buttons, the `08` conversion and a stamped run are done
+(`68f69dc`, `08e21df`, and the portal results in [port-findings.md](port-findings.md)). Two parts remain:
 
-1. **`cargo build -p facet-linux`**, and say what broke if anything did.
-2. **The App settings section**: the four controls write through and read back (`App setting <name>.<field>
-   -> ...` in the trace), and a stored change redraws the menu bar.
-3. **Debug**: ticking logging off and on writes `Logging turned off` / `Logging turned on`. **Choose** opens
-   the portal's folder picker, **Save a copy** its save dialog, **Reveal** opens the folder in the file
-   manager, **Clear** asks first. Say whether the portal answers under MATE at all; `rfd` needs
-   `xdg-desktop-portal` and a backend for it.
-4. **Google**, if this box has `~/.config/facet/google-client.json`: Sign in opens the browser, the redirect
+1. **A stored App setting redraws the menu bar.** `08` proves every row writes through and reads back; nothing
+   has yet watched the tray change after a write, such as Show seconds.
+2. **Google**: this box has `~/.config/facet/google-client.json`. Sign in opens the browser, the redirect
    comes back, the token lands in the Secret Service, the section says Connected. Then Create calendar,
    rename it, delete it, and Disconnect. `secret-tool search service au.com.tux.facet.google-refresh` shows the
-   token.
-5. **Convert `Tests/Scripted/08-app-settings.sh`** (44 checks in Swift). The ids are the Swift ones; the
-   notable differences are the notice for a refused write ("That setting was not saved") and that the
-   stepper has no `-up`/`-down` ids. `10-google-calendar` needs calendar sync, which is not built; `11`
-   (reconnect) and the calendar part of `03` could convert if you have an account to hand.
-6. **Run the suite and commit the stamp.**
+   token. `11` (reconnect) and the calendar part of `03` could convert once an account is connected;
+   `10-google-calendar` needs calendar sync, which is not built.
 
-The Mac has run none of this against a real Google account yet either: that needs somebody at the browser.
+**Why this stays:** part 2 needs somebody at the browser to sign in. The Mac has done connect, create and
+delete against a real account on 2026-09-26; rename and Disconnect are untried on both.
