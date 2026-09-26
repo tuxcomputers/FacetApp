@@ -7,6 +7,7 @@
 //! work out, and it hands the answer in; what a Facet database is, and what goes in it, is decided here so
 //! that both platform crates get the same one.
 
+pub mod app_settings;
 pub mod category;
 pub mod database;
 pub mod debug_log;

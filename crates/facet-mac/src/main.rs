@@ -16,6 +16,7 @@ use std::time::Duration;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag};
 use facet_core::setting;
+use facet_ui::app::App;
 use facet_ui::categories::Categories;
 use facet_ui::faces::Faces;
 use facet_ui::notice::Notice;
@@ -69,6 +70,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let report = Report::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log));
+    let app = App::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log), Rc::clone(&notice));
+    // A stored App setting can change what the Faces tab and the menu bar show.
+    let app_faces = Rc::downgrade(&faces);
+    app.set_on_changed(move || {
+        if let Some(faces) = app_faces.upgrade() {
+            faces.refresh();
+        }
+    });
     // A time entry recorded while the Report is on screen changes its figures.
     let changed_report = Rc::downgrade(&report);
     faces.set_on_timing_changed(move || {
@@ -181,6 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_faces = Rc::clone(&faces);
     let pump_categories = Rc::clone(&categories);
     let pump_report = Rc::clone(&report);
+    let pump_app = Rc::clone(&app);
 
     // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
     // is after every toggle, every click on the Faces tab and every tick.
@@ -237,6 +247,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pump_faces.refresh();
                         pump_categories.refresh();
                         pump_report.open();
+                        pump_app.open();
                     }
                 }
                 "settings" => {
@@ -246,6 +257,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pump_faces.refresh();
                         pump_categories.refresh();
                         pump_report.open();
+                        pump_app.open();
                     }
                 }
                 "quit" => {
