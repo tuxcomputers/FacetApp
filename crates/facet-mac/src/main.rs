@@ -19,6 +19,7 @@ use facet_core::setting;
 use facet_ui::categories::Categories;
 use facet_ui::faces::Faces;
 use facet_ui::notice::Notice;
+use facet_ui::report::Report;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use tray_icon::{
     MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -67,6 +68,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let report = Report::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log));
+    // A time entry recorded while the Report is on screen changes its figures.
+    let changed_report = Rc::downgrade(&report);
+    faces.set_on_timing_changed(move || {
+        if let Some(report) = changed_report.upgrade() {
+            report.refresh_if_showing();
+        }
+    });
+
     // A menu bar app owns no dock icon. This has to happen after Slint has built its backend, because
     // that is what creates the application object, and again from inside the event loop below, because
     // the windowing layer sets its own policy on the way up.
@@ -75,6 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tab_log = Rc::clone(&log);
     let tab_faces = Rc::clone(&faces);
     let tab_categories = Rc::clone(&categories);
+    let tab_report = Rc::clone(&report);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
@@ -84,6 +95,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if tab == "Categories" {
             tab_categories.refresh();
+        }
+        if tab == "Report" {
+            tab_report.refresh();
         }
     });
 
@@ -104,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Royalty-free licence wants the AboutSlint widget in an About screen "accessible from the top
     // level menu of the Application"; this app has no application menu bar, being an accessory, so
     // the status item's menu is its top level menu. Reaching About only by opening Settings and
-    // then finding a tab would rest on reading "accessible from" loosely. See NOTICE.
+    // then finding a tab would rest on reading "accessible from" loosely. See NOTICE.md.
     //
     // Where About sits in the menu does not matter to the licence, only that it is on it, so it goes
     // below the separator beside Quit where the things that are not about tracking time belong.
@@ -166,6 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_log = Rc::clone(&log);
     let pump_faces = Rc::clone(&faces);
     let pump_categories = Rc::clone(&categories);
+    let pump_report = Rc::clone(&report);
 
     // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
     // is after every toggle, every click on the Faces tab and every tick.
@@ -221,6 +236,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         show_settings(&ui, "About", &pump_log);
                         pump_faces.refresh();
                         pump_categories.refresh();
+                        pump_report.open();
                     }
                 }
                 "settings" => {
@@ -229,6 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         show_settings(&ui, "Faces", &pump_log);
                         pump_faces.refresh();
                         pump_categories.refresh();
+                        pump_report.open();
                     }
                 }
                 "quit" => {
@@ -299,7 +316,7 @@ fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
         return;
     }
     ui.window().set_maximized(false);
-    activate_app();
+    activate_app(log);
     // Reported here rather than left to the tab callback, which does not fire for a tab that is
     // already selected, and since every ordinary open lands on Faces that is most opens.
     log.record(Tag::Settings, || format!("Settings opened on {tab}"));
@@ -314,7 +331,7 @@ fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
 ///
 /// **`Regular` also gives the app a menu bar of its own**, which does not change where About lives. The Slint
 /// Royalty-free licence wants it reachable from the top level menu, and the status item's menu is that menu
-/// whether or not a window happens to be open. See NOTICE.
+/// whether or not a window happens to be open. See NOTICE.md.
 #[cfg(target_os = "macos")]
 fn show_in_dock(wanted: bool, log: &Option<DebugLog>) {
     use objc2::MainThreadMarker;
@@ -385,18 +402,36 @@ fn name_the_status_item(tray: &TrayIcon, log: &Option<DebugLog>) {
 #[cfg(not(target_os = "macos"))]
 fn name_the_status_item(_tray: &TrayIcon, _log: &Option<DebugLog>) {}
 
+/// Puts the Settings window in front of every other app's and gives it the keyboard.
+///
+/// Orders the window front and makes it key, then activates the app ignoring other apps. The cooperative
+/// `NSApplication::activate` is not enough: a choice from a status item's menu does not make the app active,
+/// so macOS declines the request and the window opens behind whatever was in front.
 #[cfg(target_os = "macos")]
-fn activate_app() {
+fn activate_app(log: &Option<DebugLog>) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSApplication;
+    use objc2_foundation::NSString;
 
-    if let Some(mtm) = MainThreadMarker::new() {
-        NSApplication::sharedApplication(mtm).activate();
+    let Some(mtm) = MainThreadMarker::new() else {
+        log.record_failure(Tag::Settings, || {
+            "Not on the main thread, so Settings was not brought forward".to_string()
+        });
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let title = NSString::from_str("Facet Settings");
+    let window = app.windows().iter().find(|window| window.title().isEqualToString(&title));
+    match window {
+        Some(window) => window.makeKeyAndOrderFront(None),
+        None => log.record_failure(Tag::Settings, || "No Facet Settings window to bring forward".to_string()),
     }
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
 }
 
 #[cfg(not(target_os = "macos"))]
-fn activate_app() {}
+fn activate_app(_log: &Option<DebugLog>) {}
 
 /// Redraws the status item for `showing`.
 ///

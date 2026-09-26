@@ -1,6 +1,6 @@
 # The About tab
 
-[← Back to README](../README.md) · [NOTICE →](../NOTICE) · [The Rust port →](rust-port.md)
+[← Back to README](../README.md) · [NOTICE →](../NOTICE.md) · [The Rust port →](rust-port.md)
 
 **The tab is built. The update check on it is not**, and this file is both halves: why the tab has to
 exist at all, which is a licence obligation rather than a product decision, and the design question the
@@ -32,7 +32,7 @@ reads clause 2(a). **Not done yet.**
 
 The rest of the tab is ordinary: version, licence, a link to the source, acknowledgements. The
 acknowledgements are not decoration either. The icon permission is per-project and does not transfer,
-and [`NOTICE`](../NOTICE) records that.
+and [`NOTICE.md`](../NOTICE.md) records that.
 
 **A scripted check should assert the widget is present.** A licence condition nothing verifies is a
 licence condition that quietly lapses across a refactor.

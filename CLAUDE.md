@@ -406,7 +406,7 @@ it is on the menu at all.
 
 **Three things have to stay true together**: the menu item exists, it opens the About screen, and that
 screen shows the widget. Breaking any one puts a build out of compliance, so this is the one piece of UI
-whose presence is not a design decision. [`NOTICE`](NOTICE) has the clause.
+whose presence is not a design decision. [`NOTICE.md`](NOTICE.md) has the clause.
 
 **Reaching About only through Settings is not good enough**, which is how it was built first. It depends
 on reading "accessible from" loosely, and a licence condition should not rest on an argument.

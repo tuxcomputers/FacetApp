@@ -26,6 +26,7 @@ import time
 
 import Quartz
 from AppKit import NSApplicationActivateIgnoringOtherApps, NSWorkspace
+from ApplicationServices import AXUIElementCreateApplication, AXUIElementSetAttributeValue
 
 # The virtual key codes for what a script actually needs. Named rather than numeric at the call site,
 # because `36` in a test script is a number nobody can check without a table.
@@ -103,9 +104,13 @@ def main():
     # whatever the caller is being driven from, which is the one failure that looks like the app ignoring it.
     # Activated by process rather than by name through AppleScript: a bare binary has no bundle, so AppleScript
     # cannot find it by name, and the key then went to whatever was in front (2026-09-26).
-    app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
     frontmost = None
-    for _ in range(20):
+    for attempt in range(20):
+        # Asked again every 0.2s, through AppKit and through accessibility: macOS can decline one request,
+        # measured on 2026-09-26 when iTerm2 stayed in front through a single activation.
+        if attempt % 2 == 0:
+            app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+            AXUIElementSetAttributeValue(AXUIElementCreateApplication(app.processIdentifier()), "AXFrontmost", True)
         time.sleep(0.1)
         frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
         if frontmost is not None and frontmost.processIdentifier() == app.processIdentifier():

@@ -41,7 +41,7 @@ pub struct Faces {
     has_given_up_on_cube: bool,
     tick: slint::Timer,
     creator: Rc<Creator>,
-    on_timing_changed: RefCell<Option<Box<dyn Fn()>>>,
+    on_timing_changed: RefCell<Vec<Box<dyn Fn()>>>,
     this: RefCell<Weak<Faces>>,
 }
 
@@ -65,7 +65,7 @@ impl Faces {
             log,
             has_given_up_on_cube,
             tick: slint::Timer::default(),
-            on_timing_changed: RefCell::new(None),
+            on_timing_changed: RefCell::new(Vec::new()),
             this: RefCell::new(Weak::new()),
         });
         *faces.this.borrow_mut() = Rc::downgrade(&faces);
@@ -139,10 +139,10 @@ impl Faces {
         })
     }
 
-    /// Sets what runs whenever the timing picture has been re-read: after every click on the tab, every
-    /// menu bar toggle and every tick. Replaces any earlier callback.
+    /// Adds something to run whenever the timing picture has been re-read: after every click on the tab,
+    /// every menu bar toggle and every tick. Every callback added runs, in the order added.
     pub fn set_on_timing_changed(&self, changed: impl Fn() + 'static) {
-        *self.on_timing_changed.borrow_mut() = Some(Box::new(changed));
+        self.on_timing_changed.borrow_mut().push(Box::new(changed));
     }
 
     /// Re-reads the timing picture, without the category list, and tells the timing-changed callback.
@@ -206,7 +206,7 @@ impl Faces {
         data.set_glyph_enabled(timing::is_clickable(reading.timing_state, reading.is_limit_reached));
         data.set_rows_enabled(timing::click(is_manual_mode) == timing::Click::StartTiming);
 
-        if let Some(changed) = self.on_timing_changed.borrow().as_ref() {
+        for changed in self.on_timing_changed.borrow().iter() {
             changed();
         }
 
