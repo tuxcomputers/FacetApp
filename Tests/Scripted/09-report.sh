@@ -128,7 +128,8 @@ order_now() { tree | grep -o "id=report-total-[0-9]*-heading" | sed -E 's/.*repo
 # numbers here would be checking the sort against a second implementation of the sum. `display_seconds` is on
 # in a clean database, so a heading ends H:MM:SS.
 durations_in_order() {
-    tree | grep -o "id=report-total-[0-9]*-heading  value=.*" \
+    # The label is `value=` in the AT-SPI dump and `title=` in the macOS one.
+    tree | grep -oE "id=report-total-[0-9]+-heading  (value|title)=.*" \
         | sed -E 's/.*, ([0-9]+):([0-9]{2}):([0-9]{2})$/\1 \2 \3/' \
         | awk '{ print $1 * 3600 + $2 * 60 + $3 }' \
         | tr '\n' ' '
@@ -150,6 +151,25 @@ monotonic() {
         }'
 }
 
+# The ids in `$1` in the order the app lists categories by name: names that are whole numbers first, by value,
+# then the rest case-insensitively with runs of digits compared as numbers, ties by id. The rule is
+# `facet_core::category::display_order`; the names are read from the table.
+display_order() {
+    local ids
+    ids=$(printf '%s' "$1" | tr ' ' ',' | sed 's/,$//')
+    sql "SELECT category_id || char(9) || category_name FROM category WHERE category_id IN ($ids);" | python3 -c '
+import re, sys
+rows = [line.rstrip("\n").split("\t", 1) for line in sys.stdin if line.strip()]
+def key(row):
+    ident, name = int(row[0]), row[1]
+    if re.fullmatch(r"-?\d+", name):
+        return (0, int(name), (), ident)
+    parts = tuple((0, int(p), "") if p.isdigit() else (1, 0, p.lower()) for p in re.findall(r"\d+|\D+", name))
+    return (1, 0, parts, ident)
+print(" ".join(row[0] for row in sorted(rows, key=key)) + " ")
+'
+}
+
 # Reverses a space-separated list. awk rather than `tail -r`, which is BSD's and absent on Linux, or `tac`,
 # which is GNU's and absent on the Mac.
 reversed() { printf '%s' "$1" | tr ' ' '\n' | grep -v '^$' | awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }' | tr '\n' ' '; }
@@ -161,7 +181,9 @@ check "with the other column bare" "0" "$(element report-sort-category | grep -c
 by_time_desc=$(order_now)
 
 falling=$(durations_in_order)
-if monotonic "$falling" down; then
+if [ -z "$(printf '%s' "$falling" | tr -d ' ')" ]; then
+    fail "no figures could be read off the headings"
+elif monotonic "$falling" down; then
     pass "and the figures only ever fall ($falling)"
 else
     fail "the figures are not in descending order ($falling)"
@@ -174,7 +196,9 @@ expect_log "clicking Time turns the opening order over" "$since" "Report sorted 
 check_contains "and the arrow turns over" "$(element report-sort-time)" "Time ▲"
 
 rising=$(durations_in_order)
-if monotonic "$rising" up; then
+if [ -z "$(printf '%s' "$rising" | tr -d ' ')" ]; then
+    fail "no figures could be read off the headings"
+elif monotonic "$rising" up; then
     pass "and now they only ever rise ($rising)"
 else
     fail "the figures are not in ascending order ($rising)"
@@ -189,12 +213,11 @@ expect_log "clicking Category asks the other question" "$since" "Report sorted b
 check_contains "and the arrow moves to that column" "$(element report-sort-category)" "Category ▲"
 check "leaving the time column bare" "0" "$(element report-sort-time | grep -c '▲\|▼' || true)"
 
+# **Checked against the names, not against the order before.** Sorting by time can happen to give the order
+# sorting by name does, as it did on the Mac on 2026-09-26 (a 10 second category first, then two tied at 7 that
+# fall back to name order), and a check that the order changed then fails a correct sort.
 by_category=$(order_now)
-if [ "$by_category" != "$by_time_desc" ]; then
-    pass "the rows are in a different order ($by_time_desc-> $by_category)"
-else
-    fail "clicking Category changed nothing about the order ($by_time_desc)"
-fi
+check "the rows are in category order" "$(display_order "$by_category")" "$by_category"
 
 since=$(mark)
 press report-sort-category
