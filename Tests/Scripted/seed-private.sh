@@ -42,7 +42,7 @@ except Exception:
     # **The calendar id is the only record of what to delete.** `calendarList.list` returns nothing usable
     # under `calendar.app.created` (measured 2026-08-15), so a calendar this file forgets can never be
     # found again and has to be deleted by hand in Google Calendar. It is put back into the rebuilt
-    # database, and 10 deletes it there before making a fresh one.
+    # database, and 03 deletes it there before making a fresh one.
     #
     # A delete that fails leaves the id in the row, so the next capture picks it up again and the next run
     # tries once more. Nothing else is needed to make that work, which is why the separate retry list this
@@ -115,11 +115,11 @@ with open('$SEED') as f:
     step "the Google account is seeded ($email)"
 
     # Reported because it is what the next step needs in order to delete the right calendar, not because
-    # the run wants to keep it. Either way 10 makes a fresh one.
+    # the run wants to keep it. Either way 03 makes a fresh one.
     calendar=$(sql "SELECT json_extract(setting_value, '\$.calendar_name') FROM setting WHERE setting_name = 'google_account';")
     if [ -n "$calendar" ]; then
-        step "naming last run's calendar, which 10 deletes before making its own ($calendar)"
+        step "naming last run's calendar, which 03 deletes before making its own ($calendar)"
     else
-        step "the seed names no calendar, so 10 makes the first one"
+        step "the seed names no calendar, so 03 makes the first one"
     fi
 }

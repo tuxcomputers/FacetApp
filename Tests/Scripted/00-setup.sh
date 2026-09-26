@@ -11,9 +11,9 @@
 # actually laid. So it declares one expected check and answers it once at the bottom -- completed, or did not.
 #
 # **Carried over for the no-cube range only, 2026-09-25.** The Swift version also seeded fractional history for
-# `09-report`, proved the Google account by making a calendar, and factory reset the cube. None of those halves
-# exists in the Rust app yet, so none of them is here; each comes back with the script that needs it, which is
-# `09`, `10` and `50` respectively. What is left is the one thing every check below `50` stands on: the trace.
+# `09-report`, proved the Google account by making a calendar, and factory reset the cube. Those halves come back
+# with the script that needs them, which is `09`, `10` and `50` respectively. What is here is what every check
+# below `50` stands on: the trace, and the connected Google account `03` and `11` need.
 #
 # What this guarantees to everything below:
 #
@@ -61,6 +61,12 @@ if [ "$(setting debug enabled)" != "1" ]; then
 else
     step "debug logging is on, and the trace is in $SUPPORT"
 fi
+
+# **The Google account captured before the rebuild, written back.** The refresh token lives in the secret store,
+# which no rebuild touches, but the identity and the calendar the app reads are a row, and a fresh database has
+# none. Written while the app is shut, like the row above. `seed-private.sh` says why the values live outside
+# the repository.
+apply_private_seeds
 
 # ---------------------------------------------------------------------------- the one verdict
 
