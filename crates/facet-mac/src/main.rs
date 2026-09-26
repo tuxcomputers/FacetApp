@@ -13,15 +13,22 @@ mod opener;
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use facet_adapters::dialogs::NativeFileChooser;
+use facet_adapters::http::UreqHttp;
+use facet_adapters::loopback::StdLoopbackListener;
+use facet_adapters::secrets::KeyringSecretStore;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
+use facet_core::google::Credentials;
+use facet_core::port::Opener;
 use facet_core::setting;
 use facet_ui::app::App;
 use facet_ui::categories::Categories;
 use facet_ui::faces::Faces;
+use facet_ui::google::Google;
 use facet_ui::notice::Notice;
 use facet_ui::report::Report;
 use facet_ui::{ComponentHandle, SettingsWindow};
@@ -73,12 +80,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let report = Report::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log));
+    let opener: Rc<dyn Opener> = Rc::new(opener::MacOpener);
     let app = App::attach(
         &ui,
         data_directory().join("appdata.sqlite"),
         Rc::clone(&log),
         Rc::clone(&notice),
-        Rc::new(opener::MacOpener),
+        Rc::clone(&opener),
         Rc::new(NativeFileChooser),
     );
     // A stored App setting can change what the Faces tab and the menu bar show.
@@ -88,6 +96,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             faces.refresh();
         }
     });
+    // The refresh token lives under its own name: the Swift app's au.com.tux.facet.google item is its
+    // fallback and must not be written.
+    let credentials = Credentials::resolve(
+        std::env::var("FACET_GOOGLE_CLIENT_JSON").ok().as_deref(),
+        home_directory().as_deref(),
+        home_directory().map(|home| home.join(".config/facet/google-client.json")).as_deref(),
+        None,
+    );
+    let google = Google::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        Rc::clone(&log),
+        Rc::clone(&notice),
+        Rc::clone(&opener),
+        Arc::new(KeyringSecretStore::new("au.com.tux.facet.google-refresh", "refresh-token")),
+        Arc::new(UreqHttp::new()),
+        Arc::new(StdLoopbackListener),
+        credentials,
+    );
     // A time entry recorded while the Report is on screen changes its figures.
     let changed_report = Rc::downgrade(&report);
     faces.set_on_timing_changed(move || {
@@ -105,6 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tab_faces = Rc::clone(&faces);
     let tab_categories = Rc::clone(&categories);
     let tab_report = Rc::clone(&report);
+    let tab_google = Rc::clone(&google);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
@@ -117,6 +145,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if tab == "Report" {
             tab_report.refresh();
+        }
+        if tab == "App" {
+            tab_google.open();
         }
     });
 
@@ -485,6 +516,11 @@ fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &impl
 /// which layout produced them; `~/Library/Application Support/Facet` is this machine's answer and
 /// `~/.local/share/Facet` is the Linux one, and neither belongs in a crate that must not be able to tell
 /// which it is running on.
+/// The home directory, from `$HOME`. `None` when it is unset or empty.
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME").filter(|home| !home.is_empty()).map(PathBuf::from)
+}
+
 fn data_directory() -> PathBuf {
     // $HOME rather than NSFileManager, so this is the same answer a shell script gets. Tests/Scripted and
     // scripts/run.sh both resolve it that way through Tests/Scripted/platform.sh, and a suite that looked

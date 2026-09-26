@@ -18,16 +18,23 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
 use facet_adapters::dialogs::NativeFileChooser;
+use facet_adapters::http::UreqHttp;
+use facet_adapters::loopback::StdLoopbackListener;
+use facet_adapters::secrets::KeyringSecretStore;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
+use facet_core::google::Credentials;
+use facet_core::port::Opener;
 use facet_core::setting;
 use facet_ui::app::App;
 use facet_ui::categories::Categories;
 use facet_ui::faces::Faces;
+use facet_ui::google::Google;
 use facet_ui::notice::Notice;
 use facet_ui::report::Report;
 use facet_ui::{ComponentHandle, SettingsWindow};
@@ -82,12 +89,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let report = Report::attach(&ui, data_directory().join("appdata.sqlite"), std::rc::Rc::clone(&log));
+    let opener: std::rc::Rc<dyn Opener> = std::rc::Rc::new(opener::LinuxOpener);
     let app = App::attach(
         &ui,
         data_directory().join("appdata.sqlite"),
         std::rc::Rc::clone(&log),
         std::rc::Rc::clone(&notice),
-        std::rc::Rc::new(opener::LinuxOpener),
+        std::rc::Rc::clone(&opener),
         std::rc::Rc::new(NativeFileChooser),
     );
     // A stored App setting can change what the Faces tab and the menu bar show.
@@ -97,6 +105,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             faces.refresh();
         }
     });
+    // The refresh token lives under its own name: the Swift app's au.com.tux.facet.google item is its
+    // fallback and must not be written.
+    let credentials = Credentials::resolve(
+        std::env::var("FACET_GOOGLE_CLIENT_JSON").ok().as_deref(),
+        home_directory().as_deref(),
+        home_directory().map(|home| home.join(".config/facet/google-client.json")).as_deref(),
+        None,
+    );
+    let google = Google::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        std::rc::Rc::clone(&log),
+        std::rc::Rc::clone(&notice),
+        std::rc::Rc::clone(&opener),
+        Arc::new(KeyringSecretStore::new("au.com.tux.facet.google-refresh", "refresh-token")),
+        Arc::new(UreqHttp::new()),
+        Arc::new(StdLoopbackListener),
+        credentials,
+    );
     // A time entry recorded while the Report is on screen changes its figures.
     let changed_report = std::rc::Rc::downgrade(&report);
     faces.set_on_timing_changed(move || {
@@ -109,6 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tab_faces = std::rc::Rc::clone(&faces);
     let tab_categories = std::rc::Rc::clone(&categories);
     let tab_report = std::rc::Rc::clone(&report);
+    let tab_google = std::rc::Rc::clone(&google);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
@@ -121,6 +149,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if tab == "Report" {
             tab_report.refresh();
+        }
+        if tab == "App" {
+            tab_google.open();
         }
     });
 
@@ -346,6 +377,11 @@ fn start_the_tray(to_ui: Sender<FromTray>, log: &impl Record) -> Option<Handle<F
 /// checking a database nobody had written to, which is the same fault that has already been paid for once
 /// when a script hardcoded the macOS directory. **One question, one answer**: if this is ever taught about
 /// `XDG_DATA_HOME`, `platform.sh` is taught in the same change.
+/// The home directory, from `$HOME`. `None` when it is unset or empty.
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME").filter(|home| !home.is_empty()).map(PathBuf::from)
+}
+
 fn data_directory() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home).join(".local/share/Facet")
