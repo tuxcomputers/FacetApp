@@ -171,7 +171,7 @@ impl Tray for FacetTray {
     /// set once and mutated: `ksni` re-reads this after every handler and diffs it. Pause and Lock are
     /// first because left click accelerates the first item. About is on it because the Slint Royalty-free
     /// licence wants it reachable from the top level menu and this menu is the app's top level menu; see
-    /// NOTICE.
+    /// NOTICE.md.
     ///
     /// **The labels are the addressing.** `Tests/Scripted` presses tray items by label on every platform,
     /// no identifier surviving the trip on Linux, so these words are interface and not decoration.

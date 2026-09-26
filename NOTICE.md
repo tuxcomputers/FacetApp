@@ -1,7 +1,7 @@
 Facet
 Copyright 2026 Harry Phillips
 
-This product is licensed under the Apache License, Version 2.0. See LICENSE.
+This product is licensed under the Apache License, Version 2.0. See LICENSE.md.
 
 Facet is a fork of TimeFlipApp by growler (https://github.com/growler/TimeFlipApp),
 released into the public domain under The Unlicense. That licence imposes no
@@ -15,8 +15,7 @@ Three things distributed with Facet are not covered by the Apache licence above.
 Anyone redistributing Facet, modified or unmodified, has to satisfy all three.
 
 
-1. Slint
---------
+## 1. Slint
 
 The user interface is built with Slint (https://slint.dev), by SixtyFPS GmbH,
 which is available under three licences:
@@ -53,8 +52,7 @@ The full text of all three Slint licences ships inside the slint crate, under
 LICENSES/ in its source.
 
 
-2. The activity icons
----------------------
+## 2. The activity icons
 
 The activity icons are TimeFlip's copyrighted icon set. Permission to use them
 was granted to Harry Phillips for this project specifically, and IT DOES NOT
@@ -67,8 +65,7 @@ TimeFlip first. Without that permission, remove or replace the icons before
 sharing it on.
 
 
-3. The Inter typeface
----------------------
+## 3. The Inter typeface
 
 The user interface draws its text in Inter (https://github.com/rsms/inter),
 version 4.1, Copyright (c) 2016 The Inter Project Authors. Four weights are
@@ -81,8 +78,7 @@ form, and forbids selling the fonts on their own. It places no conditions on the
 software they are bundled with, so Facet's own code stays under Apache 2.0.
 
 
-4. Rust dependencies
---------------------
+## 4. Rust dependencies
 
 Everything else Facet links is permissively licensed, overwhelmingly
 "MIT OR Apache-2.0". For the licence of every crate in a given build:

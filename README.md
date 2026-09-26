@@ -156,9 +156,9 @@ fact that only exists in a frozen tree is a fact somebody pays for twice.
 
 ## Licence
 
-[Apache License 2.0](LICENSE). Copyright 2026 Harry Phillips.
+[Apache License 2.0](LICENSE.md). Copyright 2026 Harry Phillips.
 
-**[`NOTICE`](NOTICE) is part of the licence, not decoration.** Two things shipped with Facet are not
+**[`NOTICE.md`](NOTICE.md) is part of the licence, not decoration.** Two things shipped with Facet are not
 covered by Apache-2.0, and anyone redistributing it has to satisfy both.
 
 **Slint is tri-licensed** (`GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR

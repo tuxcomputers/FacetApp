@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Royalty-free licence wants the AboutSlint widget in an About screen "accessible from the top
     // level menu of the Application"; this app has no application menu bar, being an accessory, so
     // the status item's menu is its top level menu. Reaching About only by opening Settings and
-    // then finding a tab would rest on reading "accessible from" loosely. See NOTICE.
+    // then finding a tab would rest on reading "accessible from" loosely. See NOTICE.md.
     //
     // Where About sits in the menu does not matter to the licence, only that it is on it, so it goes
     // below the separator beside Quit where the things that are not about tracking time belong.
@@ -314,7 +314,7 @@ fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
 ///
 /// **`Regular` also gives the app a menu bar of its own**, which does not change where About lives. The Slint
 /// Royalty-free licence wants it reachable from the top level menu, and the status item's menu is that menu
-/// whether or not a window happens to be open. See NOTICE.
+/// whether or not a window happens to be open. See NOTICE.md.
 #[cfg(target_os = "macos")]
 fn show_in_dock(wanted: bool, log: &Option<DebugLog>) {
     use objc2::MainThreadMarker;
