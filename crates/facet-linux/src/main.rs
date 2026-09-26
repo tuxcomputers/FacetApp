@@ -21,6 +21,7 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
+use facet_adapters::dialogs::NativeFileChooser;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
 use facet_core::setting;
@@ -32,6 +33,7 @@ use facet_ui::report::Report;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use ksni::blocking::{Handle, TrayMethods};
 
+mod opener;
 mod tray;
 
 use tray::{FacetTray, FromTray};
@@ -85,6 +87,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_directory().join("appdata.sqlite"),
         std::rc::Rc::clone(&log),
         std::rc::Rc::clone(&notice),
+        std::rc::Rc::new(opener::LinuxOpener),
+        std::rc::Rc::new(NativeFileChooser),
     );
     // A stored App setting can change what the Faces tab and the menu bar show.
     let app_faces = std::rc::Rc::downgrade(&faces);

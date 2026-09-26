@@ -1,0 +1,12 @@
+[package]
+name = "facet-adapters"
+description = "Adapters built only on portable crates, the same on every platform, for the composition roots to inject."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+facet-core.workspace = true
+dirs.workspace = true
+rfd.workspace = true

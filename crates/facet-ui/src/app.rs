@@ -11,7 +11,8 @@ use std::rc::{Rc, Weak};
 
 use facet_core::app_settings::{self, Value, Values};
 use facet_core::debug_log::{Record, Tag, Trace};
-use facet_core::{database, setting};
+use facet_core::port::{FileChooser, Opener};
+use facet_core::{database, setting, trace_file};
 use rusqlite::Connection;
 use slint::ComponentHandle;
 
@@ -24,6 +25,8 @@ pub struct App {
     database: PathBuf,
     log: Rc<Trace>,
     notice: Rc<Notice>,
+    opener: Rc<dyn Opener>,
+    chooser: Rc<dyn FileChooser>,
     /// What the window holds, from [`App::open`] until the window closes.
     held: RefCell<Option<Values>>,
     /// Whether debug logging is on, as the window holds it.
@@ -54,12 +57,21 @@ impl Row {
 
 impl App {
     /// Wires the tab's callbacks on `ui` to `database`. Call once, at launch.
-    pub fn attach(ui: &SettingsWindow, database: PathBuf, log: Rc<Trace>, notice: Rc<Notice>) -> Rc<App> {
+    pub fn attach(
+        ui: &SettingsWindow,
+        database: PathBuf,
+        log: Rc<Trace>,
+        notice: Rc<Notice>,
+        opener: Rc<dyn Opener>,
+        chooser: Rc<dyn FileChooser>,
+    ) -> Rc<App> {
         let app = Rc::new(App {
             ui: ui.as_weak(),
             database,
             log,
             notice,
+            opener,
+            chooser,
             held: RefCell::new(None),
             held_debug: RefCell::new(None),
             on_changed: RefCell::new(Vec::new()),
@@ -98,6 +110,30 @@ impl App {
         data.on_debug_toggled(move |on| {
             if let Some(app) = weak.upgrade() {
                 app.debug_toggled(on);
+            }
+        });
+        let weak = Rc::downgrade(&app);
+        data.on_debug_choose_pressed(move || {
+            if let Some(app) = weak.upgrade() {
+                app.choose_folder();
+            }
+        });
+        let weak = Rc::downgrade(&app);
+        data.on_debug_reveal_pressed(move || {
+            if let Some(app) = weak.upgrade() {
+                app.reveal_trace();
+            }
+        });
+        let weak = Rc::downgrade(&app);
+        data.on_debug_copy_pressed(move || {
+            if let Some(app) = weak.upgrade() {
+                app.copy_trace();
+            }
+        });
+        let weak = Rc::downgrade(&app);
+        data.on_debug_clear_pressed(move || {
+            if let Some(app) = weak.upgrade() {
+                app.clear_trace();
             }
         });
         let weak = Rc::downgrade(&app);
@@ -174,6 +210,116 @@ impl App {
             });
         }
         self.show_trace();
+    }
+
+    /// Asks for a folder and stores it as the trace folder for the next launch.
+    fn choose_folder(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let data = ui.global::<AppData>();
+        let shown = data.get_debug_directory().to_string();
+        let Some(picked) = self.chooser.choose_folder(&untilde(&shown), "Where Facet keeps its debug trace")
+        else {
+            self.log.record(Tag::Settings, || format!("Debug trace folder left as {shown}"));
+            return;
+        };
+        let stored_as = tilde(&picked.display().to_string());
+        let stored = self
+            .connect()
+            .and_then(|connection| {
+                self.report(app_settings::write(
+                    &connection,
+                    "debug",
+                    "directory",
+                    &Value::Text(stored_as.clone()),
+                    &*self.log,
+                ))
+            })
+            .unwrap_or(false);
+        if stored {
+            data.set_debug_directory(stored_as.into());
+        } else {
+            self.refused("Directory");
+        }
+    }
+
+    /// Whether the trace file exists, saying so in a notice when it does not.
+    fn has_trace(&self) -> bool {
+        let file = self.log.file();
+        if file.is_file() {
+            return true;
+        }
+        self.notice.tell(
+            "There is no trace to show",
+            &format!(
+                "Facet expected its debug trace at {}, and there is no file there.\n\nIt is written as the app \
+                 runs, so there is nothing to show until something has been logged.",
+                file.display()
+            ),
+        );
+        false
+    }
+
+    fn reveal_trace(&self) {
+        if !self.has_trace() {
+            return;
+        }
+        let file = self.log.file().to_path_buf();
+        self.log.record(Tag::Settings, || format!("Revealing the trace at {}", file.display()));
+        if let Err(error) = self.opener.reveal(&file) {
+            self.log.record_failure(Tag::Settings, || format!("The trace could not be revealed: {error}"));
+            self.notice.tell("The trace could not be shown", &error);
+        }
+    }
+
+    fn copy_trace(&self) {
+        if !self.has_trace() {
+            return;
+        }
+        let Some(connection) = self.connect() else { return };
+        let Some(name) = self.report(trace_file::copy_name(&connection, now())) else { return };
+        let Some(destination) =
+            self.chooser.choose_save_file(&name, "Save a copy of the debug trace to send in")
+        else {
+            self.log.record(Tag::Settings, || "The trace was not copied".to_string());
+            return;
+        };
+        match trace_file::copy_to(self.log.file(), &destination) {
+            Ok(()) => self.log.record(Tag::Settings, || format!("Trace copied to {}", destination.display())),
+            Err(error) => {
+                self.log.record_failure(Tag::Settings, || format!("The trace was not copied: {error}"));
+                self.notice.tell("The trace was not copied", &error);
+            }
+        }
+        self.show_trace();
+    }
+
+    fn clear_trace(&self) {
+        if !self.has_trace() {
+            return;
+        }
+        let this = self.this.borrow().clone();
+        self.notice.ask(
+            "Clear the debug trace?",
+            "This removes every message Facet has recorded so far. It cannot be undone, and anything you have \
+             been asked to send in goes with it.\n\nNothing else is affected: your recorded time, categories and \
+             settings are in a different file.",
+            &["Cancel", "Clear Trace"],
+            move |index| {
+                let Some(app) = this.upgrade() else { return };
+                if index != 1 {
+                    app.log.record(Tag::Settings, || "The trace was not cleared".to_string());
+                    return;
+                }
+                match trace_file::clear(app.log.file()) {
+                    Ok(()) => app.log.record(Tag::Settings, || "Trace cleared".to_string()),
+                    Err(error) => {
+                        app.log.record_failure(Tag::Settings, || format!("The trace was not cleared: {error}"));
+                        app.notice.tell("The trace was not cleared", &error);
+                    }
+                }
+                app.show_trace();
+            },
+        );
     }
 
     fn refused(&self, title: &str) {
@@ -260,6 +406,21 @@ impl App {
     }
 }
 
+/// `path` with a leading `~` written out as the home folder.
+fn untilde(path: &str) -> PathBuf {
+    match (path.strip_prefix('~'), std::env::var("HOME")) {
+        (Some(rest), Ok(home)) if !home.is_empty() => PathBuf::from(format!("{home}{rest}")),
+        _ => PathBuf::from(path),
+    }
+}
+
+/// Whole unix seconds now. A clock before 1970 reads as 0.
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64)
+}
+
 /// `path` with the home folder written as `~`.
 fn tilde(path: &str) -> String {
     match std::env::var("HOME") {
@@ -280,6 +441,26 @@ mod tests {
     use slint::platform::{Platform, WindowAdapter};
 
     struct Headless(Rc<MinimalSoftwareWindow>);
+
+    struct NoOpener;
+    impl Opener for NoOpener {
+        fn reveal(&self, _file: &std::path::Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn open_url(&self, _url: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    struct NoChooser;
+    impl FileChooser for NoChooser {
+        fn choose_folder(&self, _start: &std::path::Path, _message: &str) -> Option<PathBuf> {
+            None
+        }
+        fn choose_save_file(&self, _name: &str, _message: &str) -> Option<PathBuf> {
+            None
+        }
+    }
 
     impl Platform for Headless {
         fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
@@ -304,7 +485,14 @@ mod tests {
             std::fs::remove_file(&trace_file).expect("a stale trace should be removable");
         }
         let trace = Rc::new(Trace::new(trace_file.clone(), None));
-        let app = App::attach(&ui, path.clone(), Rc::clone(&trace), Rc::clone(&notice));
+        let app = App::attach(
+            &ui,
+            path.clone(),
+            Rc::clone(&trace),
+            Rc::clone(&notice),
+            Rc::new(NoOpener),
+            Rc::new(NoChooser),
+        );
         let changes = Rc::new(std::cell::Cell::new(0));
         let counted = Rc::clone(&changes);
         app.set_on_changed(move || counted.set(counted.get() + 1));
@@ -338,6 +526,10 @@ mod tests {
         assert!(trace.is_recording());
         assert!(setting::debug_trace(&connection).expect("should read").enabled);
         assert!(data.get_has_debug_trace());
+        app.clear_trace();
+        assert_eq!(notice.title(), "Clear the debug trace?");
+        notice.choose(1);
+        assert_eq!(notice.title(), "");
         app.debug_toggled(false);
         assert!(!trace.is_recording());
 

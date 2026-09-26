@@ -3,19 +3,20 @@ resolver = "3"
 members = [
     "crates/facet-core",
     "crates/facet-ui",
+    "crates/facet-adapters",
     "crates/facet-mac",
     "crates/facet-linux",
     "crates/facet-windows",
 ]
 
-# A bare `cargo build` builds the two crates that compile anywhere. The three platform crates are each
+# A bare `cargo build` builds the three crates that compile anywhere. The three platform crates are each
 # buildable on exactly one machine, a Mac not being able to compile the BlueZ or WinRT adapters, so build
 # the one for the machine you are on explicitly: `cargo build -p facet-mac`.
 #
 # **facet-ui is in here deliberately.** It is the shared Settings window, so a broken `.slint` file is a
 # break on all three platforms, and a bare `cargo build` on any machine should be what catches it rather
 # than whichever composition root happens to be built next.
-default-members = ["crates/facet-core", "crates/facet-ui"]
+default-members = ["crates/facet-core", "crates/facet-ui", "crates/facet-adapters"]
 
 # The probes are standalone programs, kept because a measurement is worth more with the thing that
 # produced it beside it. They resolve their own dependencies rather than the app's, so a re-run is not
@@ -39,6 +40,12 @@ repository = "https://github.com/tuxcomputers/FacetApp"
 [workspace.dependencies]
 facet-core = { path = "crates/facet-core" }
 facet-ui = { path = "crates/facet-ui" }
+facet-adapters = { path = "crates/facet-adapters" }
+
+# Native file dialogs for facet-adapters. No wayland feature: it links system libraries CI does not have,
+# and the XDG portal backend Linux uses does not need it.
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+dirs = "7.0.0"
 
 # measured: probe/timeflip-btleplug drove the real cube with these
 btleplug = "0.13.1"

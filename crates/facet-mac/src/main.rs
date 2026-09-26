@@ -8,11 +8,14 @@
 //! **Where the files live is decided here and nowhere else.** `facet-core` is handed paths; it does not
 //! know which platform laid them out, and asking it to would be the core caring what it is running on.
 
+mod opener;
+
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+use facet_adapters::dialogs::NativeFileChooser;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
 use facet_core::setting;
@@ -70,7 +73,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let report = Report::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log));
-    let app = App::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log), Rc::clone(&notice));
+    let app = App::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        Rc::clone(&log),
+        Rc::clone(&notice),
+        Rc::new(opener::MacOpener),
+        Rc::new(NativeFileChooser),
+    );
     // A stored App setting can change what the Faces tab and the menu bar show.
     let app_faces = Rc::downgrade(&faces);
     app.set_on_changed(move || {
