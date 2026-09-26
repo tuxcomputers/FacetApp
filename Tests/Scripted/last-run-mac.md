@@ -5,27 +5,27 @@ Written by `Tests/Scripted/run.sh` at the end of every run, and committed.
 run, and a stamp that does not describe a real run is worse than no stamp at all.
 
     branch:   feature/reportTab
-    commit:   ff2c1c73f55bba3df361114127d04a8e3d12ce50
+    commit:   1811aa2c088f6b75a5c7437f38ac2157ce441f73
     tree:     clean
     database: rebuilt from the DDL
-    started:  2026-09-26 14:24:05
-    finished: 2026-09-26 14:25:59
-    outcome:  failed
-    scripts:  2 of 6 run, 1 with failures
-    short:    5 ran fewer checks than they declare
-    checks:   92 in total
-              91 passed
-              1 failed
+    started:  2026-09-26 14:26:52
+    finished: 2026-09-26 14:30:53
+    outcome:  passed
+    scripts:  6 of 6 run, 0 with failures
+    short:    0 ran fewer checks than they declare
+    checks:   194 in total
+              194 passed
+              0 failed
 
 | script | expected | passed | failed | time |
 |---|---|---|---|---|
 | 00-setup | 1 | 1 | 0 | 0m 00s |
-| 04-categories | 98 | 90 | 1 | 1m 53s |
-| 05-faces-timing | 29 | 0 | 0 | - |
-| 06-time-entries | 12 | 0 | 0 | - |
-| 09-report | 25 | 0 | 0 | - |
-| 12-daily-limit | 29 | 0 | 0 | - |
-| **total** | **194** | **91** | **1** | **1m 53s** |
+| 04-categories | 98 | 98 | 0 | 1m 41s |
+| 05-faces-timing | 29 | 29 | 0 | 0m 27s |
+| 06-time-entries | 12 | 12 | 0 | 0m 18s |
+| 09-report | 25 | 25 | 0 | 0m 16s |
+| 12-daily-limit | 29 | 29 | 0 | 1m 18s |
+| **total** | **194** | **194** | **0** | **4m 00s** |
 
 The full record, including the app's own log rows and the accessibility tree at each failure,
 is in `logs/testlog.sqlite` on the machine that ran it. That file is not in the repository.
