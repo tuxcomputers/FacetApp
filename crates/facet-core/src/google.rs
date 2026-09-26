@@ -64,6 +64,15 @@ impl Credentials {
     }
 }
 
+/// The OAuth client compiled into this build by `scripts/generate-credentials.sh`, as the console's download.
+/// `None` in a build made without one.
+pub fn bundled_credentials() -> Option<&'static str> {
+    #[cfg(facet_bundled_google)]
+    return Some(include_str!(env!("FACET_BUNDLED_GOOGLE_CLIENT")));
+    #[cfg(not(facet_bundled_google))]
+    None
+}
+
 /// Two string fields of a JSON document, each `None` when absent or not a string. `None` overall when the
 /// text is not JSON.
 fn json_pair(json: &str, first: &str, second: &str) -> Option<(Option<String>, Option<String>)> {

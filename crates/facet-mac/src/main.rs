@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("FACET_GOOGLE_CLIENT_JSON").ok().as_deref(),
         home_directory().as_deref(),
         home_directory().map(|home| home.join(".config/facet/google-client.json")).as_deref(),
-        None,
+        facet_core::google::bundled_credentials(),
     );
     let google = Google::attach(
         &ui,
