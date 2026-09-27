@@ -31,7 +31,7 @@ pub enum SecretLookup {
     Unavailable(String),
 }
 
-/// Keeps one secret: the Google refresh token.
+/// Keeps one secret, such as the Google refresh token or the cube's PIN; each is its own store.
 pub trait SecretStore: Send + Sync {
     /// Stores `secret`. `Ok(true)` only when it reads back as stored.
     fn store(&self, secret: &str) -> Result<bool, String>;
@@ -79,4 +79,63 @@ pub trait LoopbackSession: Send {
         timeout: std::time::Duration,
         respond: &dyn Fn(&str) -> String,
     ) -> Result<Option<String>, String>;
+}
+
+/// Whether the Bluetooth radio can be used at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RadioState {
+    Ready,
+    /// Bluetooth is switched off.
+    Off,
+    /// This app has not been allowed to use Bluetooth.
+    Unauthorised,
+    /// There is no radio to use, with the reason.
+    Unavailable(String),
+}
+
+/// One device heard advertising during a scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Advert {
+    /// The platform's handle for the device, which [`Radio::connect`] takes. Meaningless on another machine.
+    pub handle: String,
+    /// The name in the advertisement, when it carries one.
+    pub name: Option<String>,
+    /// The 128-bit UUIDs of the services the advertisement lists.
+    pub services: Vec<u128>,
+    pub rssi: Option<i16>,
+}
+
+/// Scans for and connects to Bluetooth Low Energy devices. Every call blocks, so call from a background thread.
+pub trait Radio: Send + Sync {
+    fn state(&self) -> RadioState;
+
+    /// Scans for up to `duration`, unfiltered, calling `heard` for each device the first time it is heard and
+    /// again when what it advertises changes. Returns early once `stop` is set. An error says why the scan could
+    /// not run.
+    fn scan(
+        &self,
+        duration: std::time::Duration,
+        stop: &std::sync::atomic::AtomicBool,
+        heard: &mut dyn FnMut(&Advert),
+    ) -> Result<(), String>;
+
+    /// Connects to the device `handle` names and discovers its services, within `timeout`.
+    fn connect(&self, handle: &str, timeout: std::time::Duration) -> Result<Box<dyn Link>, String>;
+}
+
+/// One connection to a device. Dropping it disconnects.
+pub trait Link: Send {
+    /// The device's GAP name, once connected. `None` when it has not said.
+    fn gap_name(&self) -> Option<String>;
+
+    /// Whether the device has characteristic `uuid`.
+    fn has_characteristic(&self, uuid: u128) -> bool;
+
+    fn read(&mut self, uuid: u128) -> Result<Vec<u8>, String>;
+
+    /// Writes `bytes` to `uuid` with response, returning once the device has acknowledged the write. An
+    /// acknowledgement says the bytes arrived, not that the device acted on them.
+    fn write(&mut self, uuid: u128, bytes: &[u8]) -> Result<(), String>;
+
+    fn disconnect(&mut self) -> Result<(), String>;
 }

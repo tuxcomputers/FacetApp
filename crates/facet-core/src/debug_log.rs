@@ -38,6 +38,12 @@ pub enum Tag {
     Limit,
     Report,
     Google,
+    Radio,
+    Login,
+    Pin,
+    Pair,
+    Command,
+    Device,
 }
 
 impl Tag {
@@ -57,6 +63,12 @@ impl Tag {
         Tag::Limit,
         Tag::Report,
         Tag::Google,
+        Tag::Radio,
+        Tag::Login,
+        Tag::Pin,
+        Tag::Pair,
+        Tag::Command,
+        Tag::Device,
     ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
@@ -76,6 +88,12 @@ impl Tag {
             Tag::Limit => "limit",
             Tag::Report => "report",
             Tag::Google => "google",
+            Tag::Radio => "radio",
+            Tag::Login => "login",
+            Tag::Pin => "pin",
+            Tag::Pair => "pair",
+            Tag::Command => "command",
+            Tag::Device => "device",
         }
     }
 
