@@ -48,7 +48,15 @@ for tab in Faces Categories Report App Device About; do
     select_tab "$tab"
     expect_log "the $tab tab can be selected" "$since" "Settings tab selected: $tab"
 
-    pane=$(tree | grep -c "id=settings-pane-$(echo "$tab" | tr '[:upper:]' '[:lower:]')" || true)
+    # **Waited for, not read once.** The accessibility tree catches up with a tab change after the change is
+    # logged, and the App tab, which checks the Google sign-in as it opens, has taken longer than the pause
+    # `select_tab` allows (the Mac, 2026-09-27).
+    pane=0
+    for _ in $(seq 1 25); do
+        pane=$(tree | grep -c "id=settings-pane-$(echo "$tab" | tr '[:upper:]' '[:lower:]')" || true)
+        [ "${pane:-0}" -gt 0 ] && break
+        sleep 0.2
+    done
     if [ "${pane:-0}" -gt 0 ]; then
         pass "the $tab pane is on screen"
     else
