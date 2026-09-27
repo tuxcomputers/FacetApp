@@ -8,9 +8,9 @@ They need no AI, no Claude, and nothing installed beyond what building the app a
 
 ---
 
-**Status, 2026-09-27: nine checks are back, and they pass on both machines.** `00`, `03`, `04`, `05`, `06`,
-`08`, `09`, `11` and `12`, 293 checks, with each machine's latest run in `last-run-mac.md` and
-`last-run-linux.md`. **`11-google-reconnect` needs a person**: it opens the browser for a Google sign-in and
+**Status, 2026-09-27: ten checks are back.** `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11` and `12` pass on both
+machines, 293 checks, with each machine's latest run in `last-run-mac.md` and `last-run-linux.md`;
+`13-device-tab` passes its 37 on the Mac and has not been run on Linux yet. **`11-google-reconnect` needs a person**: it opens the browser for a Google sign-in and
 waits four minutes for it, so a full run wants somebody near the screen. The rest of the 32 numbered checks
 are still missing, because a check for a feature the Rust app does not have yet cannot pass. [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists all 32 with
 what each proved, and each goes back as its feature lands.
