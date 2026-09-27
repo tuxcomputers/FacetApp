@@ -8,11 +8,11 @@ They need no AI, no Claude, and nothing installed beyond what building the app a
 
 ---
 
-**Status, 2026-09-25: four checks are back, and they pass on Linux.** `00-setup`, `05-faces-timing`,
-`06-time-entries` and `12-daily-limit` were converted from the Swift suite for the Faces tab, and a full
-`run.sh` on the Linux box passed 71 of 71 (run 4 in `logs/testlog.sqlite`). They have not been run on the
-Mac yet. The rest of the 32 numbered checks are still missing, because a check for a feature the Rust app
-does not have yet cannot pass. [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists all 32 with
+**Status, 2026-09-27: nine checks are back, and they pass on both machines.** `00`, `03`, `04`, `05`, `06`,
+`08`, `09`, `11` and `12`, 293 checks, with each machine's latest run in `last-run-mac.md` and
+`last-run-linux.md`. **`11-google-reconnect` needs a person**: it opens the browser for a Google sign-in and
+waits four minutes for it, so a full run wants somebody near the screen. The rest of the 32 numbered checks
+are still missing, because a check for a feature the Rust app does not have yet cannot pass. [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists all 32 with
 what each proved, and each goes back as its feature lands.
 
 **So read this for how the suite works and why.** Where a numbered script named below is one of the
@@ -55,13 +55,13 @@ Tests/Scripted/run.sh --keep      # against the database as it stands
 
 ## The Google account, across a rebuild
 
-A rebuilt database has no `google_account` row, so `10-google-calendar` would skip on every clean run.
-The refresh token survives -- it is in the login Keychain, which no rebuild touches -- but the identity
+A rebuilt database has no `google_account` row, so `03` and `11` would fail on every clean run. The
+refresh token survives -- it is in the platform secret store, which no rebuild touches -- but the identity
 and calendar the app reads are rows, and they do not.
 
 **Connect an account once**, on Settings -> App. From then on `run.sh` captures that row *before* each
-rebuild and `00-setup` writes it back afterwards, so the sync is covered on every run without anybody
-signing in again.
+rebuild and `00-setup` writes it back afterwards, so `03` finds an account on every run. `11` still asks for
+a sign-in each time, because signing back in is what it tests.
 
 The captured file is `~/.config/facet/scripted-seed.json`, **outside the repository** and beside the
 OAuth client credentials it belongs with. It holds a real email address and a real calendar id, and this

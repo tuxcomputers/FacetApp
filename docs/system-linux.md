@@ -529,6 +529,24 @@ name.
 
 ---
 
+## The file dialogs come from the portal's GTK backend
+
+**Measured 2026-09-27**, pressing the App tab's Choose and Save a copy with the real app on screen.
+
+| | |
+|---|---|
+| `xdg-desktop-portal` | **running** |
+| Backends installed | `gtk`, `xapp`, `gnome-keyring`, `xapp-gnome-keyring` |
+| `portals.conf` | `default=gtk`; `xapp` is preferred only for Wallpaper, Screenshot, Background and Settings |
+| Who serves `FileChooser` | **`gtk`**, the only installed backend that declares it |
+
+**So `rfd`'s dialogs work here with nothing added**, and what appears is a GTK3 file chooser owned by the
+process `xdg-desktop-portal-gtk`, not by `facet-linux`. On the accessibility bus it is its own application,
+so a driver addresses it with `--app xdg-desktop-portal-gtk`. [port-findings.md](port-findings.md) has what
+driving it showed.
+
+---
+
 ## What hosts a tray icon here
 
 **Measured 2026-09-22.** This decides where a `ksni` status item actually lands, and the answer is not

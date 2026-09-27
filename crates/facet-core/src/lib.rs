@@ -7,16 +7,21 @@
 //! work out, and it hands the answer in; what a Facet database is, and what goes in it, is decided here so
 //! that both platform crates get the same one.
 
+pub mod app_settings;
 pub mod category;
 pub mod database;
 pub mod debug_log;
 pub mod face;
+pub mod google;
+pub mod google_flow;
+pub mod port;
 pub mod reference;
 pub mod report;
 pub mod segment;
 pub mod setting;
 pub mod time_entry;
 pub mod timing;
+pub mod trace_file;
 
 #[cfg(test)]
 pub(crate) mod testing {

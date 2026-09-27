@@ -144,10 +144,9 @@ else
         { echo "PRAGMA foreign_keys = ON;"; cat "$ddl"; } | sqlite3 "$DEBUG_DB"
     done
 
-    # Only said when there is a Google check to fail; before `10` is carried over it would be a warning
-    # about nothing.
-    if [ -e Tests/Scripted/10-google-calendar.sh ] && [ ! -f "$HOME/.config/facet/scripted-seed.json" ]; then
-        echo "Note: a new database has no Google account, so 10-google-calendar will FAIL."
+    # Said before anything runs, so a missing account is known up front rather than twenty minutes in.
+    if [ ! -f "$HOME/.config/facet/scripted-seed.json" ]; then
+        echo "Note: a new database has no Google account, so 03 and 11 will FAIL."
         echo "      Connect one on the App tab once; it is captured and reseeded from then on."
     fi
 fi

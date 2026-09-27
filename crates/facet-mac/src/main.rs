@@ -8,16 +8,27 @@
 //! **Where the files live is decided here and nowhere else.** `facet-core` is handed paths; it does not
 //! know which platform laid them out, and asking it to would be the core caring what it is running on.
 
+mod opener;
+
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
+use facet_adapters::dialogs::NativeFileChooser;
+use facet_adapters::http::UreqHttp;
+use facet_adapters::loopback::StdLoopbackListener;
+use facet_adapters::secrets::KeyringSecretStore;
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag};
+use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
+use facet_core::google::Credentials;
+use facet_core::port::Opener;
 use facet_core::setting;
+use facet_ui::app::App;
 use facet_ui::categories::Categories;
 use facet_ui::faces::Faces;
+use facet_ui::google::Google;
 use facet_ui::notice::Notice;
 use facet_ui::report::Report;
 use facet_ui::{ComponentHandle, SettingsWindow};
@@ -69,6 +80,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let report = Report::attach(&ui, data_directory().join("appdata.sqlite"), Rc::clone(&log));
+    let opener: Rc<dyn Opener> = Rc::new(opener::MacOpener);
+    let app = App::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        Rc::clone(&log),
+        Rc::clone(&notice),
+        Rc::clone(&opener),
+        Rc::new(NativeFileChooser),
+    );
+    // A stored App setting can change what the Faces tab and the menu bar show.
+    let app_faces = Rc::downgrade(&faces);
+    app.set_on_changed(move || {
+        if let Some(faces) = app_faces.upgrade() {
+            faces.refresh();
+        }
+    });
+    // The refresh token lives under its own name: the Swift app's au.com.tux.facet.google item is its
+    // fallback and must not be written.
+    let credentials = Credentials::resolve(
+        std::env::var("FACET_GOOGLE_CLIENT_JSON").ok().as_deref(),
+        home_directory().as_deref(),
+        home_directory().map(|home| home.join(".config/facet/google-client.json")).as_deref(),
+        facet_core::google::bundled_credentials(),
+    );
+    let google = Google::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        Rc::clone(&log),
+        Rc::clone(&notice),
+        Rc::clone(&opener),
+        Arc::new(KeyringSecretStore::new("au.com.tux.facet.google-refresh", "refresh-token")),
+        Arc::new(UreqHttp::new()),
+        Arc::new(StdLoopbackListener),
+        credentials,
+    );
     // A time entry recorded while the Report is on screen changes its figures.
     let changed_report = Rc::downgrade(&report);
     faces.set_on_timing_changed(move || {
@@ -86,6 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tab_faces = Rc::clone(&faces);
     let tab_categories = Rc::clone(&categories);
     let tab_report = Rc::clone(&report);
+    let tab_google = Rc::clone(&google);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
@@ -98,6 +145,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if tab == "Report" {
             tab_report.refresh();
+        }
+        if tab == "App" {
+            tab_google.open();
         }
     });
 
@@ -181,6 +231,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_faces = Rc::clone(&faces);
     let pump_categories = Rc::clone(&categories);
     let pump_report = Rc::clone(&report);
+    let pump_app = Rc::clone(&app);
 
     // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
     // is after every toggle, every click on the Faces tab and every tick.
@@ -237,6 +288,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pump_faces.refresh();
                         pump_categories.refresh();
                         pump_report.open();
+                        pump_app.open();
                     }
                 }
                 "settings" => {
@@ -246,6 +298,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pump_faces.refresh();
                         pump_categories.refresh();
                         pump_report.open();
+                        pump_app.open();
                     }
                 }
                 "quit" => {
@@ -303,7 +356,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// An accessory app is not activated by showing a window, so without the activation the window
 /// appears behind the frontmost application and looks as though the menu item did nothing.
-fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
+fn show_settings(ui: &SettingsWindow, tab: &str, log: &impl Record) {
     // **Before the window, not after.** The Dock icon and the window are the same act to macOS: the policy
     // is what decides whether the app has a place in the Dock at all, and changing it out from under a
     // window already on screen leaves that window belonging to an app the Dock has only just heard of.
@@ -333,7 +386,7 @@ fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
 /// Royalty-free licence wants it reachable from the top level menu, and the status item's menu is that menu
 /// whether or not a window happens to be open. See NOTICE.md.
 #[cfg(target_os = "macos")]
-fn show_in_dock(wanted: bool, log: &Option<DebugLog>) {
+fn show_in_dock(wanted: bool, log: &impl Record) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
@@ -366,14 +419,14 @@ fn show_in_dock(wanted: bool, log: &Option<DebugLog>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn show_in_dock(_wanted: bool, _log: &Option<DebugLog>) {}
+fn show_in_dock(_wanted: bool, _log: &impl Record) {}
 
 /// Gives the status item's button an accessibility identifier, so a script can find it by name.
 ///
 /// The identifier is `status-item` because that is what `scripts/status-item-click.py` already looks
 /// for: the locator model converts rather than being reinvented.
 #[cfg(target_os = "macos")]
-fn name_the_status_item(tray: &TrayIcon, log: &Option<DebugLog>) {
+fn name_the_status_item(tray: &TrayIcon, log: &impl Record) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSAccessibility;
     use objc2_foundation::NSString;
@@ -400,7 +453,7 @@ fn name_the_status_item(tray: &TrayIcon, log: &Option<DebugLog>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn name_the_status_item(_tray: &TrayIcon, _log: &Option<DebugLog>) {}
+fn name_the_status_item(_tray: &TrayIcon, _log: &impl Record) {}
 
 /// Puts the Settings window in front of every other app's and gives it the keyboard.
 ///
@@ -408,7 +461,7 @@ fn name_the_status_item(_tray: &TrayIcon, _log: &Option<DebugLog>) {}
 /// `NSApplication::activate` is not enough: a choice from a status item's menu does not make the app active,
 /// so macOS declines the request and the window opens behind whatever was in front.
 #[cfg(target_os = "macos")]
-fn activate_app(log: &Option<DebugLog>) {
+fn activate_app(log: &impl Record) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSApplication;
     use objc2_foundation::NSString;
@@ -431,14 +484,14 @@ fn activate_app(log: &Option<DebugLog>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn activate_app(_log: &Option<DebugLog>) {}
+fn activate_app(_log: &impl Record) {}
 
 /// Redraws the status item for `showing`.
 ///
 /// **Says so when it cannot**, rather than leaving the menu bar showing the previous state. An icon
 /// that silently stops following the app is worse than no icon: it is a confident wrong answer, and
 /// this is the one surface that has to be right on all three platforms.
-fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &Option<DebugLog>) {
+fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &impl Record) {
     match status_icon::draw(showing) {
         Ok(icon) => {
             if let Err(error) = tray.set_icon(Some(icon)) {
@@ -463,6 +516,11 @@ fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &Opti
 /// which layout produced them; `~/Library/Application Support/Facet` is this machine's answer and
 /// `~/.local/share/Facet` is the Linux one, and neither belongs in a crate that must not be able to tell
 /// which it is running on.
+/// The home directory, from `$HOME`. `None` when it is unset or empty.
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME").filter(|home| !home.is_empty()).map(PathBuf::from)
+}
+
 fn data_directory() -> PathBuf {
     // $HOME rather than NSFileManager, so this is the same answer a shell script gets. Tests/Scripted and
     // scripts/run.sh both resolve it that way through Tests/Scripted/platform.sh, and a suite that looked
@@ -480,7 +538,7 @@ fn data_directory() -> PathBuf {
 /// The app database is opened even when nothing is going to be recorded, because it is what says whether
 /// anything should be. Its connection is then dropped: nothing reads it yet, and holding one open would be
 /// this app keeping a file the Swift one may also want.
-fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
+fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
     let directory = data_directory();
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
@@ -495,6 +553,16 @@ fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
     let trace = setting::debug_trace(&connection)?;
     drop(connection);
 
+    // An empty directory means the folder the app already keeps its databases in, which cannot be seeded as
+    // a path because it differs per platform. A leading ~ is expanded here, at the point the file is
+    // opened, and never stored expanded: an absolute path names one machine and this database is copied
+    // between them. Resolved whether or not logging is on, so turning it on later has a file to open.
+    let folder = match trace.directory.as_str() {
+        "" => directory.clone(),
+        stored => expand_home(stored),
+    };
+    let file = folder.join("debug.sqlite");
+
     if !trace.enabled {
         // Said on stderr rather than recorded, there being nowhere to record it. It is the one message a
         // launch with logging off should still produce, because otherwise an empty table and a launch that
@@ -502,23 +570,12 @@ fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
         eprintln!(
             "[launch  ] Logging is off in the {which} database. Turn on debug.enabled in setting to record a trace."
         );
-        return Ok(None);
+        return Ok(Trace::new(file, None));
     }
 
-    // An empty directory means the folder the app already keeps its databases in, which cannot be seeded as
-    // a path because it differs per platform. A leading ~ is expanded here, at the point the file is
-    // opened, and never stored expanded: an absolute path names one machine and this database is copied
-    // between them.
-    let folder = match trace.directory.as_str() {
-        "" => directory.clone(),
-        stored => expand_home(stored),
-    };
     std::fs::create_dir_all(&folder)
         .map_err(|error| format!("{} could not be created: {error}", folder.display()))?;
-
-    let file = folder.join("debug.sqlite");
-    let log = DebugLog::open(&file)?;
-    let log = Some(log);
+    let log = Trace::new(file.clone(), Some(DebugLog::open(&file)?));
     log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
     Ok(log)
 }
@@ -550,7 +607,7 @@ fn expand_home(stored: &str) -> PathBuf {
 /// No stub for the other platforms: a Dock is a macOS object, and the only caller is the macOS half of
 /// [`show_in_dock`].
 #[cfg(target_os = "macos")]
-fn wear_the_facet_logo(mtm: objc2::MainThreadMarker, log: &Option<DebugLog>) {
+fn wear_the_facet_logo(mtm: objc2::MainThreadMarker, log: &impl Record) {
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::NSData;
 

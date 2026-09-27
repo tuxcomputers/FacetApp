@@ -18,19 +18,29 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
+use facet_adapters::dialogs::NativeFileChooser;
+use facet_adapters::http::UreqHttp;
+use facet_adapters::loopback::StdLoopbackListener;
+use facet_adapters::secrets::KeyringSecretStore;
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag};
+use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
+use facet_core::google::Credentials;
+use facet_core::port::Opener;
 use facet_core::setting;
+use facet_ui::app::App;
 use facet_ui::categories::Categories;
 use facet_ui::faces::Faces;
+use facet_ui::google::Google;
 use facet_ui::notice::Notice;
 use facet_ui::report::Report;
 use facet_ui::{ComponentHandle, SettingsWindow};
 use ksni::blocking::{Handle, TrayMethods};
 
+mod opener;
 mod tray;
 
 use tray::{FacetTray, FromTray};
@@ -79,6 +89,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let report = Report::attach(&ui, data_directory().join("appdata.sqlite"), std::rc::Rc::clone(&log));
+    let opener: std::rc::Rc<dyn Opener> = std::rc::Rc::new(opener::LinuxOpener);
+    let app = App::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        std::rc::Rc::clone(&log),
+        std::rc::Rc::clone(&notice),
+        std::rc::Rc::clone(&opener),
+        std::rc::Rc::new(NativeFileChooser),
+    );
+    // A stored App setting can change what the Faces tab and the menu bar show.
+    let app_faces = std::rc::Rc::downgrade(&faces);
+    app.set_on_changed(move || {
+        if let Some(faces) = app_faces.upgrade() {
+            faces.refresh();
+        }
+    });
+    // The refresh token lives under its own name: the Swift app's au.com.tux.facet.google item is its
+    // fallback and must not be written.
+    let credentials = Credentials::resolve(
+        std::env::var("FACET_GOOGLE_CLIENT_JSON").ok().as_deref(),
+        home_directory().as_deref(),
+        home_directory().map(|home| home.join(".config/facet/google-client.json")).as_deref(),
+        facet_core::google::bundled_credentials(),
+    );
+    let google = Google::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        std::rc::Rc::clone(&log),
+        std::rc::Rc::clone(&notice),
+        std::rc::Rc::clone(&opener),
+        Arc::new(KeyringSecretStore::new("au.com.tux.facet.google-refresh", "refresh-token")),
+        Arc::new(UreqHttp::new()),
+        Arc::new(StdLoopbackListener),
+        credentials,
+    );
     // A time entry recorded while the Report is on screen changes its figures.
     let changed_report = std::rc::Rc::downgrade(&report);
     faces.set_on_timing_changed(move || {
@@ -91,6 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tab_faces = std::rc::Rc::clone(&faces);
     let tab_categories = std::rc::Rc::clone(&categories);
     let tab_report = std::rc::Rc::clone(&report);
+    let tab_google = std::rc::Rc::clone(&google);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
@@ -103,6 +149,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if tab == "Report" {
             tab_report.refresh();
+        }
+        if tab == "App" {
+            tab_google.open();
         }
     });
 
@@ -137,9 +186,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_faces = std::rc::Rc::clone(&faces);
     let pump_categories = std::rc::Rc::clone(&categories);
     let pump_report = std::rc::Rc::clone(&report);
+    let pump_app = std::rc::Rc::clone(&app);
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
-        drain(&from_tray, &ui_weak, &pump_log, &pump_faces, &pump_categories, &pump_report);
+        drain(&from_tray, &ui_weak, &pump_log, &pump_faces, &pump_categories, &pump_report, &pump_app);
     });
 
     log.record(Tag::Launch, || "Facet is in the tray. Right click the icon for the menu".to_string());
@@ -160,10 +210,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn drain(
     from_tray: &Receiver<FromTray>,
     ui_weak: &slint::Weak<SettingsWindow>,
-    log: &Option<DebugLog>,
+    log: &impl Record,
     faces: &Faces,
     categories: &Categories,
     report: &Report,
+    app: &App,
 ) {
     while let Ok(message) = from_tray.try_recv() {
         match message {
@@ -190,6 +241,7 @@ fn drain(
                     faces.refresh();
                     categories.refresh();
                     report.open();
+                    app.open();
                 }
             }
             FromTray::OpenAbout => {
@@ -199,6 +251,7 @@ fn drain(
                     faces.refresh();
                     categories.refresh();
                     report.open();
+                    app.open();
                 }
             }
             FromTray::Quit => {
@@ -225,7 +278,7 @@ fn drain(
 fn follow_the_clock(
     faces: std::rc::Weak<Faces>,
     tray: Option<Handle<FacetTray>>,
-    log: Rc<Option<DebugLog>>,
+    log: Rc<Trace>,
 ) -> impl Fn() + 'static {
     let has_reported_stopping = Cell::new(false);
     move || {
@@ -253,7 +306,7 @@ fn follow_the_clock(
 ///
 /// **No activation policy to flip on the way**, which is the one thing the Mac does here and this does not:
 /// a Dock is a macOS object and there is no Linux equivalent to take the app in and out of.
-fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
+fn show_settings(ui: &SettingsWindow, tab: &str, log: &impl Record) {
     if let Err(error) = ui.show() {
         log.record_failure(Tag::Settings, || format!("The Settings window could not be shown: {error}"));
         return;
@@ -278,7 +331,7 @@ fn show_settings(ui: &SettingsWindow, tab: &str, log: &Option<DebugLog>) {
 /// **`ksni::blocking`, so there is no async runtime in this crate.** The service still runs on a thread of
 /// its own -- which is why [`FacetTray`] is `Send` and posts messages rather than touching the window --
 /// but starting it is an ordinary call that either works or does not.
-fn start_the_tray(to_ui: Sender<FromTray>, log: &Option<DebugLog>) -> Option<Handle<FacetTray>> {
+fn start_the_tray(to_ui: Sender<FromTray>, log: &impl Record) -> Option<Handle<FacetTray>> {
     match FacetTray::new(to_ui).spawn() {
         Ok(handle) => {
             log.record(Tag::Tray, || "Status item is on the panel".to_string());
@@ -324,6 +377,11 @@ fn start_the_tray(to_ui: Sender<FromTray>, log: &Option<DebugLog>) -> Option<Han
 /// checking a database nobody had written to, which is the same fault that has already been paid for once
 /// when a script hardcoded the macOS directory. **One question, one answer**: if this is ever taught about
 /// `XDG_DATA_HOME`, `platform.sh` is taught in the same change.
+/// The home directory, from `$HOME`. `None` when it is unset or empty.
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME").filter(|home| !home.is_empty()).map(PathBuf::from)
+}
+
 fn data_directory() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home).join(".local/share/Facet")
@@ -338,7 +396,7 @@ fn data_directory() -> PathBuf {
 /// The app database is opened even when nothing is going to be recorded, because it is what says whether
 /// anything should be. Its connection is then dropped: nothing reads it yet, and holding one open would be
 /// this app keeping a file something else may also want.
-fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
+fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
     let directory = data_directory();
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
@@ -353,6 +411,16 @@ fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
     let trace = setting::debug_trace(&connection)?;
     drop(connection);
 
+    // An empty directory means the folder the app already keeps its databases in, which cannot be seeded as
+    // a path because it differs per platform. A leading ~ is expanded here, at the point the file is
+    // opened, and never stored expanded: an absolute path names one machine and this database is copied
+    // between them. Resolved whether or not logging is on, so turning it on later has a file to open.
+    let folder = match trace.directory.as_str() {
+        "" => directory.clone(),
+        stored => expand_home(stored),
+    };
+    let file = folder.join("debug.sqlite");
+
     if !trace.enabled {
         // Said on stderr rather than recorded, there being nowhere to record it. It is the one message a
         // launch with logging off should still produce, because otherwise an empty table and a launch that
@@ -360,23 +428,12 @@ fn open_databases() -> Result<Option<DebugLog>, Box<dyn std::error::Error>> {
         eprintln!(
             "[launch  ] Logging is off in the {which} database. Turn on debug.enabled in setting to record a trace."
         );
-        return Ok(None);
+        return Ok(Trace::new(file, None));
     }
 
-    // An empty directory means the folder the app already keeps its databases in, which cannot be seeded as
-    // a path because it differs per platform. A leading ~ is expanded here, at the point the file is
-    // opened, and never stored expanded: an absolute path names one machine and this database is copied
-    // between them.
-    let folder = match trace.directory.as_str() {
-        "" => directory.clone(),
-        stored => expand_home(stored),
-    };
     std::fs::create_dir_all(&folder)
         .map_err(|error| format!("{} could not be created: {error}", folder.display()))?;
-
-    let file = folder.join("debug.sqlite");
-    let log = DebugLog::open(&file)?;
-    let log = Some(log);
+    let log = Trace::new(file.clone(), Some(DebugLog::open(&file)?));
     log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
     Ok(log)
 }

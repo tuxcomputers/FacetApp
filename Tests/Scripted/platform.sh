@@ -771,19 +771,12 @@ platform_cargo_is_available() {
 # reports one honestly and returns non-zero. Fifteen lines of output on failure, because a build error is
 # usually one line and reproducing it by hand was the cost of throwing it away.
 platform_build_app() {
-    # **No credentials step yet.** In Swift this ran scripts/generate-credentials.sh first, because
-    # 10-google-calendar signs in and the binary under test had to carry the Google client the way a
-    # real one does. The Rust app has no Google half, so there is nothing to put in it. Put this back
-    # in the same change that adds sign-in, or that check will fail looking like a broken account.
+    # **No credentials step.** The app finds the Google client in `~/.config/facet/google-client.json`
+    # when the build carries none, so the binary under test signs in without one being bundled.
 
-    # **One command on both platforms, which Swift needed two of.** There is no bundler to run and
-    # nothing to sign yet: cargo puts an executable straight into target/, and the DDL is compiled into
-    # it rather than sitting beside it, so a binary works wherever it is run.
-    #
-    # **Signing will come back when the app reaches the keychain.** An ad-hoc signature is a different
-    # application as far as the Keychain is concerned, so a token written by one build is unreadable by
-    # the next and nothing says so: the sweep simply never runs. That is how 10-google-calendar failed
-    # the first time it was written in Swift. Nothing here touches the keychain today, so nothing signs.
+    # **One command on both platforms, which Swift needed two of.** There is no bundler to run: cargo
+    # puts an executable straight into target/, and the DDL is compiled into it rather than sitting
+    # beside it, so a binary works wherever it is run.
     #
     # **--locked, so a build cannot quietly resolve a different dependency than the one recorded.**
     local output status
@@ -801,6 +794,33 @@ platform_build_app() {
     # otherwise be found out by the launch, which reports it as the app failing to start.
     if [ ! -x "$BINARY" ]; then
         echo "  the build succeeded but there is no executable at $BINARY" >&2
+        return 1
+    fi
+    return 0
+}
+
+# **Signs the Mac binary with the codesigning identity, as `scripts/run.sh` does.** Cargo leaves an ad-hoc
+# signature whose designated requirement is the binary's own hash, so every rebuild is a different
+# application to the Keychain: the Google token becomes unreadable without a prompt, and while the prompt is
+# up the app answers no accessibility request at all, which reads as a window with nothing in it (measured
+# 2026-09-27). A certificate makes the requirement stable, so Always Allow is answered once and holds.
+#
+# **Re-signed before every launch**, because cargo rewrites the binary and the signature with it whenever it
+# builds, and a build can happen outside this harness. No identity on the machine is said and allowed, since
+# the app still runs; an identity that will not sign is a failure.
+platform_sign_app() {
+    [ "$PLATFORM" = "mac" ] || return 0
+    local identity output status
+    identity=$(scripts/codesign-identity.sh 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] || [ -z "$identity" ]; then
+        echo "  no codesigning identity, so this build is ad-hoc and the Keychain will ask after every rebuild"
+        return 0
+    fi
+    output=$(codesign --force --sign "$identity" --timestamp=none "$BINARY" 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "  signing as $identity failed (exit $status)${output:+: $output}" >&2
         return 1
     fi
     return 0
@@ -830,7 +850,7 @@ platform_warn_if_unsigned() {
             # Captured and matched rather than piped into `grep -q`: see `tree_has` in lib.sh for why a
             # pipeline cannot answer this under pipefail. It said ad-hoc about a properly signed app on 18
             # runs out of 20, which is the wrong way round for a warning nobody can act on.
-            case "$(codesign -dvvv "$APP" 2>&1)" in
+            case "$(codesign -dvvv "${APP:-$BINARY}" 2>&1)" in
                 *TeamIdentifier=[A-Z0-9]*) return 1 ;;
                 *) return 0 ;;
             esac

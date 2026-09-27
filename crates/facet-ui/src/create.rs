@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use facet_core::category::{self, CreateDecision};
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag, plain};
+use facet_core::debug_log::{Record, Tag, Trace, plain};
 use rusqlite::Connection;
 
 use crate::notice::Notice;
@@ -18,12 +18,12 @@ use crate::notice::Notice;
 /// Saves category names against one database, asking through one notice.
 pub struct Creator {
     database: PathBuf,
-    log: Rc<Option<DebugLog>>,
+    log: Rc<Trace>,
     notice: Rc<Notice>,
 }
 
 impl Creator {
-    pub fn new(database: PathBuf, log: Rc<Option<DebugLog>>, notice: Rc<Notice>) -> Rc<Creator> {
+    pub fn new(database: PathBuf, log: Rc<Trace>, notice: Rc<Notice>) -> Rc<Creator> {
         Rc::new(Creator { database, log, notice })
     }
 

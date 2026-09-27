@@ -48,3 +48,29 @@ for whichever machine gets to them. This is what the *other* machine is being as
 shorter list and one that empties.
 
 ---
+
+## 17. The App tab: build it, try its dialogs, Secret Service and Google on MATE, and convert `08`
+
+**On `feature/appTab`.** The App tab now does everything the Swift one did, Google included, and a lot of it
+runs through things only Linux can say work there. The Mac could not compile `facet-linux`, whose `main.rs`
+changed throughout.
+
+**What changed under you:**
+
+- **The logger is a `Trace`** (`7dbde1e`): every controller takes `Rc<Trace>`, helpers take any `Record`, and
+  the Debug logging box switches recording while the app runs. `CLAUDE.md`'s logger rule says so now.
+- **Ports in `facet_core::port`**: `Opener`, `FileChooser`, `SecretStore`, `Http`, `LoopbackListener`.
+- **A new crate, `facet-adapters`** (a default member): `rfd` dialogs (XDG portal, no wayland feature),
+  `keyring` 4.2, `ureq` 3 with rustls, and a std loopback listener. `LinuxOpener` is in `facet-linux`
+  and uses `xdg-open`, opening the folder when revealing a file.
+- **Google**: the refresh token goes to the secret store under `au.com.tux.facet.google-refresh`, account
+  `refresh-token`. Credentials come from `FACET_GOOGLE_CLIENT_JSON`, then `~/.config/facet/google-client.json`,
+  then a copy `scripts/generate-credentials.sh` bundles in.
+
+**What is still wanted.** The build, the Debug buttons, the `08` conversion and a stamped run are done
+(`68f69dc`, `08e21df`, and the portal results in [port-findings.md](port-findings.md)), and so is Google:
+on 2026-09-27 sign-in, create, rename, delete and Disconnect all ran against a real account here, and
+Disconnect left no token in the Secret Service. One part remains:
+
+1. **A stored App setting redraws the menu bar.** `08` proves every row writes through and reads back; nothing
+   has yet watched the tray change after a write, such as Show seconds.

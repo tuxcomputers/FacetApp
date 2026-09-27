@@ -24,9 +24,11 @@
 
 slint::include_modules!();
 
+pub mod app;
 pub mod categories;
 pub mod create;
 pub mod faces;
+pub mod google;
 pub mod icons;
 pub mod notice;
 pub mod report;

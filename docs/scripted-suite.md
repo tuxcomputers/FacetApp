@@ -5,10 +5,13 @@
 **The suite that drives a running copy of the app, with a real cube, by accessibility.** It is the only
 thing that can say the app works on hardware; everything the crate tests prove is proven against doubles.
 
-**Four checks are back, 2026-09-25: `00`, `05`, `06` and `12`**, the Faces tab's half of the no-cube range,
-passing 71 of 71 on Linux. What each one had to drop because the Rust app does not have it yet (menu bar
-colours, the Categories tab's limit field, Google) is said in its own header. `07-history-timer` stays out:
-it is the cube's history fetch, and it comes back with the device range.
+**Nine checks are back, 2026-09-27: `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11` and `12`**, passing 293
+of 293 on both machines. What each one had to drop because the Rust app does not have it yet is said in its
+own header. `07-history-timer` stays out: it is the cube's history fetch, and it comes back with the device
+range. `10-google-calendar` waits for calendar sync.
+
+**`11` needs somebody to sign in to Google on every full run.** It presses Sign in, the browser opens on that
+machine's screen, and it waits four minutes for the account to come back. Nobody signing in is a fail.
 
 **What else is in this repository is the harness.** `Tests/Scripted/` carries
 `run.sh`, `lib.sh`, `testlog.sh`, `seed-private.sh`, `stepper-timing.py` and the suite's own README, all
@@ -40,7 +43,7 @@ cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 | `00-setup` | Puts the app, the database and the cube into the state every other script starts from |
 | `01-launch` | The app starts, opens the database it was told to, records what it is doing, and refuses to run twice |
 | `02-menu-bar` | The status item: what it says, what its menu holds, and that the two halves do different things |
-| `03-settings-window` | The five tabs, moving between them, and closing the window |
+| `03-settings-window` | The six tabs, moving between them, closing the window, and the calendar the run fills |
 | `04-categories` | Creating a category, renaming it, retiring it, and bringing it back |
 | `05-faces-timing` | Picking a category starts the clock on it, and pausing stops it |
 | `06-time-entries` | A finished segment becoming tracked time, and a flick past a face not becoming anything |

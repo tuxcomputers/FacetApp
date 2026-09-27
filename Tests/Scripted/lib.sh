@@ -1250,6 +1250,11 @@ ensure_app_running() {
         fi
     fi
 
+    if ! platform_sign_app; then
+        red "  the build could not be signed, so the Keychain would stall the app on a prompt"
+        exit 2
+    fi
+
     require_accessibility
     step "launching $(platform_binary_built_at)"
     platform_launch_app

@@ -523,6 +523,28 @@ normally, including the tray's first push of the clock.
 connection. For the suite it means a run fails at its first tray press about once in fifteen, with the tray
 reported unreachable. That is the right diagnosis, but it is the app's fault, not the driver's.
 
+## The portal's file dialogs answer under MATE, and can be driven without a keystroke
+
+**Measured 2026-09-27 on the Linux box**, against the App tab's Debug section on `feature/appTab`, every
+result read back from the table or the file system rather than from the screen.
+
+| Button | What happened |
+|---|---|
+| Choose | The portal's folder picker opened in the folder the row shows, titled with the app's own prompt. Select wrote `debug.directory` and the row redrew from the read-back. Cancel wrote nothing and logged `Debug trace folder left as ...` |
+| Save a copy | The save dialog opened in Downloads with `facet-debug-yyyy-mm-dd-hh.mm.ss.sqlite` filled in. Save produced a whole database: 267 rows, `PRAGMA integrity_check` ok |
+| Reveal | `xdg-open` opened a Caja window on the folder holding the trace |
+| Clear | The notice asked first. Cancel left the trace alone; Clear Trace left one row, `Trace cleared`, and the file shrank from 78 kB to 53 kB |
+
+**The dialog belongs to `xdg-desktop-portal-gtk`, not to the app**, so it is found with
+`--app xdg-desktop-portal-gtk`, and its path bar, Cancel, Select and Save are all real buttons that
+`at-press.py` can press. Picking a folder by its path-bar button needs no typing at all.
+
+**Select after moving up the path bar returns the child GTK has preselected, not the folder on show.**
+Pressing `share` from inside `~/.local/share/Facet` and then Select returned `~/.local/share/Facet`;
+pressing `harry` returned `~/.local`. GTK highlights the folder it came from, and Select takes the
+highlight. A scripted check choosing a folder this way has to expect that child, or start from a folder
+whose child it can predict.
+
 ## Design rules that follow from all of the above
 
 Short list, all of them enforceable from the first commit.
