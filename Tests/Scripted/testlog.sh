@@ -75,8 +75,8 @@ CREATE TABLE IF NOT EXISTS run (
     finished_epoch  INTEGER,
     branch          TEXT,
     commit_sha      TEXT,
-    -- Whether the working tree had uncommitted changes. A failure against a dirty tree is not evidence
-    -- about the commit it names.
+    -- Whether the working tree had uncommitted changes, not counting the two stamp files a run writes. A
+    -- failure against a dirty tree is not evidence about the commit it names.
     dirty           INTEGER,
     database_file   TEXT,
     -- 0 for --keep. A check that only passes on a kept database has not been proven from nothing.
@@ -282,7 +282,9 @@ testlog_run_start() {
     # The full hash, not the short one: the stamp is checked against the branch's history, and an
     # abbreviation can stop being unique as a repository grows.
     commit=$(git rev-parse HEAD 2>/dev/null || echo "")
-    dirty=$([ -n "$(git status --porcelain 2>/dev/null)" ] && echo 1 || echo 0)
+    # **The two stamps are left out.** Every run rewrites its own, so one left by an earlier run that was not
+    # committed says nothing about the code under test, and counting it made the run after any failure dirty.
+    dirty=$([ -n "$(git status --porcelain -- . ':!Tests/Scripted/last-run-mac.md' ':!Tests/Scripted/last-run-linux.md' 2>/dev/null)" ] && echo 1 || echo 0)
     target=$(readlink "$DB" 2>/dev/null || echo "")
     # **`stat` takes opposite flags on the two systems**, and the BSD spelling produces nothing on Linux
     # rather than failing -- which would have written an empty column and looked like an unbuilt app.

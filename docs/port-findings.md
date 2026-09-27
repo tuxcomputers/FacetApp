@@ -506,22 +506,33 @@ first time. The suite passed 71 of 71 once the harness was taught these.
 **The Linux tray hang below has not been seen on the Mac** in about eight launches that day, which is too few to
 rule out a rate of one in fifteen but is a different tray stack (tray-icon, not ksni) in any case.
 
-## The Linux tray stops answering D-Bus on about one launch in fifteen
+## The Linux tray never went deaf: the driver was calling the wrong connection
 
-**Measured 2026-09-25, and not yet understood.** On a launch that goes wrong, every call to the item or its menu
-(`Introspect`, `GetLayout`, `Activate`) gets `NoReply` after the 25 second timeout, for as long as the process
-lives. The event loop is still running (the main thread is in `ep_poll`) and the trace shows the launch completing
-normally, including the tray's first push of the clock.
+**Recorded 2026-09-25 as the tray going deaf on about one launch in fifteen, and found 2026-09-27 to be the
+driver's fault.** On a launch that went wrong, every call `scripts/tray-menu.py` made (`Introspect`,
+`GetLayout`, `Activate`) got `NoReply` after the 25 second timeout, for as long as the process lived, while the
+app itself carried on normally.
+
+**facet-linux holds more than one connection on the session bus, and only one of them serves the tray.** ksni's
+connection owns `org.kde.StatusNotifierItem-<pid>-1` and is what the StatusNotifierWatcher lists; the others
+are client-only connections, which answer no incoming call at all. Which component owns `:1.13680` below was
+not established; it only matters that it is not ksni's. The driver found the app by asking the bus daemon which unique name belonged to the process and
+took the first, which was whichever the daemon happened to list first.
 
 | | |
 |---|---|
-| This branch, accessibility on | 1 of 10 launches |
-| This branch, accessibility off | 1 of 15 |
-| `87e7d2e`, before the tray followed the clock | 1 of 20 |
+| The name the failing call went to | `:1.13680`, owned by the facet-linux process |
+| The tray's own connection in that same process | `:1.13678`, owner of `org.kde.StatusNotifierItem-99678-1`, answering |
+| The old lookup against that process | picked `:1.13680`, `NoReply` after the full timeout |
+| The watcher lookup against the same process | menu and label read five times out of five |
+| Under gdb, the tray called directly by its registered name | 110 launches, no failure |
 
-**So it predates the tray following the clock and is not AccessKit.** It lives in the ksni service or its zbus
-connection. For the suite it means a run fails at its first tray press about once in fifteen, with the tray
-reported unreachable. That is the right diagnosis, but it is the app's fault, not the driver's.
+**So it was never the app, and nobody using it is affected**: the panel reaches the tray through the watcher,
+by the name ksni registered. It is also consistent with the pattern that looked like a clue, a higher rate with
+accessibility on: any extra connection in the process is one more name that is not the tray.
+
+**The driver now asks the watcher**, as the panel does, for the registered item whose owner is a `facet-linux`
+process, and uses the name and path it lists.
 
 ## The portal's file dialogs answer under MATE, and can be driven without a keystroke
 

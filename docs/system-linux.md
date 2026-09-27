@@ -2,8 +2,8 @@
 
 [← Back to README](../README.md) · [The Mac →](system-mac.md) · [What is being asked of this machine →](handover-linux.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Port findings →](port-findings.md)
 
-**What this machine is, and everything needed to build and drive Facet on it.** This is the second
-platform, and the only place BlueZ and MATE can be exercised.
+**What the Linux machine is, and everything needed to build and drive Facet on it.** This is the second
+platform. It is now the tower, below; most of this file was measured on the laptop it replaced, and says so.
 
 **Every line is either measured, with the date, or it is marked unknown.** Nothing in between, and
 nothing inferred from what should be the case. A guess written into a facts file is worse than no line
@@ -11,7 +11,56 @@ at all, because the next reader cannot tell it from a measurement.
 
 ---
 
-## The machine
+## Since 2026-09-27 the Linux machine is the tower
+
+**The laptop described in the rest of this file was retired on 2026-09-27**, and Linux stamps now come from
+`harry@tower`. The laptop was CPU-starved: during a full scripted run its load average reached 8.7 on 4
+threads. **The sections after this one were measured on the laptop** and have not been re-measured on the
+tower unless they say so.
+
+| | |
+|---|---|
+| Reached as | `ssh harry@tower` |
+| Chip | AMD Ryzen 7 5700X, 8 cores / 16 threads |
+| Memory | 62 GiB |
+| Distribution | Linux Mint 22.2, kernel 6.8.0-139-generic |
+| Desktop | **Cinnamon 6.4.14 on X11** |
+| Tray host | `xapp-sn-watcher` |
+| Secret store | `gnome-keyring`, unlocked at login |
+| File dialogs | `xdg-desktop-portal` 1.20.0, `default=gtk` with `xdg-desktop-portal-gtk` 1.15.1 |
+| Accessibility | `at-spi2-core` 2.52.0, `python3-pyatspi` 2.46.1; `toolkit-accessibility` **false** by default |
+| Display | `HDMI-A-0`, a 3840x2160 television, run at 1920x1080 with `xrandr` so the Mac's Screen Sharing window fits it |
+| Filesystem | ext4 on NVMe |
+| Time zone, locale | `Australia/Brisbane`, `en_AU.UTF-8` |
+| Rust | 1.98.1 through rustup, the same as the Mac |
+
+`/etc/os-release`, `lscpu`, `free`, `cinnamon --version`, `xrandr`, `dpkg -l`, `timedatectl`. Measured 2026-09-27.
+
+**What a fresh Mint needed, beyond its defaults**: rustup, and
+`sudo apt install libfontconfig-dev x11vnc libsecret-tools gh`. `build-essential`, `pkg-config`, `wmctrl` and
+`python3-pyatspi` were already installed. `x11vnc` is there so the Google sign-ins the suite asks for can be done
+from the Mac: `x11vnc -display :0 -auth ~/.Xauthority -localhost -rfbauth ~/.vnc/passwd -forever`, reached
+through an SSH tunnel.
+
+**The first launch on a new machine creates a plain `appdata.sqlite`**, not a link, so the suite's
+`scripts/switch-database.sh test` refuses until it is run as `-adopt test`, which renames that file to
+`production.sqlite` and points the link at a fresh `test.sqlite`.
+
+| | Laptop | Tower | Mac |
+|---|---|---|---|
+| Cold `cargo build -p facet-linux` | | 46s | |
+| `facet-core` tests | 44.6s | 7.2s | |
+| Full scripted run, 293 checks | about 13 min | 7m 25s | about 5 min |
+| `04-categories` | 5m 56s | 2m 17s | 1m 40s |
+
+Full runs on 2026-09-27, all on `feature/appTab`. **The laptop's time was mostly its hardware**: the tower runs
+the same stack (X11, AT-SPI over D-Bus, XTEST typing) two to two and a half times faster. What is left between
+the tower and the Mac, about 10 to 40 percent per script and most in the scripts that read the tree hardest, is
+the AT-SPI round trips.
+
+---
+
+## The laptop, which the rest of this file describes
 
 | | |
 |---|---|
@@ -134,9 +183,11 @@ libfontconfig.so.1  libfreetype.so.6  libpng16.so.16  libexpat.so.1
 libbrotlidec.so.1   libbrotlicommon.so.1  libbz2.so.1.0  libz.so.1  libc/libm/libgcc_s
 ```
 
-**Note that `libfontconfig1-dev` is *not* installed and the build did not ask for it**, only the
-runtime `libfontconfig1`. That is a measurement, not a recommendation: a machine built from scratch may
-still want the dev package, and nobody has tested one.
+**The build does need the fontconfig development files, through `yeslogic-fontconfig-sys`.** This file
+used to say otherwise because it checked the transitional name `libfontconfig1-dev`, which was not
+installed; the laptop had `libfontconfig-dev`, the package that holds `fontconfig.pc`. The tower, built from
+scratch on 2026-09-27, failed at `yeslogic-fontconfig-sys` until `libfontconfig-dev` was installed. It is the
+only system library `facet-linux` links through pkg-config (`cargo tree -p facet-linux`, same day).
 
 ### The two unverified crate questions, both now answered
 

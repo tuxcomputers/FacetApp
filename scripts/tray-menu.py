@@ -44,23 +44,23 @@ MENU_IFACE = "com.canonical.dbusmenu"
 ITEM_PATH = "/StatusNotifierItem"
 ITEM_IFACE = "org.kde.StatusNotifierItem"
 PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
+WATCHER = "org.kde.StatusNotifierWatcher"
+WATCHER_PATH = "/StatusNotifierWatcher"
 
 
-def facet_connection(bus):
-    """The app's unique bus name, found through the bus daemon by pid.
+def facet_item(bus):
+    """The app's tray item as `(bus name, object path)`, found through the StatusNotifierWatcher.
 
-    **Asked of the daemon rather than of the peers.** Probing every connection on the bus for the
-    menu object blocks on any client that does not answer, for the full 25s reply timeout -- a hang
-    in the harness that reads exactly like a hang in the app.
+    **Asked of the watcher, which is where the panel finds it.** The watcher lists every registered item as
+    `name/path`; the one whose owner is a `facet-linux` process is the app's. The app holds more than one
+    connection on the session bus and only the one ksni registered serves the item: the others answer no
+    incoming call, so a call to one of them waits out the 25s timeout and fails with `NoReply`.
+
+    **The owner is asked of the bus daemon rather than of the peers**, so no call here waits on a client that
+    does not answer.
     """
-    # **`facet-linux`, matched exactly, and the name is the Rust binary's.** This read `-f FacetLinux`
-    # until 2026-09-22, which was the Swift app and is a name nothing has ever answered to in this
-    # repository -- so the driver reported *facet is not running* against a running app, which is the
-    # same shape as the app having no tray at all. `Tests/Scripted/platform.sh` calls it `facet-linux`
-    # and that is the spelling to keep in step with.
-    #
-    # `-x` rather than `-f`: an exact match on the process name cannot also match some other command
-    # line that happens to contain these words, this transcript included.
+    # **`facet-linux`, matched exactly, and the name is the Rust binary's.** `-x` rather than `-f`: an exact
+    # match on the process name cannot also match some other command line that happens to contain it.
     found = subprocess.run(["pgrep", "-x", "facet-linux"], capture_output=True, text=True)
     pids = {int(line) for line in found.stdout.split()}
     if not pids:
@@ -68,15 +68,21 @@ def facet_connection(bus):
     daemon = dbus.Interface(
         bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus"), "org.freedesktop.DBus"
     )
-    for name in bus.list_names():
-        if not name.startswith(":"):
-            continue
+    try:
+        watcher = dbus.Interface(bus.get_object(WATCHER, WATCHER_PATH), PROPERTIES_IFACE)
+        registered = [str(entry) for entry in watcher.Get(WATCHER, "RegisteredStatusNotifierItems")]
+    except dbus.DBusException as exc:
+        raise SystemExit(f"there is no StatusNotifierWatcher to ask for the tray item: {exc}")
+    for entry in registered:
+        name, slash, rest = entry.partition("/")
+        path = slash + rest if slash else ITEM_PATH
         try:
-            if int(daemon.GetConnectionUnixProcessID(name)) in pids:
-                return name
+            owner = int(daemon.GetConnectionUnixProcessID(name))
         except dbus.DBusException:
             continue
-    raise SystemExit("facet is running but has no connection on the session bus")
+        if owner in pids:
+            return name, path
+    raise SystemExit("facet is running but has no tray item registered with the StatusNotifierWatcher")
 
 
 def lines(node, depth=0, out=None):
@@ -105,8 +111,8 @@ def menu_of(bus):
     `/org/ayatana/NotificationItem/facet/Menu`. The StatusNotifierItem specification makes `Menu` a
     property of the item for exactly this reason, so reading it survives the next backend too.
     """
-    name = facet_connection(bus)
-    properties = dbus.Interface(bus.get_object(name, ITEM_PATH), PROPERTIES_IFACE)
+    name, item_path = facet_item(bus)
+    properties = dbus.Interface(bus.get_object(name, item_path), PROPERTIES_IFACE)
     try:
         path = str(properties.Get(ITEM_IFACE, "Menu"))
     except dbus.DBusException as exc:
@@ -132,8 +138,8 @@ def label_of(bus):
     property may leave it unset and `GetAll` then answers a dict missing the key -- which reads as an
     empty label rather than as a property that was never published.
     """
-    name = facet_connection(bus)
-    properties = dbus.Interface(bus.get_object(name, ITEM_PATH), PROPERTIES_IFACE)
+    name, item_path = facet_item(bus)
+    properties = dbus.Interface(bus.get_object(name, item_path), PROPERTIES_IFACE)
     out = []
     for key in ("XAyatanaLabel", "Title", "ToolTip"):
         try:
@@ -178,8 +184,8 @@ def main():
     # and nowhere else, which a synthetic click on the panel would not be. Measured against MATE's own
     # left click on 2026-09-25 (handover-linux 10): the same `Status item left clicked` row.
     if arguments.activate:
-        name = facet_connection(bus)
-        item = dbus.Interface(bus.get_object(name, ITEM_PATH), ITEM_IFACE)
+        name, item_path = facet_item(bus)
+        item = dbus.Interface(bus.get_object(name, item_path), ITEM_IFACE)
         item.Activate(dbus.Int32(0), dbus.Int32(0))
         print("activated the status item")
         return 0
