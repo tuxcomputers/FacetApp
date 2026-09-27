@@ -194,23 +194,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui_weak = ui.as_weak();
     let pump_log = std::rc::Rc::clone(&log);
-    let pump_faces = std::rc::Rc::clone(&faces);
-    let pump_categories = std::rc::Rc::clone(&categories);
-    let pump_report = std::rc::Rc::clone(&report);
-    let pump_app = std::rc::Rc::clone(&app);
-    let pump_device = std::rc::Rc::clone(&device);
+    let tabs = Tabs {
+        faces: std::rc::Rc::clone(&faces),
+        categories: std::rc::Rc::clone(&categories),
+        report: std::rc::Rc::clone(&report),
+        app: std::rc::Rc::clone(&app),
+        device: std::rc::Rc::clone(&device),
+    };
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
-        drain(
-            &from_tray,
-            &ui_weak,
-            &pump_log,
-            &pump_faces,
-            &pump_categories,
-            &pump_report,
-            &pump_app,
-            &pump_device,
-        );
+        drain(&from_tray, &ui_weak, &pump_log, &tabs);
     });
 
     log.record(Tag::Launch, || "Facet is in the tray. Right click the icon for the menu".to_string());
@@ -224,6 +217,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The Settings window's tab controllers, which a tray message can reach.
+struct Tabs {
+    faces: std::rc::Rc<Faces>,
+    categories: std::rc::Rc<Categories>,
+    report: std::rc::Rc<Report>,
+    app: std::rc::Rc<App>,
+    device: std::rc::Rc<Device>,
+}
+
 /// Takes everything the tray thread has posted and acts on it, on the UI thread.
 ///
 /// **The only place tray events meet the window.** Every arm here is free to touch Slint because this runs
@@ -232,11 +234,7 @@ fn drain(
     from_tray: &Receiver<FromTray>,
     ui_weak: &slint::Weak<SettingsWindow>,
     log: &impl Record,
-    faces: &Faces,
-    categories: &Categories,
-    report: &Report,
-    app: &App,
-    device: &Device,
+    tabs: &Tabs,
 ) {
     while let Ok(message) = from_tray.try_recv() {
         match message {
@@ -244,14 +242,14 @@ fn drain(
             // left click stays an accelerator for the first menu item rather than a mechanism of its own.
             FromTray::Activated => {
                 log.record(Tag::Tray, || "Status item left clicked".to_string());
-                faces.toggle_pause();
+                tabs.faces.toggle_pause();
             }
             FromTray::SecondaryActivated => {
                 log.record(Tag::Tray, || "Status item middle clicked".to_string());
             }
             FromTray::PausePressed => {
                 log.record(Tag::Tray, || "Status item Pause pressed".to_string());
-                faces.toggle_pause();
+                tabs.faces.toggle_pause();
             }
             FromTray::LockChanged(showing) => {
                 log.record(Tag::Tray, || format!("Status item now shows locked={}", showing.locked));
@@ -260,27 +258,27 @@ fn drain(
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.invoke_open_on_faces();
                     show_settings(&ui, "Faces", log);
-                    faces.refresh();
-                    categories.refresh();
-                    report.open();
-                    app.open();
-                    device.open();
+                    tabs.faces.refresh();
+                    tabs.categories.refresh();
+                    tabs.report.open();
+                    tabs.app.open();
+                    tabs.device.open();
                 }
             }
             FromTray::OpenAbout => {
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.invoke_open_on_about();
                     show_settings(&ui, "About", log);
-                    faces.refresh();
-                    categories.refresh();
-                    report.open();
-                    app.open();
-                    device.open();
+                    tabs.faces.refresh();
+                    tabs.categories.refresh();
+                    tabs.report.open();
+                    tabs.app.open();
+                    tabs.device.open();
                 }
             }
             FromTray::Quit => {
                 log.record(Tag::Quit, || "Quitting on the menu item".to_string());
-                faces.quit();
+                tabs.faces.quit();
                 if let Err(error) = slint::quit_event_loop() {
                     log.record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
                 }

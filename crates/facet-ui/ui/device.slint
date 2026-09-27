@@ -49,7 +49,7 @@ export global DeviceData {
     in-out property <bool> scan-all: false;
     in property <[FoundDevice]> found: [];
     // While a pairing is under way the results are not offered: one attempt at a time.
-    in property <bool> is-reaching: false;
+    in property <bool> is-reaching-for-cube: false;
     in property <bool> can-scan: true;
 
     in-out property <bool> pause-on-lock: true;
@@ -175,7 +175,7 @@ export component DevicePane inherits Rectangle {
 
                         if !DeviceData.paired: Button {
                             text: DeviceData.is-scanning ? "Stop Scan" : "Scan for Devices";
-                            enabled: DeviceData.can-scan && !DeviceData.is-reaching;
+                            enabled: DeviceData.can-scan && !DeviceData.is-reaching-for-cube;
                             accessible-id: "device-scan";
                             clicked => { DeviceData.scan-pressed(); }
                         }
@@ -189,13 +189,13 @@ export component DevicePane inherits Rectangle {
                         }
                         if DeviceData.paired: Button {
                             text: "Forget Device";
-                            enabled: !DeviceData.is-reaching;
+                            enabled: !DeviceData.is-reaching-for-cube;
                             accessible-id: "device-forget";
                             clicked => { DeviceData.forget-pressed(); }
                         }
                         if DeviceData.paired: Button {
                             text: "Reset Device";
-                            enabled: DeviceData.cube-connected && !DeviceData.is-reaching;
+                            enabled: DeviceData.cube-connected && !DeviceData.is-reaching-for-cube;
                             accessible-id: "device-reset";
                             clicked => { DeviceData.reset-pressed(); }
                         }
@@ -213,7 +213,7 @@ export component DevicePane inherits Rectangle {
                         spacing: Metrics.row-spacing;
                         for device in DeviceData.found: FoundRow {
                             device: device;
-                            enabled: !DeviceData.is-reaching;
+                            enabled: !DeviceData.is-reaching-for-cube;
                             clicked => { DeviceData.found-pressed(device.handle); }
                         }
                     }

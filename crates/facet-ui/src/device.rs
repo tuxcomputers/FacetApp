@@ -100,7 +100,7 @@ pub struct Device {
     heard: RefCell<Vec<Advert>>,
     stop: Arc<AtomicBool>,
     is_scanning: Cell<bool>,
-    is_reaching: Cell<bool>,
+    is_reaching_for_cube: Cell<bool>,
     status: RefCell<String>,
     sender: Sender<(Outcome, Logged)>,
     receiver: Receiver<(Outcome, Logged)>,
@@ -135,7 +135,7 @@ impl Device {
             heard: RefCell::new(Vec::new()),
             stop: Arc::new(AtomicBool::new(false)),
             is_scanning: Cell::new(false),
-            is_reaching: Cell::new(false),
+            is_reaching_for_cube: Cell::new(false),
             status: RefCell::new(String::new()),
             sender,
             receiver,
@@ -263,7 +263,7 @@ impl Device {
         data.set_led_blink_seconds(settings.led_blink_seconds as i32);
         data.set_can_scan(self.radio.is_some());
         data.set_is_scanning(self.is_scanning.get());
-        data.set_is_reaching(self.is_reaching.get());
+        data.set_is_reaching_for_cube(self.is_reaching_for_cube.get());
         let all = data.get_scan_all();
         let found: Vec<FoundDevice> = self
             .heard
@@ -353,7 +353,7 @@ impl Device {
                 if !status.is_empty() {
                     self.log.record(Tag::Radio, || status.clone());
                 }
-                if !self.is_scanning.get() && !self.is_reaching.get() {
+                if !self.is_scanning.get() && !self.is_reaching_for_cube.get() {
                     self.set_status(status);
                 }
             }
@@ -383,7 +383,7 @@ impl Device {
             }
             Outcome::Paired(paired) => self.paired(*paired),
             Outcome::PairingFailed { label, message } => {
-                self.is_reaching.set(false);
+                self.is_reaching_for_cube.set(false);
                 self.log.record(Tag::Pair, || format!("Pairing with {} did not complete", plain(&label)));
                 self.set_status(message);
             }
@@ -442,7 +442,7 @@ impl Device {
     /// the cube's Device Information, battery and status are read and the link is held.
     fn pair(&self, handle: &str) {
         let Some(radio) = self.radio.clone() else { return };
-        if self.is_reaching.get() {
+        if self.is_reaching_for_cube.get() {
             return;
         }
         let label = self
@@ -454,7 +454,7 @@ impl Device {
             .unwrap_or_else(|| "the device".to_string());
         self.log.record(Tag::Click, || format!("Device clicked: {}", plain(&label)));
         self.stop.store(true, Ordering::Relaxed);
-        self.is_reaching.set(true);
+        self.is_reaching_for_cube.set(true);
         self.set_status(format!("Connecting to {label}..."));
         self.draw();
         let handle = handle.to_string();
@@ -519,7 +519,7 @@ impl Device {
     }
 
     fn paired(&self, paired: Paired) {
-        self.is_reaching.set(false);
+        self.is_reaching_for_cube.set(false);
         self.heard.borrow_mut().clear();
         self.battery.set(paired.battery);
         if let Err(reason) = &paired.pin_stored {
