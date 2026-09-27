@@ -281,6 +281,7 @@ fn drain(
             FromTray::Quit => {
                 log.record(Tag::Quit, || "Quitting on the menu item".to_string());
                 tabs.faces.quit();
+                tabs.device.quit();
                 if let Err(error) = slint::quit_event_loop() {
                     log.record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
                 }

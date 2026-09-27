@@ -328,6 +328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "quit" => {
                     pump_log.record(Tag::Quit, || "Quitting on the menu item".to_string());
                     pump_faces.quit();
+                    pump_device.quit();
                     // Not a discarded Result: a quit that the loop refuses leaves the app running with
                     // nothing said about why, which is the shape CLAUDE.md has a section about. The Linux
                     // composition root reports the same failure the same way.

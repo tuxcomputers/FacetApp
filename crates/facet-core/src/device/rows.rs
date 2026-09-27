@@ -236,6 +236,27 @@ pub fn record_connection_lost(connection: &Connection, log: &impl Record) -> Res
     Ok(stored)
 }
 
+/// Records a clean quit: not connected, and `quit_request` set to now. Pairing is kept. Returns whether the table
+/// holds it.
+pub fn record_quit(connection: &Connection, log: &impl Record) -> Result<bool, rusqlite::Error> {
+    set(connection, "connection", "$.connected", "json('false')", None)?;
+    set(
+        connection,
+        "connection",
+        "$.quit_request",
+        "strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime')",
+        None,
+    )?;
+    let stored = !pairing(connection)?.is_cube_connected;
+    log.record(Tag::Quit, || {
+        format!(
+            "Quit: the link to the cube is closed{}",
+            if stored { "" } else { " REFUSED, the table still says connected" }
+        )
+    });
+    Ok(stored)
+}
+
 /// Clears a `connection.connected` the last run left set: no link survives a relaunch. Returns whether the table
 /// holds it; does nothing when the table already says not connected.
 pub fn record_no_link_at_launch(connection: &Connection, log: &impl Record) -> Result<bool, rusqlite::Error> {

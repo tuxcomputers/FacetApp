@@ -646,6 +646,26 @@ impl Device {
         self.draw();
     }
 
+    /// Closes the link to the cube and records the quit. Blocks until the cube is disconnected; call once, as the
+    /// app quits.
+    pub fn quit(&self) {
+        self.liveness.stop();
+        let link = match self.link.lock() {
+            Ok(mut slot) => slot.take(),
+            Err(_) => {
+                self.log.record_failure(Tag::Quit, || {
+                    "Quit: the link to the cube could not be reached".to_string()
+                });
+                None
+            }
+        };
+        let Some(mut link) = link else { return };
+        session::disconnect(&mut *link, &*self.log);
+        if let Some(connection) = self.connect() {
+            self.report(rows::record_quit(&connection, &*self.log));
+        }
+    }
+
     fn reset_pressed(&self) {
         self.log.record(Tag::Click, || "Button clicked: Reset Device".to_string());
         self.notice.tell(
