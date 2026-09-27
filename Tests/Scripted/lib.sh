@@ -1597,6 +1597,24 @@ press_sheet() { platform_press_sheet "$1" >/dev/null 2>&1; }
 # match answers about the wrong element. `on_tab` already spells it this way and its comment records the same trap.
 element() { tree | grep -m1 -E "id=$1($|[[:space:]])" || true; }
 
+# One element's line, once it contains `$2`, waiting up to `$3` seconds (default 5). Prints the line it last read
+# either way, so a check against it still fails with what was there.
+#
+#     check_contains "the Status row says so" "$(element_eventually app-google-status 'Not connected')" "Not connected"
+#
+# **For a check made straight after an action changes the element.** The accessibility tree catches up with the
+# app after the change, and on Linux that has taken longer than a read made at once.
+element_eventually() {
+    local identifier="$1" wanted="$2" timeout="${3:-5}" waited=0 line=""
+    while [ "$waited" -lt "$((timeout * 5))" ]; do
+        line=$(element "$identifier")
+        case "$line" in *"$wanted"*) break ;; esac
+        sleep 0.2
+        waited=$((waited + 1))
+    done
+    printf '%s\n' "$line"
+}
+
 # `window_width <identifier>` -- how wide a window is on screen, in points, or empty if it is not there.
 #
 # **The only thing in this suite that reads geometry**, and the reason it can exist at all is that

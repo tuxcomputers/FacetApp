@@ -83,8 +83,8 @@ check "and the table accepted it" "0" "$refused"
 
 check "the email is cleared" "" "$(account email)"
 check "and the sign-in is gone from the secret store" "no" "$(token_stored)"
-check_contains "the Status row says so" "$(element app-google-status)" "Not connected"
-check_contains "and the button offers to sign in again" "$(element app-google-button)" "Sign in with Google"
+check_contains "the Status row says so" "$(element_eventually app-google-status "Not connected")" "Not connected"
+check_contains "and the button offers to sign in again" "$(element_eventually app-google-button "Sign in with Google")" "Sign in with Google"
 
 # ---- the point of the whole script
 
@@ -125,7 +125,7 @@ fi
 
 check "it is the same account" "$email" "$(account email)"
 check "and its sign-in is back in the secret store" "yes" "$(token_stored)"
-check_contains "and the Status row agrees" "$(element app-google-status)" "Connected"
+check_contains "and the Status row agrees" "$(element_eventually app-google-status "Connected")" "Connected"
 
 # ---- still has access to the calendar
 #
@@ -137,7 +137,7 @@ expect_log "the calendar is confirmed against Google" "$since" "Google calendar 
 
 check "it is the same calendar, not a new one" "$before_id" "$(account calendar_id)"
 check "under the name it had before" "$before_name" "$(account calendar_name)"
-check_contains "and the Calendar row shows it" "$(element app-google-calendar)" "$before_name"
+check_contains "and the Calendar row shows it" "$(element_eventually app-google-calendar "$before_name")" "$before_name"
 
 # Nothing was made. A sign-in that could not resolve the stored id offers a fresh calendar instead, which is
 # correct behaviour and the wrong outcome here.

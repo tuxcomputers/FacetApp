@@ -150,6 +150,7 @@ expect_log "confirming deletes it at Google" "$since" "Google calendar deleted,%
 # **Forgotten only once Google has taken it.** A row cleared before the request would leave the app unable to
 # name what it failed to delete.
 check "and the app no longer holds a calendar" "|" "$(stored_id)|$(stored_name)"
+wait_for_element app-google-calendar-create 5
 check_contains "the Calendar row offers to make another" "$(tree)" "id=app-google-calendar-create"
 
 # ---- this run's, made and named
@@ -175,7 +176,7 @@ set_field_focused app-google-calendar-field "$WANTED"
 press_return
 expect_log "renaming it goes to Google" "$since" "Google calendar renamed to $WANTED" 45
 check "the row records the new name" "$WANTED" "$(stored_name)"
-check_contains "and the Calendar row shows it" "$(element app-google-calendar)" "$WANTED"
+check_contains "and the Calendar row shows it" "$(element_eventually app-google-calendar "$WANTED")" "$WANTED"
 
 # **The name is a label and the id is the identity.** A rename that moved to a different calendar would leave
 # every event already written behind, under a calendar nothing points at any more.
