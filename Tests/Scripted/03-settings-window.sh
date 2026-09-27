@@ -133,7 +133,13 @@ fi
 doomed=$(stored_name)
 since=$(mark)
 press app-google-calendar-delete
-sleep 1
+# **Waited for, not slept on**, for the same reason as the panes above: the notice reaches the accessibility
+# tree after the press, and on Linux straight after the window has been reopened it has taken longer than a
+# second.
+for _ in $(seq 1 25); do
+    [ -n "$(alert_buttons)" ] && break
+    sleep 0.2
+done
 
 check "deleting asks first, and offers a way out" "Cancel|Delete Calendar" "$(alert_buttons)"
 check_contains "and the question names the calendar" "$(platform_alert_message)" "$doomed"
