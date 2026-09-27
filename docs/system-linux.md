@@ -20,12 +20,12 @@ tower unless they say so.
 
 | | |
 |---|---|
-| Reached as | `ssh harry@tower` |
+| Reached as | `ssh harry@tower`, on the home network at `192.168.0.50` |
 | Chip | AMD Ryzen 7 5700X, 8 cores / 16 threads |
 | Memory | 62 GiB |
-| Distribution | Linux Mint 22.2, kernel 6.8.0-139-generic |
-| Desktop | **Cinnamon 6.4.14 on X11** |
-| Tray host | `xapp-sn-watcher` |
+| Distribution | **Linux Mint 22.3 "Zena"**, kernel 6.8.0-142-generic, the same release as the laptop |
+| Desktop | **MATE on X11**: `mate-session-manager` 1.26.1, `mate-panel` 1.27.1, `marco` 1.26.2. Cinnamon is installed and not used |
+| Tray host | `xapp-sn-watcher` (`libxapp1`), shown by `mate-xapp-status-applet` (`xapps-common`), with `xapp-status` beside `notification-area` on the panel and `enable-sni-support` **false**: the laptop's arrangement |
 | Secret store | `gnome-keyring`, unlocked at login |
 | File dialogs | `xdg-desktop-portal` 1.20.0, `default=gtk` with `xdg-desktop-portal-gtk` 1.15.1 |
 | Accessibility | `at-spi2-core` 2.52.0, `python3-pyatspi` 2.46.1; `toolkit-accessibility` **false** by default |
@@ -33,14 +33,35 @@ tower unless they say so.
 | Filesystem | ext4 on NVMe |
 | Time zone, locale | `Australia/Brisbane`, `en_AU.UTF-8` |
 | Rust | 1.98.1 through rustup, the same as the Mac |
+| Bluetooth | Intel AX200NGW on a PCIe adapter card, its Bluetooth half on USB (`8087:0029`), BlueZ 5.72. **No antenna fitted**: see below |
 
-`/etc/os-release`, `lscpu`, `free`, `cinnamon --version`, `xrandr`, `dpkg -l`, `timedatectl`. Measured 2026-09-27.
+`/etc/os-release`, `lscpu`, `free`, `dpkg -l`, `gsettings`, `xrandr`, `timedatectl`. Measured 2026-09-27, after the
+upgrade to 22.3 and the switch to MATE; it came as Mint 22.2 with Cinnamon.
 
 **What a fresh Mint needed, beyond its defaults**: rustup, and
 `sudo apt install libfontconfig-dev x11vnc libsecret-tools gh`. `build-essential`, `pkg-config`, `wmctrl` and
 `python3-pyatspi` were already installed. `x11vnc` is there so the Google sign-ins the suite asks for can be done
 from the Mac: `x11vnc -display :0 -auth ~/.Xauthority -localhost -rfbauth ~/.vnc/passwd -forever`, reached
 through an SSH tunnel.
+
+**The automatic login's desktop is the one AccountsService remembers for the user**, not LightDM's
+`user-session`: with MATE installed and both `user-session=mate` and `autologin-session=mate` in
+`/etc/lightdm/lightdm.conf.d/70-linuxmint.conf`, the tower still came up in Cinnamon, because
+`org.freedesktop.Accounts.User.XSession` held `cinnamon`. Setting it (`busctl --system call org.freedesktop.Accounts
+/org/freedesktop/Accounts/User1000 org.freedesktop.Accounts.User SetXSession s mate`, allowed for the user's own
+account) is what made the next login MATE.
+
+**The tower cannot hold a connection to the cube until antennas are fitted.** The motherboard has no wireless of its
+own (a B550M AORUS PRO-P, wired only); the AX200 is an M.2 module on a PCIe adapter whose two RP-SMA sockets, pin in
+the middle, sit on the slot bracket with nothing screwed on. With the cube beside the tower a scan found it, as
+`TimeFlip v2.0` at `E8:DB:D8:CF:F9:0F` with the `T.Flip` manufacturer data, but at RSSI -96 dBm, and a connect
+failed with `not available` before services resolved. Nothing was written to the cube. **Until RP-SMA antennas are
+on, anything needing the cube is done on the laptop.** Bluetooth had been switched off in software; `rfkill
+unblock bluetooth` and `bluetoothctl power on` worked without sudo, the desktop login granting the user
+`/dev/rfkill`. Measured 2026-09-27.
+
+**x11vnc starts at login** from `~/.config/autostart/x11vnc.desktop`, which sets the screen to 1920x1080 first, so
+a reboot needs nothing from the Mac but the tunnel.
 
 **The first launch on a new machine creates a plain `appdata.sqlite`**, not a link, so the suite's
 `scripts/switch-database.sh test` refuses until it is run as `-adopt test`, which renames that file to
@@ -53,7 +74,7 @@ through an SSH tunnel.
 | Full scripted run, 293 checks | about 13 min | 7m 25s | about 5 min |
 | `04-categories` | 5m 56s | 2m 17s | 1m 40s |
 
-Full runs on 2026-09-27, all on `feature/appTab`. **The laptop's time was mostly its hardware**: the tower runs
+Full runs on 2026-09-27, all on `feature/appTab`, the tower's under Mint 22.2 and Cinnamon. **The laptop's time was mostly its hardware**: the tower runs
 the same stack (X11, AT-SPI over D-Bus, XTEST typing) two to two and a half times faster. What is left between
 the tower and the Mac, about 10 to 40 percent per script and most in the scripts that read the tree hardest, is
 the AT-SPI round trips.
