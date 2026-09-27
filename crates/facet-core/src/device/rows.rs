@@ -236,6 +236,23 @@ pub fn record_connection_lost(connection: &Connection, log: &impl Record) -> Res
     Ok(stored)
 }
 
+/// Clears a `connection.connected` the last run left set: no link survives a relaunch. Returns whether the table
+/// holds it; does nothing when the table already says not connected.
+pub fn record_no_link_at_launch(connection: &Connection, log: &impl Record) -> Result<bool, rusqlite::Error> {
+    if !pairing(connection)?.is_cube_connected {
+        return Ok(true);
+    }
+    set(connection, "connection", "$.connected", "json('false')", None)?;
+    let stored = !pairing(connection)?.is_cube_connected;
+    log.record(Tag::Pair, || {
+        format!(
+            "The last run left the cube marked connected, and no link survives a relaunch{}",
+            if stored { "" } else { " REFUSED, the table still says connected" }
+        )
+    });
+    Ok(stored)
+}
+
 /// Forgets the paired cube: not paired, not connected, no handle, Device Information emptied. The name is kept,
 /// so a scan can still recognise the cube by a name this app gave it. Returns whether the table holds it.
 pub fn record_forget(connection: &Connection, log: &impl Record) -> Result<bool, rusqlite::Error> {

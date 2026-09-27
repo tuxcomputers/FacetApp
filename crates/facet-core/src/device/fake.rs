@@ -114,6 +114,10 @@ impl Link for FakeLink {
         Ok(())
     }
 
+    fn is_connected(&mut self) -> bool {
+        true
+    }
+
     fn disconnect(&mut self) -> Result<(), String> {
         Ok(())
     }

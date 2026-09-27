@@ -33,6 +33,7 @@ use facet_core::port::Opener;
 use facet_core::setting;
 use facet_ui::app::App;
 use facet_ui::categories::Categories;
+use facet_ui::device::Device;
 use facet_ui::faces::Faces;
 use facet_ui::google::Google;
 use facet_ui::notice::Notice;
@@ -124,6 +125,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(StdLoopbackListener),
         credentials,
     );
+    // **No radio in this build yet**: btleplug's BlueZ backend links libdbus, which this machine and CI do not
+    // have installed. The tab says so. The PIN keyring item is named as on the Mac.
+    let device = Device::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        std::rc::Rc::clone(&log),
+        std::rc::Rc::clone(&notice),
+        None,
+        Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
+    );
     // A time entry recorded while the Report is on screen changes its figures.
     let changed_report = std::rc::Rc::downgrade(&report);
     faces.set_on_timing_changed(move || {
@@ -187,9 +198,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_categories = std::rc::Rc::clone(&categories);
     let pump_report = std::rc::Rc::clone(&report);
     let pump_app = std::rc::Rc::clone(&app);
+    let pump_device = std::rc::Rc::clone(&device);
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
-        drain(&from_tray, &ui_weak, &pump_log, &pump_faces, &pump_categories, &pump_report, &pump_app);
+        drain(
+            &from_tray,
+            &ui_weak,
+            &pump_log,
+            &pump_faces,
+            &pump_categories,
+            &pump_report,
+            &pump_app,
+            &pump_device,
+        );
     });
 
     log.record(Tag::Launch, || "Facet is in the tray. Right click the icon for the menu".to_string());
@@ -215,6 +236,7 @@ fn drain(
     categories: &Categories,
     report: &Report,
     app: &App,
+    device: &Device,
 ) {
     while let Ok(message) = from_tray.try_recv() {
         match message {
@@ -242,6 +264,7 @@ fn drain(
                     categories.refresh();
                     report.open();
                     app.open();
+                    device.open();
                 }
             }
             FromTray::OpenAbout => {
@@ -252,6 +275,7 @@ fn drain(
                     categories.refresh();
                     report.open();
                     app.open();
+                    device.open();
                 }
             }
             FromTray::Quit => {

@@ -137,5 +137,8 @@ pub trait Link: Send {
     /// acknowledgement says the bytes arrived, not that the device acted on them.
     fn write(&mut self, uuid: u128, bytes: &[u8]) -> Result<(), String>;
 
+    /// Whether the connection is still up. `false` once the device has gone, whatever the reason.
+    fn is_connected(&mut self) -> bool;
+
     fn disconnect(&mut self) -> Result<(), String>;
 }

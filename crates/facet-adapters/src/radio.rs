@@ -234,6 +234,10 @@ impl Link for BtleplugLink {
         })
     }
 
+    fn is_connected(&mut self) -> bool {
+        self.connected && self.runtime.block_on(self.peripheral.is_connected()).unwrap_or(false)
+    }
+
     fn disconnect(&mut self) -> Result<(), String> {
         if !self.connected {
             return Ok(());

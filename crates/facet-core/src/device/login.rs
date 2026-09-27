@@ -55,6 +55,13 @@ pub fn target_pin(random: [u8; 6]) -> String {
     if pin == VENDOR_PIN { "000001".to_string() } else { pin }
 }
 
+/// A PIN of the app's own from the system's random source. An error says why there were no random bytes.
+pub fn new_pin() -> Result<String, String> {
+    let mut random = [0u8; 6];
+    getrandom::fill(&mut random).map_err(|error| format!("no random bytes: {error}"))?;
+    Ok(target_pin(random))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
