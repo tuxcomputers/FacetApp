@@ -1,10 +1,10 @@
 //! The App tab's Google section: shows the account's state and carries out sign-in, verification,
 //! disconnecting, and making, renaming and deleting the calendar.
 //!
-//! The network calls run on a background thread; their outcomes come back to the UI thread through a
-//! channel a timer drains, and are acted on there. What Google last said about the sign-in is held here for
-//! as long as the app runs and is never stored. Everything else is read from `google_account` and the secret
-//! store when the section is drawn.
+//! The network calls and every secret store call run on a background thread; their outcomes come back to the
+//! UI thread through a channel a timer drains, and are acted on there. What Google last said about the
+//! sign-in, and what the secret store last said about the saved sign-in, are held here and never stored.
+//! Everything else is read from `google_account` when the section is drawn.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -27,11 +27,19 @@ use crate::{AppData, SettingsWindow};
 /// What a background job came back with.
 enum Outcome {
     SignedIn(Result<Tokens, SignInFailure>),
-    Verified(Result<(), TokenFailure>),
+    /// What the store holds, and what Google said about it when there was one to ask about.
+    Checked {
+        credential: CredentialState,
+        verified: Option<Result<(), TokenFailure>>,
+    },
+    Cleared(Result<(), String>),
     Confirmed(Result<String, Failure>),
     Created(Result<(String, String), Failure>),
     Renamed(Result<String, Failure>),
-    Deleted { name: String, result: Result<(), Failure> },
+    Deleted {
+        name: String,
+        result: Result<(), Failure>,
+    },
 }
 
 /// A calendar job's failure: getting a token, or the calendar call itself.
@@ -63,14 +71,54 @@ struct Remote {
     credentials: Option<Credentials>,
 }
 
+/// How long a secret store call may take before it is treated as unanswered.
+const STORE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Runs `work` on its own thread and waits up to [`STORE_TIMEOUT`] for it. `None` when it did not answer in
+/// time; the thread is left to finish on its own.
+fn within<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (sender, receiver) = channel();
+    std::thread::spawn(move || {
+        // A closed channel means the caller stopped waiting, and the answer has nobody to go to.
+        if sender.send(work()).is_err() {
+            eprintln!("facet: the secret store answered after its timeout, and the answer was dropped");
+        }
+    });
+    receiver.recv_timeout(STORE_TIMEOUT).ok()
+}
+
 impl Remote {
-    /// A fresh access token from the stored refresh token.
+    /// The saved refresh token. A locked store blocks rather than failing, so an answer that does not come
+    /// within [`STORE_TIMEOUT`] is `Unavailable`. Call on a background thread.
+    fn look_up(&self) -> SecretLookup {
+        let store = Arc::clone(&self.store);
+        within(move || store.look_up()).unwrap_or_else(|| {
+            SecretLookup::Unavailable(format!("it did not answer within {} seconds", STORE_TIMEOUT.as_secs()))
+        })
+    }
+
+    /// Saves the refresh token, as [`SecretStore::store`], with the same timeout. Call on a background thread.
+    fn store(&self, secret: &str) -> Result<bool, String> {
+        let store = Arc::clone(&self.store);
+        let secret = secret.to_string();
+        within(move || store.store(&secret))
+            .unwrap_or_else(|| Err(format!("it did not answer within {} seconds", STORE_TIMEOUT.as_secs())))
+    }
+
+    /// Removes the refresh token, as [`SecretStore::clear`], with the same timeout. Call on a background thread.
+    fn clear(&self) -> Result<(), String> {
+        let store = Arc::clone(&self.store);
+        within(move || store.clear())
+            .unwrap_or_else(|| Err(format!("it did not answer within {} seconds", STORE_TIMEOUT.as_secs())))
+    }
+
+    /// A fresh access token from the stored refresh token. Call on a background thread.
     fn access_token(&self) -> Result<String, Failure> {
         let credentials = self
             .credentials
             .as_ref()
             .ok_or_else(|| Failure::NoToken(SignInFailure::NoCredentials.describe()))?;
-        match self.store.look_up() {
+        match self.look_up() {
             SecretLookup::Found(refresh) => {
                 google_flow::refresh(&*self.http, credentials, &refresh).map_err(Failure::Token)
             }
@@ -92,8 +140,15 @@ pub struct Google {
     listener: Arc<dyn LoopbackListener>,
     remote: Remote,
     sign_in: RefCell<GoogleSignInState>,
+    // **Held rather than read at the point of use**: a locked secret store blocks until somebody answers its
+    // prompt (port-findings.md), so it is never asked on the UI thread. This is its last answer, from a
+    // background read; `None` until one arrives. Opening the tab reads it again, and signing in or
+    // disconnecting replaces it with what that just did.
+    credential: RefCell<Option<CredentialState>>,
     is_signing_in: Cell<bool>,
     is_calendar_busy: Cell<bool>,
+    /// Background jobs whose outcome has not been acted on yet. The pump runs while any are.
+    outstanding: Cell<usize>,
     sender: Sender<Outcome>,
     receiver: Receiver<Outcome>,
     pump: slint::Timer,
@@ -124,8 +179,10 @@ impl Google {
             listener,
             remote: Remote { http, store, credentials },
             sign_in: RefCell::new(GoogleSignInState::NotAsked),
+            credential: RefCell::new(None),
             is_signing_in: Cell::new(false),
             is_calendar_busy: Cell::new(false),
+            outstanding: Cell::new(0),
             sender,
             receiver,
             pump: slint::Timer::default(),
@@ -155,33 +212,29 @@ impl Google {
         google
     }
 
-    /// Draws the section and, when there is an account and a saved sign-in, asks Google whether it still
-    /// works. Call when the App tab is shown.
+    /// Draws the section and, when there is an account, asks the secret store for its sign-in and then Google
+    /// whether it still works, on a background thread. Shows Checking until the answer arrives. Call when the
+    /// App tab is shown.
     pub fn open(&self) {
-        let credential = self.draw().map(|(credential, _)| credential);
-        if credential == Some(CredentialState::Present) && !self.is_signing_in.get() {
-            self.verify();
+        if self.is_signing_in.get() {
+            self.draw();
+            return;
+        }
+        *self.credential.borrow_mut() = None;
+        if self.draw() == Some(google::GoogleAccountState::Checking) {
+            self.check();
         }
     }
 
-    /// Draws the section from `google_account`, the secret store and what Google last said. Returns what the
-    /// store said and the account state; `None` when the section could not be read. The store is asked only
-    /// when there is an account.
-    fn draw(&self) -> Option<(CredentialState, google::GoogleAccountState)> {
+    /// Draws the section from `google_account`, the store's last answer and what Google last said. Returns the
+    /// account state; `None` when the section could not be read.
+    fn draw(&self) -> Option<google::GoogleAccountState> {
         let ui = self.ui.upgrade()?;
         let connection = self.connect()?;
         let account = self.report(google_flow::account(&connection))?;
         let has_identity = account.has_google_identity();
-        let credential = if has_identity {
-            match self.remote.store.look_up() {
-                SecretLookup::Found(_) => CredentialState::Present,
-                SecretLookup::Missing => CredentialState::Missing,
-                SecretLookup::Unavailable(reason) => CredentialState::Unavailable(reason),
-            }
-        } else {
-            CredentialState::Missing
-        };
-        let state = google::account_state(has_identity, &credential, &self.sign_in.borrow());
+        let credential = self.credential.borrow().clone();
+        let state = google::account_state(has_identity, credential.as_ref(), &self.sign_in.borrow());
         let section = google::section(&state, self.remote.credentials.is_some(), self.is_signing_in.get());
         let data = ui.global::<AppData>();
         data.set_google_status(section.status.into());
@@ -195,13 +248,14 @@ impl Google {
         data.set_calendar_name(account.calendar_name.clone().unwrap_or_default().into());
         data.set_calendar_enabled(!self.is_signing_in.get() && !self.is_calendar_busy.get());
         data.set_google_note(section.note.into());
-        Some((credential, state))
+        Some(state)
     }
 
     /// Runs `work` on a background thread and acts on its outcome on the UI thread.
     fn run(&self, work: impl FnOnce(Remote) -> Outcome + Send + 'static) {
         let sender = self.sender.clone();
         let remote = self.remote.clone();
+        self.outstanding.set(self.outstanding.get() + 1);
         std::thread::spawn(move || {
             // A closed channel means the section has gone, and the outcome has nobody to go to.
             if sender.send(work(remote)).is_err() {
@@ -220,33 +274,38 @@ impl Google {
 
     fn drain(&self) {
         while let Ok(outcome) = self.receiver.try_recv() {
+            self.outstanding.set(self.outstanding.get().saturating_sub(1));
             self.finish(outcome);
         }
-        if !self.is_signing_in.get() && !self.is_calendar_busy.get() {
+        if self.outstanding.get() == 0 {
             self.pump.stop();
         }
     }
 
-    fn verify(&self) {
-        let Some(credentials) = self.remote.credentials.clone() else {
-            *self.sign_in.borrow_mut() = GoogleSignInState::Refused(SignInFailure::NoCredentials.describe());
-            self.draw();
-            return;
-        };
-        self.run(move |remote| {
-            Outcome::Verified(match remote.store.look_up() {
-                SecretLookup::Found(refresh) => {
-                    google_flow::refresh(&*remote.http, &credentials, &refresh).map(|_| ())
-                }
-                SecretLookup::Missing => Err(TokenFailure::Refused("there is no saved sign-in".into())),
-                SecretLookup::Unavailable(reason) => Err(TokenFailure::Unreachable(reason)),
-            })
+    /// Asks the store for the saved sign-in and, when there is one, Google whether it still works.
+    fn check(&self) {
+        self.run(|remote| match remote.look_up() {
+            SecretLookup::Found(refresh) => Outcome::Checked {
+                credential: CredentialState::Present,
+                verified: Some(match &remote.credentials {
+                    Some(credentials) => {
+                        google_flow::refresh(&*remote.http, credentials, &refresh).map(|_| ())
+                    }
+                    None => Err(TokenFailure::Refused(SignInFailure::NoCredentials.describe())),
+                }),
+            },
+            SecretLookup::Missing => {
+                Outcome::Checked { credential: CredentialState::Missing, verified: None }
+            }
+            SecretLookup::Unavailable(reason) => {
+                Outcome::Checked { credential: CredentialState::Unavailable(reason), verified: None }
+            }
         });
     }
 
     /// Disconnects or signs in, whichever the button offers for the state as it reads now.
     fn button_pressed(&self) {
-        let Some((_, state)) = self.draw() else { return };
+        let Some(state) = self.draw() else { return };
         if google::section(&state, self.remote.credentials.is_some(), self.is_signing_in.get()).disconnects {
             self.disconnect();
         } else {
@@ -285,6 +344,14 @@ impl Google {
             )
             .and_then(|code| {
                 google_flow::exchange_code(&*remote.http, &credentials, &code, &pkce.verifier, &redirect)
+            })
+            .and_then(|tokens| {
+                let refresh = tokens.refresh_token.clone().unwrap_or_default();
+                match remote.store(&refresh) {
+                    Ok(true) => Ok(tokens),
+                    Ok(false) => Err(SignInFailure::NoStore("it did not read back".into())),
+                    Err(reason) => Err(SignInFailure::NoStore(reason)),
+                }
             });
             Outcome::SignedIn(result)
         });
@@ -296,7 +363,21 @@ impl Google {
                 self.is_signing_in.set(false);
                 self.signed_in(result);
             }
-            Outcome::Verified(result) => {
+            Outcome::Checked { credential, verified } => {
+                match &credential {
+                    CredentialState::Missing => {
+                        self.log.record(Tag::Google, || "Google sign-in checked, none is saved".to_string())
+                    }
+                    CredentialState::Unavailable(reason) => self.log.record(Tag::Google, || {
+                        format!("Google sign-in could not be read from the secret store: {}", plain(reason))
+                    }),
+                    CredentialState::Present => {}
+                }
+                *self.credential.borrow_mut() = Some(credential);
+                let Some(result) = verified else {
+                    self.draw();
+                    return;
+                };
                 let state = match result {
                     Ok(()) => {
                         self.log.record(Tag::Google, || "Google sign-in checked and works".to_string());
@@ -317,6 +398,12 @@ impl Google {
                 };
                 *self.sign_in.borrow_mut() = state;
             }
+            Outcome::Cleared(result) => match result {
+                Ok(()) => *self.credential.borrow_mut() = Some(CredentialState::Missing),
+                Err(reason) => self.log.record_failure(Tag::Google, || {
+                    format!("The saved Google sign-in could not be removed: {reason}")
+                }),
+            },
             Outcome::Confirmed(result) => self.confirmed(result),
             Outcome::Created(result) => {
                 self.is_calendar_busy.set(false);
@@ -372,16 +459,9 @@ impl Google {
     }
 
     fn signed_in(&self, result: Result<Tokens, SignInFailure>) {
-        let result = result.and_then(|tokens| {
-            let refresh = tokens.refresh_token.clone().unwrap_or_default();
-            match self.remote.store.store(&refresh) {
-                Ok(true) => Ok(tokens),
-                Ok(false) => Err(SignInFailure::NoStore("it did not read back".into())),
-                Err(reason) => Err(SignInFailure::NoStore(reason)),
-            }
-        });
         match result {
             Ok(tokens) => {
+                *self.credential.borrow_mut() = Some(CredentialState::Present);
                 let email = tokens.email.clone().unwrap_or_default();
                 let stored = self.write("name", tokens.name.as_deref().unwrap_or_default())
                     && self.write("email", &email);
@@ -485,11 +565,7 @@ impl Google {
             self.draw();
             return;
         }
-        if let Err(reason) = self.remote.store.clear() {
-            self.log.record_failure(Tag::Google, || {
-                format!("The saved Google sign-in could not be removed: {reason}")
-            });
-        }
+        self.run(|remote| Outcome::Cleared(remote.clear()));
         *self.sign_in.borrow_mut() = GoogleSignInState::NotAsked;
         self.draw();
     }
@@ -701,14 +777,12 @@ mod tests {
         }
     }
 
-    /// Drains outcomes until nothing is running, for up to five seconds.
+    /// Drains outcomes until no job is outstanding, for up to five seconds.
     fn settle(google: &Google) {
         for _ in 0..100 {
             std::thread::sleep(Duration::from_millis(50));
             google.drain();
-            if !google.is_signing_in.get() && !google.is_calendar_busy.get() {
-                std::thread::sleep(Duration::from_millis(50));
-                google.drain();
+            if google.outstanding.get() == 0 {
                 return;
             }
         }
@@ -762,6 +836,11 @@ mod tests {
         assert!(data.get_shows_calendar_row() && !data.get_has_calendar());
         assert_eq!(store.look_up(), SecretLookup::Found("r".into()));
 
+        google.open();
+        assert_eq!(data.get_google_status(), "Checking...");
+        settle(&google);
+        assert_eq!(data.get_google_status(), "Connected");
+
         google.create_calendar();
         settle(&google);
         assert!(data.get_has_calendar());
@@ -779,9 +858,63 @@ mod tests {
 
         google.button_pressed();
         assert_eq!(data.get_google_status(), "Not connected");
+        settle(&google);
         assert_eq!(store.look_up(), SecretLookup::Missing);
         let account = google_flow::account(&connection).expect("should read");
         assert_eq!(account.email, None);
+
+        std::fs::remove_file(&path).expect("the test database should be removable");
+    }
+
+    /// A store waiting on a prompt nobody answers.
+    struct StuckStore;
+    impl SecretStore for StuckStore {
+        fn store(&self, _secret: &str) -> Result<bool, String> {
+            std::thread::sleep(Duration::from_secs(60));
+            Ok(true)
+        }
+        fn look_up(&self) -> SecretLookup {
+            std::thread::sleep(Duration::from_secs(60));
+            SecretLookup::Missing
+        }
+        fn clear(&self) -> Result<(), String> {
+            std::thread::sleep(Duration::from_secs(60));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_store_that_does_not_answer_leaves_the_window_responsive() {
+        slint::platform::set_platform(Box::new(Headless(MinimalSoftwareWindow::new(Default::default()))))
+            .expect("the headless platform should install");
+        let path = std::env::temp_dir().join(format!("facet-ui-google-stuck-{}.sqlite", std::process::id()));
+        if path.exists() {
+            std::fs::remove_file(&path).expect("a stale test database should be removable");
+        }
+        let connection = database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
+        google_flow::write_field(&connection, "email", "ann@example.test", &Trace::none())
+            .expect("the email should write");
+        let ui = SettingsWindow::new().expect("the window should build");
+        let redirect = Arc::new(Mutex::new(None));
+        let google = Google::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Notice::attach(&ui),
+            Rc::new(FakeBrowser(Arc::clone(&redirect))),
+            Arc::new(StuckStore),
+            Arc::new(FakeGoogle),
+            Arc::new(FakeListener(redirect)),
+            Some(Credentials { client_id: "cid".into(), client_secret: "cs".into() }),
+        );
+        let data = ui.global::<AppData>();
+
+        let started = std::time::Instant::now();
+        google.open();
+        assert_eq!(data.get_google_status(), "Checking...");
+        google.button_pressed();
+        assert_eq!(data.get_google_status(), "Not connected");
+        assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
 
         std::fs::remove_file(&path).expect("the test database should be removable");
     }

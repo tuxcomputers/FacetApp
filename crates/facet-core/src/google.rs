@@ -326,6 +326,8 @@ pub enum GoogleSignInState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GoogleAccountState {
     NotConnected,
+    /// An account is on record and the secret store has not answered yet.
+    Checking,
     SignedOut,
     Unreadable,
     Unverified,
@@ -334,15 +336,19 @@ pub enum GoogleAccountState {
     Unreachable(String),
 }
 
-/// The account state from what is on record, what the store says and what Google last said.
+/// The account state from what is on record, what the store says and what Google last said. `credential` is
+/// `None` while the store has not answered.
 pub fn account_state(
     has_google_identity: bool,
-    credential: &CredentialState,
+    credential: Option<&CredentialState>,
     sign_in: &GoogleSignInState,
 ) -> GoogleAccountState {
     if !has_google_identity {
         return GoogleAccountState::NotConnected;
     }
+    let Some(credential) = credential else {
+        return GoogleAccountState::Checking;
+    };
     match credential {
         CredentialState::Missing => GoogleAccountState::SignedOut,
         CredentialState::Unavailable(_) => GoogleAccountState::Unreadable,
@@ -373,13 +379,15 @@ pub fn section(state: &GoogleAccountState, has_google_credentials: bool, is_sign
     use GoogleAccountState as S;
     let status = match state {
         S::NotConnected => "Not connected",
+        S::Checking => "Checking...",
         S::SignedOut => "Signed out",
         S::Unreadable => "Cannot be checked",
         S::Unverified | S::Connected => "Connected",
         S::Expired(_) => "Sign-in expired",
         S::Unreachable(_) => "Connected, not checked",
     };
-    let disconnects = matches!(state, S::Unreadable | S::Unverified | S::Connected | S::Unreachable(_));
+    let disconnects =
+        matches!(state, S::Checking | S::Unreadable | S::Unverified | S::Connected | S::Unreachable(_));
     let with_reason = |reason: &str| if reason.is_empty() { String::new() } else { format!(" ({reason})") };
     let offers_sign_in = matches!(state, S::NotConnected | S::SignedOut | S::Expired(_));
     let note = if offers_sign_in && !has_google_credentials {
@@ -406,7 +414,7 @@ pub fn section(state: &GoogleAccountState, has_google_credentials: bool, is_sign
                 "Facet could not read its sign-in from your Keychain, so it cannot say whether this works."
                     .to_string()
             }
-            S::Unverified | S::Connected => String::new(),
+            S::Checking | S::Unverified | S::Connected => String::new(),
         }
     };
     Section {
@@ -421,7 +429,7 @@ pub fn section(state: &GoogleAccountState, has_google_credentials: bool, is_sign
         },
         button_label: if disconnects { "Account" } else { "Google" },
         is_button_enabled: !is_signing_in && (disconnects || has_google_credentials),
-        shows_calendar_row: matches!(state, S::Unverified | S::Connected | S::Unreachable(_)),
+        shows_calendar_row: matches!(state, S::Checking | S::Unverified | S::Connected | S::Unreachable(_)),
         note,
     }
 }
@@ -533,9 +541,11 @@ mod tests {
     #[test]
     fn each_state_draws_its_status_button_and_note() {
         use GoogleAccountState as S;
-        let state = |identity, credential, sign_in| account_state(identity, &credential, &sign_in);
+        let state = |identity, credential, sign_in| account_state(identity, Some(&credential), &sign_in);
         assert_eq!(state(false, CredentialState::Present, GoogleSignInState::Working), S::NotConnected);
         assert_eq!(state(true, CredentialState::Missing, GoogleSignInState::NotAsked), S::SignedOut);
+        assert_eq!(account_state(true, None, &GoogleSignInState::Working), S::Checking);
+        assert_eq!(account_state(false, None, &GoogleSignInState::NotAsked), S::NotConnected);
         assert_eq!(
             state(true, CredentialState::Unavailable("-25300".into()), GoogleSignInState::NotAsked),
             S::Unreadable
@@ -567,6 +577,10 @@ mod tests {
             ("Connected", "Disconnect", "Account")
         );
         assert!(connected.is_button_enabled && connected.shows_calendar_row && connected.note.is_empty());
+
+        let checking = section(&S::Checking, true, false);
+        assert_eq!((checking.status, checking.button_text), ("Checking...", "Disconnect"));
+        assert!(checking.is_button_enabled && checking.shows_calendar_row && checking.note.is_empty());
 
         let signing_in = section(&S::NotConnected, true, true);
         assert_eq!(signing_in.button_text, "Signing in...");

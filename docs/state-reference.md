@@ -206,7 +206,8 @@ frame.
 
 | Name | Values | Truth |
 | --- | --- | --- |
-| `googleAccountState` | `notConnected`, `signedOut`, `unverified`, `connected`, `expired`, `unreachable`, `unreadable` | `GoogleAccountRules.State` |
+| `googleAccountState` | `notConnected`, `checking`, `signedOut`, `unverified`, `connected`, `expired`, `unreachable`, `unreadable` | `GoogleAccountRules.State`; in Rust `google::GoogleAccountState`, where `checking` is an account on record whose saved sign-in the secret store has not answered for yet |
+| `credentialState` | `present`, `missing`, `unavailable` | the secret store, read on a background thread with a timeout because a locked store blocks; `google::CredentialState` |
 | `googleSignInState` | `working`, `notSignedIn`, `storeUnavailable`, `unreachable`, `refused` | `GoogleCalendar.SignInState` -- what asking Google came back with, which `googleAccountState` is then worked out from |
 | `hasGoogleCredentials` | true / false | client credentials present |
 | `hasGoogleIdentity` | true / false | `GoogleAccountRules.Account` |
