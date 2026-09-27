@@ -12,3 +12,9 @@ dirs.workspace = true
 keyring.workspace = true
 rfd.workspace = true
 ureq.workspace = true
+
+# **macOS only for now.** On Linux btleplug talks to BlueZ through libdbus, which needs `libdbus-1-dev` to build;
+# the tower does not have it yet, and CI would need it added. Linux gets the radio in the change that installs it.
+[target.'cfg(target_os = "macos")'.dependencies]
+btleplug.workspace = true
+tokio.workspace = true

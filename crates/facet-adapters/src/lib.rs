@@ -5,3 +5,6 @@ pub mod dialogs;
 pub mod http;
 pub mod loopback;
 pub mod secrets;
+
+#[cfg(target_os = "macos")]
+pub mod radio;
