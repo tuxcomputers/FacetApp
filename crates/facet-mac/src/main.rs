@@ -134,6 +134,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         radio,
         Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
     );
+    // Finds the paired cube again, when there is one; a launch with nothing paired does nothing here.
+    device.reconnect();
     // A time entry recorded while the Report is on screen changes its figures.
     let changed_report = Rc::downgrade(&report);
     faces.set_on_timing_changed(move || {

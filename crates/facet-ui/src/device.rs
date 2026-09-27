@@ -71,6 +71,7 @@ enum Outcome {
     ScanEnded(Result<(), String>),
     Paired(Box<Paired>),
     PairingFailed { label: String, message: String },
+    ReconnectFailed { message: String },
     Sent { setting: DeviceSetting, value: i64, result: Result<(), String> },
     LinkLost,
     Released,
@@ -387,6 +388,13 @@ impl Device {
                 self.log.record(Tag::Pair, || format!("Pairing with {} did not complete", plain(&label)));
                 self.set_status(message);
             }
+            Outcome::ReconnectFailed { message } => {
+                self.is_reaching_for_cube.set(false);
+                self.log.record(Tag::Pair, || {
+                    format!("The paired cube was not reconnected: {}", plain(&message))
+                });
+                self.set_status(message);
+            }
             Outcome::Sent { setting, value, result } => self.sent(setting, value, result),
             Outcome::LinkLost => {
                 self.liveness.stop();
@@ -461,14 +469,7 @@ impl Device {
         let pins = Arc::clone(&self.pins);
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
-            let stored = match timed::look_up(&pins) {
-                SecretLookup::Found(pin) => Some(pin),
-                SecretLookup::Missing => None,
-                SecretLookup::Unavailable(reason) => {
-                    lines.record_failure(Tag::Pin, || format!("The stored PIN could not be read: {reason}"));
-                    None
-                }
-            };
+            let stored = stored_pin(&pins, lines);
             let candidates = login::pairing_candidates(stored.as_deref());
             let new_pin = match login::new_pin() {
                 Ok(pin) => pin,
@@ -480,41 +481,88 @@ impl Device {
                 }
             };
             match session::log_in(&*radio, &handle, &candidates, Some(&new_pin), lines) {
-                session::LoginOutcome::LoggedIn { mut link, pin, rotated } => {
-                    let pin_stored = if rotated || stored.as_deref() != Some(pin.as_str()) {
-                        match timed::store(&pins, &pin) {
-                            Ok(true) => Ok(()),
-                            Ok(false) => Err("it did not read back".to_string()),
-                            Err(reason) => Err(reason),
-                        }
-                    } else {
-                        Ok(())
-                    };
-                    let gap_name = link.gap_name();
-                    let info = session::device_info(&mut *link, lines);
-                    let battery = session::battery(&mut *link, lines);
-                    let status = session::status(&mut *link, lines);
-                    match held.lock() {
-                        Ok(mut slot) => *slot = Some(link),
-                        Err(_) => {
-                            return Outcome::PairingFailed {
-                                label,
-                                message: "The link could not be kept.".to_string(),
-                            };
-                        }
-                    }
-                    Outcome::Paired(Box::new(Paired {
-                        handle,
-                        label,
-                        gap_name,
-                        info,
-                        battery,
-                        status,
-                        pin_stored,
-                    }))
+                session::LoginOutcome::LoggedIn { link, pin, rotated } => {
+                    settle(link, &pin, rotated, stored.as_deref(), &pins, &held, lines, handle, label)
                 }
                 outcome => Outcome::PairingFailed { message: outcome.describe(&label), label },
             }
+        });
+    }
+
+    /// Finds the paired cube again and logs in to it: scans for TimeFlips and names this app gave the cube,
+    /// tries the handle last recorded first, and presents the stored PIN and then the vendor PIN to each, on
+    /// connections of their own. The one that accepts is this app's cube. Does nothing when no cube is paired or
+    /// there is no radio. Call once at launch.
+    pub fn reconnect(&self) {
+        let Some(radio) = self.radio.clone() else { return };
+        let Some(connection) = self.connect() else { return };
+        let Some(pairing) = self.report(rows::pairing(&connection)) else { return };
+        if !pairing.is_cube_paired || self.is_reaching_for_cube.get() {
+            return;
+        }
+        let known = self.report(rows::known_names(&connection)).unwrap_or_default();
+        let recorded = pairing.handle.clone();
+        self.is_reaching_for_cube.set(true);
+        self.set_status("Looking for the paired cube...");
+        self.draw();
+        let pins = Arc::clone(&self.pins);
+        let held = Arc::clone(&self.link);
+        self.run(move |lines| {
+            lines.record(Tag::Pair, || "Looking for the paired cube".to_string());
+            let stored = stored_pin(&pins, lines);
+            let stop = AtomicBool::new(false);
+            let mut found: Vec<Advert> = Vec::new();
+            let scanned = radio.scan(Duration::from_secs(scan::SCAN_SECONDS), &stop, &mut |advert| {
+                if scan::is_eligible(advert, &known, false)
+                    && !found.iter().any(|seen| seen.handle == advert.handle)
+                {
+                    found.push(advert.clone());
+                    if recorded.as_deref() == Some(advert.handle.as_str()) {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                }
+            });
+            if let Err(reason) = scanned {
+                return Outcome::ReconnectFailed { message: format!("The scan failed: {reason}") };
+            }
+            found.sort_by_key(|advert| recorded.as_deref() != Some(advert.handle.as_str()));
+            let candidates = login::reconnect_candidates(stored.as_deref());
+            let new_pin = match login::new_pin() {
+                Ok(pin) => pin,
+                Err(reason) => {
+                    return Outcome::ReconnectFailed {
+                        message: format!("No new PIN could be made: {reason }"),
+                    };
+                }
+            };
+            for advert in found {
+                let label = scan::label(&advert);
+                match session::log_in(&*radio, &advert.handle, &candidates, Some(&new_pin), lines) {
+                    session::LoginOutcome::LoggedIn { link, pin, rotated } => {
+                        return settle(
+                            link,
+                            &pin,
+                            rotated,
+                            stored.as_deref(),
+                            &pins,
+                            &held,
+                            lines,
+                            advert.handle,
+                            label,
+                        );
+                    }
+                    session::LoginOutcome::NewPinRefused => {
+                        return Outcome::ReconnectFailed {
+                            message: session::LoginOutcome::NewPinRefused.describe(&label),
+                        };
+                    }
+                    outcome => {
+                        let why = outcome.describe(&label);
+                        lines.record(Tag::Pair, || format!("Not the paired cube: {}", plain(&why)));
+                    }
+                }
+            }
+            Outcome::ReconnectFailed { message: "The paired cube was not found.".into() }
         });
     }
 
@@ -696,6 +744,54 @@ impl Device {
             }
         }
     }
+}
+
+/// The PIN the store holds, or `None` when it holds none or cannot be read, which is said.
+fn stored_pin(pins: &Arc<dyn SecretStore>, lines: &Lines) -> Option<String> {
+    match timed::look_up(pins) {
+        SecretLookup::Found(pin) => Some(pin),
+        SecretLookup::Missing => None,
+        SecretLookup::Unavailable(reason) => {
+            lines.record_failure(Tag::Pin, || format!("The stored PIN could not be read: {reason}"));
+            None
+        }
+    }
+}
+
+/// After a login to `handle` on `pin`: stores the PIN when it is new, reads Device Information, battery and
+/// status, and holds the link.
+#[allow(clippy::too_many_arguments)]
+fn settle(
+    mut link: Box<dyn Link>,
+    pin: &str,
+    rotated: bool,
+    stored: Option<&str>,
+    pins: &Arc<dyn SecretStore>,
+    held: &Arc<Mutex<Option<Box<dyn Link>>>>,
+    lines: &Lines,
+    handle: String,
+    label: String,
+) -> Outcome {
+    let pin_stored = if rotated || stored != Some(pin) {
+        match timed::store(pins, pin) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("it did not read back".to_string()),
+            Err(reason) => Err(reason),
+        }
+    } else {
+        Ok(())
+    };
+    let gap_name = link.gap_name();
+    let info = session::device_info(&mut *link, lines);
+    let battery = session::battery(&mut *link, lines);
+    let status = session::status(&mut *link, lines);
+    match held.lock() {
+        Ok(mut slot) => *slot = Some(link),
+        Err(_) => {
+            return Outcome::PairingFailed { label, message: "The link could not be kept.".to_string() };
+        }
+    }
+    Outcome::Paired(Box::new(Paired { handle, label, gap_name, info, battery, status, pin_stored }))
 }
 
 #[cfg(test)]
@@ -904,6 +1000,28 @@ mod tests {
         device.send_setting(DeviceSetting::LedBrightness, 70);
         settle(&device);
         assert_eq!(rows::settings(&connection).expect("read").led_brightness_percent, 70);
+
+        // A relaunch: the new controller finds the table saying connected, clears it, and reconnects on the
+        // stored PIN, rotating nothing.
+        drop(device);
+        let before = pin.lock().expect("lock").clone();
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let device = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::clone(&store) as Arc<dyn SecretStore>,
+        );
+        assert!(!rows::pairing(&connection).expect("read").is_cube_connected);
+        device.open();
+        settle(&device);
+        assert_eq!(data.get_connection(), "Disconnected");
+        device.reconnect();
+        settle(&device);
+        assert_eq!(data.get_connection(), "Connected");
+        assert_eq!(pin.lock().expect("lock").as_str(), before);
 
         device.forget();
         settle(&device);
