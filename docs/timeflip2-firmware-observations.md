@@ -242,6 +242,10 @@ The whole phase -- discovering the service, then four reads -- took **354ms** (r
 
 Row 313 follows row 309 (`PIN accepted`) and row 312 (`Paired with`), which is the ordering the feature is built on: the pairing is written before these reads start, so nothing about them can delay or fail it. Standard GATT places no authentication on `0x180A`, so these should answer with no PIN presented at all -- but **that has not been measured**, because the app has never asked for them in any other state. Nothing in the app depends on it either way.
 
+### Measured since: they answer before any PIN, and so does the battery
+
+**2026-09-27, macOS, the Rust app's `btleplug` adapter** (`crates/facet-adapters/examples/radio-check.rs`), on a connection where no PIN had been presented: all four strings came back with the values above, `DI_LABS`, `2.0`, `TFv4.1`, `FW_v3.64`, and Battery Level `0x2A19` read **100**. The next connection presented the vendor PIN and it was refused, the cube being on the Swift app's own PIN, so the reads were made by a client the cube had not accepted. **No trace rows exist for this run**; the evidence is the example's output, recorded in commit `0b432ce`.
+
 ---
 
 ## 6. A factory reset does **not** drop the connection
