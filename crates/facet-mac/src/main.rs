@@ -143,6 +143,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     faces.set_on_face_assigned(move |face, reason| {
         if let Some(device) = assigned_device.upgrade() {
             device.send_face_colours(&[face], &reason);
+            device.enforce_cube_rules();
+        }
+    });
+    // Every re-read of the timing picture, a tick while the figure moves among them, checks whether the cube is to be
+    // stopped: a face with no category, or a category that has just spent its daily limit.
+    let rules_device = Rc::downgrade(&device);
+    faces.set_on_timing_changed(move || {
+        if let Some(device) = rules_device.upgrade() {
+            device.enforce_cube_rules();
         }
     });
     let recoloured_device = Rc::downgrade(&device);

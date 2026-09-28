@@ -127,6 +127,15 @@ enum Outcome {
     Released,
 }
 
+/// Why the app paused the cube itself, which decides whether it may start it again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PauseClaim {
+    /// The face it rests on holds no category. Lifted once the face is given one.
+    NoCategory,
+    /// The category on show has spent its daily limit. Held until the limit is not spent.
+    DailyLimit,
+}
+
 /// A successful pairing: the cube is logged in, on `pin`, and the link is held.
 struct Paired {
     handle: String,
@@ -163,6 +172,10 @@ pub struct Device {
     has_said_task_parameters: Cell<bool>,
     /// When the settings last went, so the cube stepping through its sync codes as they land is not answered twice.
     settings_sent_at: Cell<Option<std::time::Instant>>,
+    /// Why the app last paused the cube itself, while that pause stands.
+    pause_claim: Cell<Option<PauseClaim>>,
+    /// A pause or resume the app decided on itself is on its way to the cube, or its history not yet filed.
+    is_forced_pause_sending: Cell<bool>,
     is_history_fetching: Cell<bool>,
     /// Why another fetch was asked for while one ran; it runs once that one ends.
     is_another_fetch_wanted: RefCell<Option<String>>,
@@ -222,6 +235,8 @@ impl Device {
             colours_asked_at: Cell::new(None),
             has_said_task_parameters: Cell::new(false),
             settings_sent_at: Cell::new(None),
+            pause_claim: Cell::new(None),
+            is_forced_pause_sending: Cell::new(false),
             is_history_fetching: Cell::new(false),
             is_another_fetch_wanted: RefCell::new(None),
             history_timer: slint::Timer::default(),
@@ -988,6 +1003,8 @@ impl Device {
             self.log.record(Tag::Face, || "The face goes with the link".to_string());
         }
         self.cube_status.set(None);
+        self.pause_claim.set(None);
+        self.is_forced_pause_sending.set(false);
         self.battery.set(None);
         self.notify_history_changed();
     }
@@ -1038,6 +1055,13 @@ impl Device {
             None => self.cube_status.get().is_some_and(|status| status.is_paused),
         };
         let pause = !is_paused;
+        if !pause && reading.as_ref().is_some_and(|reading| reading.is_limit_reached) {
+            self.log.record(Tag::Limit, || {
+                "The cube is left stopped: the category on show has spent its daily limit".to_string()
+            });
+            return;
+        }
+        self.pause_claim.set(None);
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
             let status =
@@ -1062,6 +1086,18 @@ impl Device {
             return;
         }
         let unlock = self.is_cube_locked() == Some(true);
+        // An unlock resumes the cube, unless the category on show has spent its daily limit.
+        let is_limit_holding = self
+            .connect()
+            .and_then(|connection| self.report(facet_core::timing::read_cube(&connection, now_seconds())))
+            .flatten()
+            .is_some_and(|reading| reading.is_limit_reached);
+        if unlock && is_limit_holding {
+            self.log.record(Tag::Limit, || {
+                "The cube is left stopped: the category on show has spent its daily limit".to_string()
+            });
+        }
+        self.pause_claim.set(None);
         let pause_on_lock = self
             .connect()
             .and_then(|connection| self.report(rows::settings(&connection)))
@@ -1070,7 +1106,10 @@ impl Device {
         self.run(move |lines| {
             let status = with_link(&held, |link| {
                 if unlock {
-                    session::set_lock(link, false, lines)?;
+                    let (status, _) = session::set_lock(link, false, lines)?;
+                    if is_limit_holding {
+                        return Ok(status);
+                    }
                     session::set_pause(link, false, lines).map(|(status, _)| status)
                 } else {
                     lock_the_cube(link, pause_on_lock, lines)
@@ -1081,6 +1120,69 @@ impl Device {
                     "the cube was {} from the menu bar",
                     if unlock { "unlocked" } else { "locked" }
                 ),
+                status,
+            }
+        });
+    }
+
+    /// Pauses the cube itself when it is counting on a face with no category, or on a category that has spent its
+    /// daily limit, and starts it again once a face it paused for having no category is given one. Read from the table
+    /// now; does nothing while locked, with no cube connected, or while its own last decision is still on its way.
+    pub fn enforce_cube_rules(&self) {
+        if !self.is_cube_connected()
+            || self.is_forced_pause_sending.get()
+            || self.is_cube_locked() != Some(false)
+        {
+            return;
+        }
+        let Some(connection) = self.connect() else { return };
+        let Some(Some(reading)) = self.report(facet_core::timing::read_cube(&connection, now_seconds()))
+        else {
+            return;
+        };
+        let decision = if !reading.is_paused {
+            match &reading.category {
+                None => Some((true, PauseClaim::NoCategory)),
+                Some(_) if reading.is_limit_reached => Some((true, PauseClaim::DailyLimit)),
+                Some(_) => None,
+            }
+        } else if self.pause_claim.get() == Some(PauseClaim::NoCategory)
+            && reading.category.is_some()
+            && !reading.is_limit_reached
+        {
+            Some((false, PauseClaim::NoCategory))
+        } else {
+            None
+        };
+        let Some((pause, claim)) = decision else { return };
+        let face = reading.face;
+        match (pause, claim) {
+            (true, PauseClaim::NoCategory) => self.log.record(Tag::Forced, || {
+                format!("Forced pause: face {face} has no category, so the cube is being stopped")
+            }),
+            (true, PauseClaim::DailyLimit) => {
+                let name = reading.category.as_ref().map_or(String::new(), |category| plain(&category.name));
+                let minutes = reading.seconds / 60;
+                self.log.record(Tag::Limit, || {
+                    format!("Daily limit reached: {name} has spent {minutes}m, stopping the clock")
+                });
+            }
+            (false, _) => self.log.record(Tag::Forced, || {
+                "Forced pause lifted: the face has a category now, so the cube is being started".to_string()
+            }),
+        }
+        self.pause_claim.set(pause.then_some(claim));
+        self.is_forced_pause_sending.set(true);
+        let held = Arc::clone(&self.link);
+        self.run(move |lines| {
+            let status =
+                with_link(&held, |link| session::set_pause(link, pause, lines).map(|(status, _)| status));
+            Outcome::CubeCommanded {
+                reason: match (pause, claim) {
+                    (true, PauseClaim::NoCategory) => format!("face {face} has no category"),
+                    (true, PauseClaim::DailyLimit) => "a category spent its daily limit".to_string(),
+                    (false, _) => format!("face {face} has a category now"),
+                },
                 status,
             }
         });
@@ -1181,7 +1283,10 @@ impl Device {
             },
         };
         self.log.record(Tag::History, || format!("History fetch done ({reason}): {}", plain(&outcome)));
+        // A pause the app sent itself stands decided until a fetch has filed what the cube did with it.
+        self.is_forced_pause_sending.set(false);
         self.notify_history_changed();
+        self.enforce_cube_rules();
         if let Some(again) = self.is_another_fetch_wanted.borrow_mut().take() {
             self.fetch_history(&again);
         }

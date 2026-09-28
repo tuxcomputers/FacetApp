@@ -54,6 +54,8 @@ pub enum Tag {
     History,
     /// A face lit in its category's colour.
     Colour,
+    /// The app pausing the cube itself: a face with no category.
+    Forced,
 }
 
 impl Tag {
@@ -84,6 +86,7 @@ impl Tag {
         Tag::Face,
         Tag::History,
         Tag::Colour,
+        Tag::Forced,
     ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
@@ -114,6 +117,7 @@ impl Tag {
             Tag::Face => "face",
             Tag::History => "history",
             Tag::Colour => "colour",
+            Tag::Forced => "forced",
         }
     }
 
