@@ -33,7 +33,7 @@ check "and Scan is not, there being a cube" "0" "$(on_tab device-scan)"
 since=$(mark)
 press device-reset
 expect_log "pressing Reset is heard" "$since" "Button clicked: Reset Device"
-check_contains "it warns that a reset cannot be undone" "$(element_eventually notice-message "cannot be undone")" \
+check_contains "it warns that a reset cannot be undone" "$(notice_text "cannot be undone")" \
     "cannot be undone"
 check "and offers a way out" "Cancel|Reset Device" "$(alert_buttons)"
 press_title Cancel

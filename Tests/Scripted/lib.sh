@@ -1433,6 +1433,20 @@ element() { tree | grep -m1 -E "id=$1($|[[:space:]])" || true; }
 #
 # **For a check made straight after an action changes the element.** The accessibility tree catches up with the
 # app after the change, and on Linux that has taken longer than a read made at once.
+# `notice_text [wanted] [timeout]` -- the whole of the notice showing, title to buttons, waiting up to `timeout` seconds
+# (default 5) for it to contain `wanted`. A message with a blank line in it spans several lines of the tree, so
+# `element notice-message` holds only its first paragraph and this is what reads the rest.
+notice_text() {
+    local wanted="${1:-}" timeout="${2:-5}" waited=0 text=""
+    while [ "$waited" -lt "$((timeout * 5))" ]; do
+        text=$(platform_alert_message)
+        case "$text" in *"$wanted"*) break ;; esac
+        sleep 0.2
+        waited=$((waited + 1))
+    done
+    printf '%s\n' "$text"
+}
+
 element_eventually() {
     local identifier="$1" wanted="$2" timeout="${3:-5}" waited=0 line=""
     while [ "$waited" -lt "$((timeout * 5))" ]; do

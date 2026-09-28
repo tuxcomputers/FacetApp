@@ -51,7 +51,7 @@ since=$(mark)
 set_field_focused device-name-field "Cube 🎲"
 press_return
 sleep 0.5
-message=$(element_eventually notice-message "plain")
+message=$(notice_text "plain")
 check_contains "an emoji is refused, and the notice says why" "$message" "The TimeFlip can only store plain"
 check_contains "that the limit is the device's" "$message" "not something this app has decided"
 check_contains "and what is allowed" "$message" "18 characters"
@@ -82,7 +82,7 @@ check "the table holds the new name" "$TEST_NAME" \
 check "and keeps the one it replaced for the scan" "$original" "$(setting device_name previous_name)"
 check_contains "the Name row shows it" "$(element_eventually device-name "$TEST_NAME")" "$TEST_NAME"
 check_contains "and the notice says the cube goes on advertising its old name" \
-    "$(element_eventually notice-message "advertising")" "advertising"
+    "$(notice_text "advertising")" "advertising"
 press_title OK
 sleep 0.5
 
