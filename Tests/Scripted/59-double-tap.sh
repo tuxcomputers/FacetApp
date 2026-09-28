@@ -26,7 +26,7 @@ else
     exit 1
 fi
 expect_log "the login asks for the double tap registers" "$since" "command withResponse: 17" 30
-registers=$(wait_for "$since" "The cube's double tap is Threshold %" 30)
+registers=$(wait_for "$since" "The double tap on the cube is Threshold %" 30)
 check_contains "and reads them" "$registers" "Threshold"
 check_contains "with the window at 0, so the gesture cannot fire" "$registers" "Window 0"
 check "nothing is sent to change them" "0" \

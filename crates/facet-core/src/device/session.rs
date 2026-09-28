@@ -344,7 +344,7 @@ pub fn turn_double_tap_off(link: &mut dyn Link, log: &impl Record) -> Result<boo
     };
     let [threshold, limit, latency, window] = read(link)?;
     log.record(Tag::Command, || {
-        format!("The cube's double tap is Threshold {threshold}, Limit {limit}, Latency {latency}, Window {window}")
+        format!("The double tap on the cube is Threshold {threshold}, Limit {limit}, Latency {latency}, Window {window}")
     });
     if window == 0 {
         log.record(Tag::Command, || "Double tap is off on the cube already".to_string());

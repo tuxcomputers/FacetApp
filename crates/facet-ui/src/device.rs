@@ -779,9 +779,9 @@ impl Device {
         }
         match &paired.status {
             Ok(status) => self.cube_status.set(Some(*status)),
-            Err(reason) => self
-                .log
-                .record(Tag::Command, || format!("The cube's status could not be read: {}", plain(reason))),
+            Err(reason) => self.log.record(Tag::Command, || {
+                format!("The status of the cube could not be read: {}", plain(reason))
+            }),
         }
         let Some(connection) = self.connect() else { return };
         let recorded = self.report(rows::record_login(
@@ -1276,7 +1276,7 @@ impl Device {
                     None => {
                         let last = frames.iter().map(|frame| frame.event_number).max().unwrap_or(0);
                         format!(
-                            "the stream stopped at event {last}, short of the cube's own latest {}, so none of it is \
+                            "the stream stopped at event {last}, short of the latest the cube reports, {}, so none of it is \
                              written",
                             latest.unwrap_or(0)
                         )
@@ -1836,7 +1836,7 @@ fn set_the_clock(link: &mut dyn Link, lines: &Lines) {
         Ok(since) => since.as_secs(),
         Err(error) => {
             lines.record_failure(Tag::Command, || {
-                format!("This machine's clock is before 1970, so the cube is not set: {error}")
+                format!("The clock on this machine is before 1970, so the cube is not set: {error}")
             });
             return;
         }
