@@ -161,7 +161,7 @@ check "and it asks first, offering a way out" "Cancel|Reset Device" "$(alert_but
 press_title Cancel
 sleep 0.5
 check "Cancel sends nothing to the cube" "0" \
-    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-tx';")"
+    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-tx' AND message LIKE 'command withResponse:%';")"
 check "the notice goes" "no" "$(alert_is_open && echo yes || echo no)"
 check "and the cube is still connected" "1" "$(setting connection connected)"
 

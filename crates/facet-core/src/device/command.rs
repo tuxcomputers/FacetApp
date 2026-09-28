@@ -10,6 +10,14 @@ pub const READ_TIME: u8 = 0x07;
 pub const CLOCK_TOLERANCE_SECONDS: u64 = 5;
 /// Ask for lock, pause and auto-pause. Answered by four bare bytes with no echoed command byte.
 pub const READ_STATUS: u8 = 0x10;
+/// Lock the cube on its face (with [`ON`]) or unlock it (with [`OFF`]). Confirmed by `0x10`.
+pub const LOCK: u8 = 0x04;
+/// Pause the cube (with [`ON`]) or resume it (with [`OFF`]). Confirmed by `0x10`.
+pub const PAUSE: u8 = 0x06;
+/// The second byte of `0x04` and `0x06` that turns the mode on.
+pub const ON: u8 = 0x01;
+/// The second byte of `0x04` and `0x06` that turns the mode off.
+pub const OFF: u8 = 0x02;
 /// Erase everything the cube keeps in flash and put it back on the vendor PIN. Acknowledged at once; the wipe
 /// finishes several seconds later and the link stays up through it (firmware finding 6).
 pub const FACTORY_RESET: u8 = 0xFF;

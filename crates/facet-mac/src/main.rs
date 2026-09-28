@@ -62,12 +62,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // One notice for the whole window, shared by every tab that raises one.
     let notice = Notice::attach(&ui);
 
-    // `true` for has_given_up_on_cube: this build has no radio, so it never waits for a cube.
+    // `false` for has_given_up_on_cube: a paired cube is followed until the reconnect fails to find it and the
+    // owner chooses to time by hand.
     let faces = Faces::attach(
         &ui,
         data_directory().join("appdata.sqlite"),
         Rc::clone(&log),
-        true,
+        false,
         Rc::clone(&notice),
     );
 
@@ -134,6 +135,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         radio,
         Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
     );
+    // What the cube files moves the timing picture, and so the menu bar.
+    let history_faces = Rc::downgrade(&faces);
+    device.set_on_history_changed(move || {
+        if let Some(faces) = history_faces.upgrade() {
+            faces.refresh_timing();
+        }
+    });
+    // A paired cube the launch cannot find is offered again or given up on, in the Settings window, which is shown
+    // for it.
+    let lost_faces = Rc::downgrade(&faces);
+    let lost_device = Rc::downgrade(&device);
+    let lost_notice = Rc::clone(&notice);
+    let lost_ui = ui.as_weak();
+    let lost_log = Rc::clone(&log);
+    device.set_on_cube_not_found(move || {
+        if let Some(ui) = lost_ui.upgrade() {
+            ui.invoke_open_on_device();
+            show_settings(&ui, "Device", &lost_log);
+        }
+        let faces = lost_faces.clone();
+        let device = lost_device.clone();
+        lost_notice.ask(
+            "The TimeFlip was not found",
+            "Facet could not find the paired TimeFlip. Flip it to wake it and look again, or time by hand for the rest \
+             of this launch.",
+            &["Rescan", "Time by Hand"],
+            move |choice| {
+                if choice == 0 {
+                    if let Some(device) = device.upgrade() {
+                        device.reconnect();
+                    }
+                } else if let Some(faces) = faces.upgrade() {
+                    faces.give_up_on_cube();
+                }
+            },
+        );
+    });
     // Finds the paired cube again, when there is one; a launch with nothing paired does nothing here.
     device.reconnect();
     // A time entry recorded while the Report is on screen changes its figures.
@@ -199,8 +237,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Pause and Lock are first, per the rule in docs/rust-port.md that the menu is the primary route
     // to everything and left click is only an accelerator for its first item.
     //
-    // Pause is the app's own clock, read from the database through `faces`. Lock is the cube's and there
-    // is no radio yet, so `showing.locked` is held in memory and changes only the icon.
+    // Pause is the app's own clock while timing by hand and the cube's while one is followed. Lock is the cube's,
+    // its label and the padlock following the cube's last `0x10` answer.
     let menu = Menu::new();
     let pause_item = MenuItem::with_id("pause", "Pause", true, None);
     let lock_item = MenuItem::with_id("lock", "Lock", true, None);
@@ -246,8 +284,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui_weak = ui.as_weak();
     let tray_handle = Rc::new(_tray);
-    let pump_tray = Rc::clone(&tray_handle);
-    let pump_showing = Rc::clone(&showing);
     let pump_log = Rc::clone(&log);
     let pump_faces = Rc::clone(&faces);
     let pump_categories = Rc::clone(&categories);
@@ -262,12 +298,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let follow_showing = Rc::clone(&showing);
     let follow_log = Rc::clone(&log);
     let follow_pause_item = pause_item.clone();
+    let follow_lock_item = lock_item.clone();
+    let follow_device = Rc::downgrade(&device);
     // A change to the icon, the item's title or whether it is enabled writes one row, in the wording the
     // Linux tray writes, which the scripted checks read. The item's current text and enabled state are read
     // from the item itself.
     let follow = move || {
         let Some(timing) = follow_faces.upgrade().and_then(|faces| faces.menu_bar_timing()) else { return };
-        let next = status_icon::Showing { paused: timing.is_paused, ..follow_showing.get() };
+        let device = follow_device.upgrade();
+        let is_locked = device.as_ref().is_some_and(|device| device.is_cube_locked() == Some(true));
+        let is_connected = device.as_ref().is_some_and(|device| device.is_cube_connected());
+        let lock_title = if is_locked { "Unlock" } else { "Lock" };
+        if follow_lock_item.text() != lock_title || follow_lock_item.is_enabled() != is_connected {
+            follow_lock_item.set_text(lock_title);
+            follow_lock_item.set_enabled(is_connected);
+        }
+        let next = status_icon::Showing { paused: timing.is_paused, locked: is_locked };
         let is_item_changed = follow_pause_item.text() != timing.pause_title
             || follow_pause_item.is_enabled() != timing.is_clickable;
         let is_icon_changed = next != follow_showing.get();
@@ -294,15 +340,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             match event.id.as_ref() {
-                // The same call as the Faces tab's glyph and the left click, so the three cannot disagree.
-                "pause" => pump_faces.toggle_pause(),
-                "lock" => {
-                    let mut next = pump_showing.get();
-                    next.locked = !next.locked;
-                    pump_showing.set(next);
-                    lock_item.set_text(if next.locked { "Unlock" } else { "Lock" });
-                    redraw_status_item(&pump_tray, next, &pump_log);
-                }
+                // The same call as the left click, so the two cannot disagree.
+                "pause" => toggle_pause(&pump_faces, &pump_device),
+                "lock" => pump_device.toggle_cube_lock(),
                 "about" => {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.invoke_open_on_about();
@@ -357,7 +397,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // acting on each would flip pause twice and land back where it started. Right click never
                 // arrives as a pair, the menu taking it, so this is not a general rule about clicks.
                 if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                    pump_faces.toggle_pause();
+                    toggle_pause(&pump_faces, &pump_device);
                 }
             }
         }
@@ -381,6 +421,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// An accessory app is not activated by showing a window, so without the activation the window
 /// appears behind the frontmost application and looks as though the menu item did nothing.
+/// Pauses or resumes whatever is being followed: the cube while one is, and the app's own clock otherwise.
+fn toggle_pause(faces: &Faces, device: &Device) {
+    if faces.is_following_cube() {
+        device.toggle_cube_pause();
+    } else {
+        faces.toggle_pause();
+    }
+}
+
 fn show_settings(ui: &SettingsWindow, tab: &str, log: &impl Record) {
     // **Before the window, not after.** The Dock icon and the window are the same act to macOS: the policy
     // is what decides whether the app has a place in the Dock at all, and changing it out from under a

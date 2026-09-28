@@ -6,7 +6,7 @@
 //! Timing is always by hand in this build: there is no radio, so the app never waits for a cube (see
 //! [`Faces::attach`]).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -38,7 +38,8 @@ pub struct Faces {
     ui: slint::Weak<SettingsWindow>,
     database: PathBuf,
     log: Rc<Trace>,
-    has_given_up_on_cube: bool,
+    /// Per launch and one-way: set when the reconnect did not find the cube and the app was told to time by hand.
+    has_given_up_on_cube: Cell<bool>,
     tick: slint::Timer,
     creator: Rc<Creator>,
     on_timing_changed: RefCell<Vec<Box<dyn Fn()>>>,
@@ -49,8 +50,8 @@ impl Faces {
     /// Wires the tab's callbacks on `ui` to `database` and closes any segment an earlier launch left open on
     /// an app face. Call once, at launch, before the window is shown.
     ///
-    /// `has_given_up_on_cube` is passed to [`timing::is_manual_mode`] with the paired setting on every click.
-    /// A build with no radio passes `true`, so a paired cube never blocks timing by hand.
+    /// `has_given_up_on_cube` is passed to [`timing::is_manual_mode`] with the paired setting at every reading. A build
+    /// with no radio passes `true`, so a paired cube never blocks timing by hand.
     pub fn attach(
         ui: &SettingsWindow,
         database: PathBuf,
@@ -63,7 +64,7 @@ impl Faces {
             creator: Creator::new(database.clone(), Rc::clone(&log), notice),
             database,
             log,
-            has_given_up_on_cube,
+            has_given_up_on_cube: Cell::new(has_given_up_on_cube),
             tick: slint::Timer::default(),
             on_timing_changed: RefCell::new(Vec::new()),
             this: RefCell::new(Weak::new()),
@@ -126,10 +127,38 @@ impl Faces {
         self.show_timing(&connection);
     }
 
+    /// Stops waiting for the paired cube for the rest of this launch, so the app is its own clock.
+    pub fn give_up_on_cube(&self) {
+        if !self.has_given_up_on_cube.replace(true) {
+            self.log.record(Tag::Timing, || {
+                "Timing by hand for this launch, the cube not having been found".to_string()
+            });
+        }
+        self.refresh_timing();
+    }
+
+    /// Whether the menu bar and this tab follow the cube rather than the app's own clock.
+    pub fn is_following_cube(&self) -> bool {
+        self.connect()
+            .and_then(|connection| self.is_manual_mode(&connection))
+            .is_some_and(|is_manual| !is_manual)
+    }
+
     /// What the menu bar should show, read from the database now. `None` when the database cannot be read,
-    /// which is logged.
+    /// which is logged. While a cube is followed it is the cube's open segment: paused unless one is open and
+    /// running, and clickable while the cube is connected.
     pub fn menu_bar_timing(&self) -> Option<MenuBarTiming> {
         let connection = self.connect()?;
+        if !self.is_manual_mode(&connection)? {
+            let reading = self.report(timing::read_cube(&connection, now()))?;
+            let is_paused = reading.as_ref().is_none_or(|reading| reading.is_paused);
+            let is_connected = self.report(setting::is_cube_connected(&connection))?;
+            return Some(MenuBarTiming {
+                is_paused,
+                is_clickable: is_connected,
+                pause_title: if is_paused { "Resume" } else { "Pause" },
+            });
+        }
         let reading = self.report(timing::read(&connection, now()))?;
         let is_paused = reading.timing_state != timing::TimingState::Running;
         Some(MenuBarTiming {
@@ -184,15 +213,19 @@ impl Faces {
 
     fn is_manual_mode(&self, connection: &Connection) -> Option<bool> {
         let is_cube_paired = self.report(setting::is_cube_paired(connection))?;
-        Some(timing::is_manual_mode(is_cube_paired, self.has_given_up_on_cube))
+        Some(timing::is_manual_mode(is_cube_paired, self.has_given_up_on_cube.get()))
     }
 
     /// Sets the timing column from a fresh reading, tells the timing-changed callback, and runs the
     /// one-second tick while the figure is moving, whether or not the window is on screen.
     fn show_timing(&self, connection: &Connection) {
         let Some(ui) = self.ui.upgrade() else { return };
-        let Some(reading) = self.report(timing::read(connection, now())) else { return };
         let is_manual_mode = self.is_manual_mode(connection).unwrap_or(true);
+        if !is_manual_mode {
+            self.show_cube_timing(connection);
+            return;
+        }
+        let Some(reading) = self.report(timing::read(connection, now())) else { return };
         let data = ui.global::<FacesData>();
         data.set_has_category(reading.category.is_some());
         data.set_running(reading.timing_state == timing::TimingState::Running);
@@ -224,8 +257,47 @@ impl Faces {
         }
     }
 
+    /// Sets the timing column from the cube's open segment. The glyph and the rows are dead: the cube is the clock,
+    /// and pausing it is the menu bar's.
+    fn show_cube_timing(&self, connection: &Connection) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let Some(reading) = self.report(timing::read_cube(connection, now())) else { return };
+        let data = ui.global::<FacesData>();
+        let category = reading.as_ref().and_then(|reading| reading.category.as_ref());
+        data.set_has_category(category.is_some());
+        data.set_running(reading.as_ref().is_some_and(|reading| !reading.is_paused));
+        data.set_timing_category(category.map(|c| c.name.as_str()).unwrap_or_default().into());
+        let colour = category.and_then(|c| colour(c.colour_hex.as_deref()));
+        data.set_has_timing_colour(colour.is_some());
+        data.set_timing_colour(colour.unwrap_or_default());
+        data.set_elapsed(
+            timing::format_duration(reading.as_ref().map_or(0, |reading| reading.seconds), true).into(),
+        );
+        data.set_glyph_enabled(false);
+        data.set_rows_enabled(false);
+        for changed in self.on_timing_changed.borrow().iter() {
+            changed();
+        }
+        if reading.as_ref().is_some_and(|reading| reading.is_counting) {
+            if !self.tick.running() {
+                let weak = self.this.borrow().clone();
+                self.tick.start(slint::TimerMode::Repeated, Duration::from_secs(1), move || {
+                    if let Some(faces) = weak.upgrade() {
+                        faces.on_tick();
+                    }
+                });
+            }
+        } else {
+            self.tick.stop();
+        }
+    }
+
     fn on_tick(&self) {
         let Some(connection) = self.connect() else { return };
+        if self.is_manual_mode(&connection) == Some(false) {
+            self.show_cube_timing(&connection);
+            return;
+        }
         let instant = now();
         self.report(timing::enforce_daily_limit(&connection, instant, &*self.log));
         self.report(segment::refresh_open_segment(&connection, instant));

@@ -100,6 +100,7 @@ export component SettingsWindow inherits Window {
     // and main.rs reports it, which is also the only way it gets reported at all, since selecting a
     // tab that is already selected changes nothing and announces nothing.
     public function open-on-faces() { root.active-tab = 0; }
+    public function open-on-device() { root.active-tab = 4; }
     public function open-on-about() { root.active-tab = 5; }
 
     VerticalLayout {

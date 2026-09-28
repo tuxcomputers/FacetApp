@@ -292,6 +292,48 @@ pub fn face(link: &mut dyn Link, log: &impl Record) -> Option<u8> {
     }
 }
 
+/// Pauses (`on`) or resumes the logged-in cube with `0x06`, then reads the status back with `0x10`. Returns the status
+/// read, and whether the pause byte in it is the one asked for. `0x06` never answers on the command result, so the
+/// read-back is the only confirmation.
+pub fn set_pause(link: &mut dyn Link, on: bool, log: &impl Record) -> Result<(CubeStatus, bool), String> {
+    let bytes = [command::PAUSE, if on { command::ON } else { command::OFF }];
+    log.record(Tag::Command, || format!("Sending {}", command::hex(&bytes)));
+    link.write(uuids::COMMAND, &bytes)?;
+    let status = status(link, log)?;
+    let took = status.is_paused == on;
+    log.record(Tag::Command, || {
+        match (took, on) {
+            (true, true) => "The cube is paused",
+            (true, false) => "The cube is running",
+            (false, true) => "The cube would not pause",
+            (false, false) => "The cube would not resume",
+        }
+        .to_string()
+    });
+    Ok((status, took))
+}
+
+/// Locks (`on`) or unlocks the logged-in cube with `0x04`, then reads the status back with `0x10`. Returns the status
+/// read, and whether the lock byte in it is the one asked for. A locked cube reports itself paused, so a pause is
+/// confirmed before the lock is sent, never after.
+pub fn set_lock(link: &mut dyn Link, on: bool, log: &impl Record) -> Result<(CubeStatus, bool), String> {
+    let bytes = [command::LOCK, if on { command::ON } else { command::OFF }];
+    log.record(Tag::Command, || format!("Sending {}", command::hex(&bytes)));
+    link.write(uuids::COMMAND, &bytes)?;
+    let status = status(link, log)?;
+    let took = status.is_locked == on;
+    log.record(Tag::Command, || {
+        match (took, on) {
+            (true, true) => "The cube is locked",
+            (true, false) => "The cube is unlocked",
+            (false, true) => "The cube would not lock",
+            (false, false) => "The cube would not unlock",
+        }
+        .to_string()
+    });
+    Ok((status, took))
+}
+
 /// How long a history stream may go without a frame before it is taken as over.
 pub const HISTORY_FRAME_TIMEOUT: Duration = Duration::from_secs(6);
 
@@ -549,6 +591,15 @@ mod tests {
         assert_eq!(set_clock(&mut *link, 1_790_000_000, &log), Ok(true));
         assert_eq!(clock(&mut *link, &log), Ok(1_790_000_000));
         assert_eq!(face(&mut *link, &log), Some(2));
+        assert_eq!(
+            set_pause(&mut *link, false, &log).map(|(status, took)| (status.is_paused, took)),
+            Ok((false, true))
+        );
+        assert_eq!(
+            set_lock(&mut *link, true, &log).map(|(status, took)| (status.is_locked, took)),
+            Ok((true, true))
+        );
+        assert_eq!(set_lock(&mut *link, false, &log).map(|(_, took)| took), Ok(true));
         assert_eq!(battery(&mut *link, &log), Some(87));
         assert_eq!(device_info(&mut *link, &log).firmware.as_deref(), Some("FW_v3.64"));
     }

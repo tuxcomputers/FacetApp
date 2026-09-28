@@ -22,6 +22,8 @@ struct State {
     clock: u64,
     /// The face that is up.
     face: u8,
+    is_locked: bool,
+    is_paused: bool,
     /// The cube's history, as frames of 17 bytes, oldest first.
     history: Vec<[u8; 17]>,
     /// Where each connection's history notifications go.
@@ -37,6 +39,7 @@ impl FakeCube {
             pin: pin.to_string(),
             clock: 1_789_886_547,
             face: 2,
+            is_paused: true,
             ..State::default()
         })))
     }
@@ -189,7 +192,20 @@ impl Link for FakeLink {
             },
             uuids::COMMAND if !self.logged_in => {}
             uuids::COMMAND => match bytes.first() {
-                Some(0x10) => self.result = vec![0x02, 0x01, 0x00, 0x05],
+                Some(0x10) => {
+                    let byte = |on: bool| if on { 0x01 } else { 0x02 };
+                    self.result =
+                        vec![byte(state.is_locked), byte(state.is_paused || state.is_locked), 0x00, 0x05];
+                }
+                Some(0x04) | Some(0x06) if bytes.len() == 2 => {
+                    let on = bytes[1] == 0x01;
+                    if bytes[0] == 0x04 {
+                        state.is_locked = on;
+                    } else {
+                        state.is_paused = on;
+                    }
+                    state.commands.push(bytes.to_vec());
+                }
                 Some(0x07) => {
                     self.result = vec![0x07];
                     self.result.extend_from_slice(&state.clock.to_be_bytes());

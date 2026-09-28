@@ -101,6 +101,11 @@ enum Outcome {
         reason: String,
         result: Result<Fetched, String>,
     },
+    /// A pause or lock exchange ended, with the last status the cube read back, and why it was asked for.
+    CubeCommanded {
+        reason: String,
+        status: Result<CubeStatus, String>,
+    },
     ResetEnded {
         label: String,
         outcome: ResetOutcome,
@@ -138,6 +143,10 @@ pub struct Device {
     history_feed: Arc<Mutex<Option<Receiver<Vec<u8>>>>>,
     /// The face the cube last said was up, while the link is held.
     cube_face: Cell<Option<u8>>,
+    /// The cube's lock, pause and auto-pause as its last `0x10` answer said, while the link is held. Held rather than
+    /// read because the lock is in no table: it is the cube's, and every pause or lock exchange reads it again.
+    cube_status: Cell<Option<CubeStatus>>,
+    on_cube_not_found: RefCell<Vec<Box<dyn Fn()>>>,
     is_history_fetching: Cell<bool>,
     /// Why another fetch was asked for while one ran; it runs once that one ends.
     is_another_fetch_wanted: RefCell<Option<String>>,
@@ -192,6 +201,8 @@ impl Device {
             link: Arc::new(Mutex::new(None)),
             history_feed: Arc::new(Mutex::new(None)),
             cube_face: Cell::new(None),
+            cube_status: Cell::new(None),
+            on_cube_not_found: RefCell::new(Vec::new()),
             is_history_fetching: Cell::new(false),
             is_another_fetch_wanted: RefCell::new(None),
             history_timer: slint::Timer::default(),
@@ -490,6 +501,19 @@ impl Device {
                     format!("The paired cube was not reconnected: {}", plain(&message))
                 });
                 self.set_status(message);
+                for callback in self.on_cube_not_found.borrow().iter() {
+                    callback();
+                }
+            }
+            Outcome::CubeCommanded { reason, status } => {
+                match status {
+                    Ok(status) => self.cube_status.set(Some(status)),
+                    Err(error) => self.log.record(Tag::Command, || {
+                        format!("The cube did not answer about its state: {}", plain(&error))
+                    }),
+                }
+                self.fetch_history(&reason);
+                self.notify_history_changed();
             }
             Outcome::Sent { setting, value, result } => self.sent(setting, value, result),
             Outcome::LinkLost => {
@@ -708,9 +732,11 @@ impl Device {
                 ),
             );
         }
-        if let Err(reason) = &paired.status {
-            self.log
-                .record(Tag::Command, || format!("The cube's status could not be read: {}", plain(reason)));
+        match &paired.status {
+            Ok(status) => self.cube_status.set(Some(*status)),
+            Err(reason) => self
+                .log
+                .record(Tag::Command, || format!("The cube's status could not be read: {}", plain(reason))),
         }
         let Some(connection) = self.connect() else { return };
         let recorded = self.report(rows::record_login(
@@ -750,8 +776,92 @@ impl Device {
         if self.cube_face.take().is_some() {
             self.log.record(Tag::Face, || "The face goes with the link".to_string());
         }
+        self.cube_status.set(None);
         self.battery.set(None);
         self.notify_history_changed();
+    }
+
+    /// Registers `callback` to run when the reconnect at launch does not find the paired cube.
+    pub fn set_on_cube_not_found(&self, callback: impl Fn() + 'static) {
+        self.on_cube_not_found.borrow_mut().push(Box::new(callback));
+    }
+
+    /// Whether a link to the cube is held now.
+    pub fn is_cube_connected(&self) -> bool {
+        self.link.try_lock().map_or(true, |slot| slot.is_some()) && !self.is_factory_reset_running.get()
+    }
+
+    /// Whether the cube said it was locked when last asked. `None` with no cube connected or no answer yet.
+    pub fn is_cube_locked(&self) -> Option<bool> {
+        self.cube_status.get().map(|status| status.is_locked)
+    }
+
+    /// Pauses the cube if it is running and resumes it if it is paused, on a background thread. Which way is read
+    /// from the open cube segment. Refused, and said, with no cube connected or with the cube locked.
+    pub fn toggle_cube_pause(&self) {
+        if !self.is_cube_connected() {
+            self.log.record(Tag::Command, || {
+                "No cube connected, so there is nothing to pause or resume".to_string()
+            });
+            return;
+        }
+        if self.is_cube_locked() == Some(true) {
+            self.log.record(Tag::Command, || {
+                "The cube is locked, so pausing it means nothing; unlock it first".to_string()
+            });
+            return;
+        }
+        let Some(connection) = self.connect() else { return };
+        let Some(reading) = self.report(facet_core::timing::read_cube(&connection, now_seconds())) else {
+            return;
+        };
+        let pause = !reading.as_ref().is_some_and(|reading| reading.is_paused);
+        let held = Arc::clone(&self.link);
+        self.run(move |lines| {
+            let status =
+                with_link(&held, |link| session::set_pause(link, pause, lines).map(|(status, _)| status));
+            Outcome::CubeCommanded {
+                reason: format!(
+                    "the cube was {} from the menu bar",
+                    if pause { "paused" } else { "resumed" }
+                ),
+                status,
+            }
+        });
+    }
+
+    /// Locks the cube if it is unlocked, pausing it first when pause_on_lock is on, and unlocks and resumes it if it
+    /// is locked. Refused, and said, with no cube connected.
+    pub fn toggle_cube_lock(&self) {
+        if !self.is_cube_connected() {
+            self.log.record(Tag::Command, || {
+                "No cube connected, so there is nothing to lock or unlock".to_string()
+            });
+            return;
+        }
+        let unlock = self.is_cube_locked() == Some(true);
+        let pause_on_lock = self
+            .connect()
+            .and_then(|connection| self.report(rows::settings(&connection)))
+            .is_none_or(|settings| settings.pause_on_lock);
+        let held = Arc::clone(&self.link);
+        self.run(move |lines| {
+            let status = with_link(&held, |link| {
+                if unlock {
+                    session::set_lock(link, false, lines)?;
+                    session::set_pause(link, false, lines).map(|(status, _)| status)
+                } else {
+                    lock_the_cube(link, pause_on_lock, lines)
+                }
+            });
+            Outcome::CubeCommanded {
+                reason: format!(
+                    "the cube was {} from the menu bar",
+                    if unlock { "unlocked" } else { "locked" }
+                ),
+                status,
+            }
+        });
     }
 
     /// Registers `callback` to run whenever a history fetch has written to `device_event`, and when the link goes.
@@ -767,7 +877,11 @@ impl Device {
 
     /// Takes the face the cube says is up. A turn onto another face is logged and fetches history.
     fn face_arrived(&self, face: u8) {
-        if self.cube_face.get() == Some(face) || self.is_factory_reset_running.get() {
+        // A face named while a login is still under way is the login's to read.
+        if self.cube_face.get() == Some(face)
+            || self.is_factory_reset_running.get()
+            || self.is_reaching_for_cube.get()
+        {
             return;
         }
         self.cube_face.set(Some(face));
@@ -939,6 +1053,22 @@ impl Device {
             }
         };
         let Some(mut link) = link else { return };
+        // The cube is left locked, so nothing counts while the app is not watching; paused first when pause_on_lock
+        // is on, read at this step. A cube that would not answer is let go of anyway.
+        let pause_on_lock = self
+            .connect()
+            .and_then(|connection| self.report(rows::settings(&connection)))
+            .is_none_or(|settings| settings.pause_on_lock);
+        let is_locked =
+            lock_the_cube(&mut *link, pause_on_lock, &*self.log).is_ok_and(|status| status.is_locked);
+        self.log.record(Tag::Quit, || {
+            match (is_locked, pause_on_lock) {
+                (true, true) => "Quit: the cube is paused and locked",
+                (true, false) => "Quit: the cube is locked",
+                (false, _) => "Quit: the cube was not left locked",
+            }
+            .to_string()
+        });
         session::disconnect(&mut *link, &*self.log);
         if let Some(connection) = self.connect() {
             self.report(rows::record_quit(&connection, &*self.log));
@@ -1337,6 +1467,36 @@ fn stored_pin(pins: &Arc<dyn SecretStore>, lines: &Lines) -> Result<Option<Strin
             Err(format!("The stored PIN could not be read, so no cube was contacted: {reason}"))
         }
     }
+}
+
+/// Runs `exchange` on the held link, or says there is none.
+fn with_link<T>(
+    held: &Arc<Mutex<Option<Box<dyn Link>>>>,
+    exchange: impl FnOnce(&mut dyn Link) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut slot = held.lock().map_err(|_| "the link is poisoned".to_string())?;
+    let link = slot.as_mut().ok_or_else(|| "there is no cube connected".to_string())?;
+    exchange(&mut **link)
+}
+
+/// Locks the cube, pausing it first when `pause_first`, and returns the status read back after the lock. The lock is
+/// sent even when the pause was not confirmed. The pause goes first because a locked cube reports itself paused.
+fn lock_the_cube(link: &mut dyn Link, pause_first: bool, log: &impl Record) -> Result<CubeStatus, String> {
+    if pause_first {
+        session::set_pause(link, true, log)?;
+    } else {
+        log.record(Tag::Command, || {
+            "pause_on_lock is off, so the cube is locked without pausing it".to_string()
+        });
+    }
+    session::set_lock(link, true, log).map(|(status, _)| status)
+}
+
+/// Now, in whole seconds since 1970.
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64)
 }
 
 /// Sets the cube's clock to now, as the first thing after a login, so its history carries usable timestamps. A clock

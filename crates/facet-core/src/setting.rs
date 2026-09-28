@@ -84,6 +84,12 @@ pub fn is_cube_paired(connection: &Connection) -> Result<bool, rusqlite::Error> 
     Ok(integer(connection, "paired", "paired")?.unwrap_or(0) != 0)
 }
 
+/// Whether the app can reach its paired cube now: `setting.connection.connected`. An absent row reads as not
+/// connected.
+pub fn is_cube_connected(connection: &Connection) -> Result<bool, rusqlite::Error> {
+    Ok(integer(connection, "connection", "connected")?.unwrap_or(0) != 0)
+}
+
 /// The shortest segment that becomes a time entry, from `setting.blip_time.seconds`.
 ///
 /// Clamped to 0 through 30; an absent row or field reads as 5. Zero means every segment counts.
