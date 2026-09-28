@@ -454,15 +454,42 @@ pair_a_cube() {
     return 0
 }
 
-# Quits the app and launches it again, and waits for it to reconnect to the paired cube on its own. Answers 0 once
-# the app logs `Reconnected to`, and 1 when it has not within 90 seconds. Leaves the Settings window shut.
+# Quits the app and launches it again, waits for it to reconnect to the paired cube on its own, and frees the cube the
+# quit left paused and locked. Answers 0 once the cube is unlocked and running again, and 1 when either half does not
+# happen. Leaves the Settings window shut.
 relink_a_cube() {
     quit_app
     sleep 1
     local relaunched
     relaunched=$(mark)
     ensure_app_running
-    wait_for "$relaunched" "Reconnected to %" 90 >/dev/null
+    wait_for "$relaunched" "Reconnected to %" 90 >/dev/null || return 1
+    free_the_cube
+}
+
+# Unlocks and resumes a cube the quit left paused and locked, through the menu's Unlock. Answers 0 once the cube says
+# it is unlocked and running, and 1 otherwise. A cube resting on a face with no category is paused again straight
+# away by the app, which is why the run keeps it on Break.
+free_the_cube() {
+    local freeing
+    freeing=$(mark)
+    wait_for "$freeing" "The cube is %locked and %" 25 >/dev/null
+    case "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'The cube is %locked and %' ORDER BY debug_log_id DESC LIMIT 1;")" in
+        "The cube is unlocked and running"*) return 0 ;;
+    esac
+    menu_press toggle-cube-lock >/dev/null || return 1
+    wait_for "$freeing" "The cube is unlocked" 20 >/dev/null || return 1
+    wait_for "$freeing" "The cube is running" 20 >/dev/null
+}
+
+# Asks for the cube to be put down on `face` and waits until the app says that face is up and it is still there.
+# Satisfied at once when it already is. Answers 1 when there is no terminal to ask.
+rest_the_cube_on() {
+    local face="$1" name="$2"
+    ask_and_detect "$(on_face_now 0 "$face")" \
+        "Put the cube down on the $name face, and leave it there" \
+        "That is face $face. The scripts after this one start from wherever the cube is now," \
+        "and a face with no category is paused by the app as soon as the cube counts on it."
 }
 
 # Stops the run unless a cube is paired and connected: the device scripts after `51-device-connect` run on the cube it

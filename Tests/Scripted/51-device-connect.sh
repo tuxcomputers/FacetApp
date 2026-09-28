@@ -166,4 +166,10 @@ check "the notice goes" "no" "$(alert_is_open && echo yes || echo no)"
 check "and the cube is still connected" "1" "$(setting connection connected)"
 
 close_settings
+
+# Not a check: every script after this one starts from the cube resting on Break, a face with a category, since the app
+# pauses a cube counting on a face with none.
+if ! rest_the_cube_on 8 Break; then
+    red "  the cube was never put on the Break face, so the scripts after this one would start from an unknown face"
+fi
 finish
