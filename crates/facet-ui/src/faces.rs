@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use facet_core::category::{self, Category};
 use facet_core::database;
 use facet_core::debug_log::{Record, Tag, Trace, plain};
-use facet_core::{segment, setting, timing};
+use facet_core::{face, segment, setting, timing};
 use rusqlite::Connection;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -33,6 +33,11 @@ pub struct MenuBarTiming {
     pub pause_title: &'static str,
 }
 
+/// Asks which face the connected cube says is up.
+type CubeFaceSource = Box<dyn Fn() -> Option<u8>>;
+/// Told which cube face took a category, and why.
+type FaceAssigned = Box<dyn Fn(i64, String)>;
+
 /// The Faces tab, attached to one Settings window.
 pub struct Faces {
     ui: slint::Weak<SettingsWindow>,
@@ -43,6 +48,10 @@ pub struct Faces {
     tick: slint::Timer,
     creator: Rc<Creator>,
     on_timing_changed: RefCell<Vec<Box<dyn Fn()>>>,
+    /// Asks the Device controller which face the connected cube says is up. `None` with no cube connected.
+    cube_face: RefCell<Option<CubeFaceSource>>,
+    /// Told when a cube face takes a category, with the face and why, so the cube can be relit.
+    on_face_assigned: RefCell<Vec<FaceAssigned>>,
     this: RefCell<Weak<Faces>>,
 }
 
@@ -67,6 +76,8 @@ impl Faces {
             has_given_up_on_cube: Cell::new(has_given_up_on_cube),
             tick: slint::Timer::default(),
             on_timing_changed: RefCell::new(Vec::new()),
+            cube_face: RefCell::new(None),
+            on_face_assigned: RefCell::new(Vec::new()),
             this: RefCell::new(Weak::new()),
         });
         *faces.this.borrow_mut() = Rc::downgrade(&faces);
@@ -86,6 +97,7 @@ impl Faces {
             }
         };
         data.on_play_pause_pressed(with(Faces::toggle_pause));
+        data.on_face_lock_pressed(with(Faces::toggle_face_lock));
         data.on_create_opened(with(Faces::open_create));
         data.on_create_cancelled(with(Faces::cancel_create));
 
@@ -125,6 +137,20 @@ impl Faces {
             }),
         }
         self.show_timing(&connection);
+    }
+
+    /// Gives the tab a way to ask which face the connected cube says is up. `None` from it means no cube connected.
+    pub fn set_cube_face_source(&self, source: impl Fn() -> Option<u8> + 'static) {
+        *self.cube_face.borrow_mut() = Some(Box::new(source));
+    }
+
+    /// Adds something to run when a cube face takes a category, with the face and why.
+    pub fn set_on_face_assigned(&self, assigned: impl Fn(i64, String) + 'static) {
+        self.on_face_assigned.borrow_mut().push(Box::new(assigned));
+    }
+
+    fn live_cube_face(&self) -> Option<i64> {
+        self.cube_face.borrow().as_ref().and_then(|source| source()).map(i64::from)
     }
 
     /// Stops waiting for the paired cube for the rest of this launch, so the app is its own clock.
@@ -227,6 +253,7 @@ impl Faces {
         }
         let Some(reading) = self.report(timing::read(connection, now())) else { return };
         let data = ui.global::<FacesData>();
+        data.set_is_following_cube(false);
         data.set_has_category(reading.category.is_some());
         data.set_running(reading.timing_state == timing::TimingState::Running);
         data.set_timing_category(
@@ -274,7 +301,15 @@ impl Faces {
             timing::format_duration(reading.as_ref().map_or(0, |reading| reading.seconds), true).into(),
         );
         data.set_glyph_enabled(false);
-        data.set_rows_enabled(false);
+        let face = self.live_cube_face();
+        let is_face_locked = match face {
+            Some(face) => self.report(face::is_face_locked(connection, face)).flatten().unwrap_or(false),
+            None => false,
+        };
+        data.set_is_following_cube(true);
+        data.set_device_face(face.map_or(0, |face| face as i32));
+        data.set_is_face_locked(is_face_locked);
+        data.set_rows_enabled(face.is_some() && !is_face_locked);
         for changed in self.on_timing_changed.borrow().iter() {
             changed();
         }
@@ -311,12 +346,59 @@ impl Faces {
             Some(timing::Click::StartTiming) => {
                 self.report(timing::start_timing(&connection, category_id, now(), &*self.log));
             }
-            Some(timing::Click::WaitingForTheDevice) => self.log.record(Tag::Timing, || {
-                format!("Timing: category_id {category_id} was not started, a device is paired")
-            }),
+            Some(timing::Click::WaitingForTheDevice) => match self.live_cube_face() {
+                Some(face) => self.assign_to_cube(&connection, face, category_id),
+                None => self.log.record(Tag::Timing, || {
+                    format!("Timing: category_id {category_id} was not started, a device is paired")
+                }),
+            },
             None => {}
         }
         self.show_timing(&connection);
+    }
+
+    /// Puts `category_id` on the cube's `face`, which the cube is resting on: no segment is opened, the cube being the
+    /// clock. A locked face keeps what it has.
+    fn assign_to_cube(&self, connection: &Connection, face: i64, category_id: i64) {
+        let Some(Some(category)) = self.report(category::by_id(connection, category_id)) else { return };
+        let name = plain(&category.name);
+        if self.report(face::is_face_locked(connection, face)).flatten() == Some(true) {
+            self.log.record(Tag::Timing, || {
+                format!("Face {face} is locked, so it keeps what it has rather than taking {name}")
+            });
+            return;
+        }
+        if self.report(face::category_id(connection, face)).flatten() == Some(category_id) {
+            self.log.record(Tag::Timing, || {
+                format!("Face {face} already holds {name}, so the click changes nothing")
+            });
+            return;
+        }
+        if self.report(face::assign(connection, category_id, face)) != Some(true) {
+            self.log.record(Tag::Timing, || format!("Face {face} refused category {name}"));
+            return;
+        }
+        self.log.record(Tag::Timing, || format!("Face {face} now holds {name} (category_id {category_id})"));
+        for assigned in self.on_face_assigned.borrow().iter() {
+            assigned(face, format!("face {face} took {name}"));
+        }
+    }
+
+    /// Locks or unlocks the face the cube is resting on, read at the press, and redraws from the table.
+    fn toggle_face_lock(&self) {
+        let Some(face) = self.live_cube_face() else {
+            self.log.record(Tag::Click, || "The lock was pressed with no cube face to lock".to_string());
+            return;
+        };
+        let Some(connection) = self.connect() else { return };
+        let wanted = self.report(face::is_face_locked(&connection, face)).flatten() != Some(true);
+        self.log.record(Tag::Click, || {
+            format!("Button clicked: face {face} lock -> {}", if wanted { "locked" } else { "unlocked" })
+        });
+        if self.report(face::set_locked(&connection, face, wanted)) != Some(true) {
+            self.log.record(Tag::Click, || format!("Face {face} would not take the lock"));
+        }
+        self.refresh();
     }
 
     /// Pauses the clock if it is running and resumes it if it is paused. Refused when idle or when a resume

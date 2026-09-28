@@ -27,7 +27,7 @@ use facet_core::device::name::{self, NameDecision, NameProblem};
 use facet_core::device::rows::{self, DeviceInfo, DeviceSetting};
 use facet_core::device::session::{Fetched, ResetOutcome};
 use facet_core::device::trace::TracedRadio;
-use facet_core::device::{face, history, info, login, scan, session, uuids};
+use facet_core::device::{colour, face, history, info, login, scan, session, uuids};
 use facet_core::port::{Advert, Link, Radio, RadioState, SecretLookup, SecretStore};
 use facet_core::{app_settings, cube_history};
 use rusqlite::Connection;
@@ -760,6 +760,50 @@ impl Device {
         self.check_battery_warning();
         self.fetch_history("the link came up");
         self.arm_history_timer(true);
+        // After the login's own questions, never before: all twelve faces in their categories' colours.
+        let all: Vec<i64> = (1..=12).collect();
+        self.send_face_colours(&all, "the cube connected");
+    }
+
+    /// Lights each of `faces` on the connected cube in its category's colour, read from the table now, on a background
+    /// thread. `0x11` has no read-back, so the cube taking the write is all there is. Said and skipped with no cube
+    /// connected.
+    pub fn send_face_colours(&self, faces: &[i64], reason: &str) {
+        if !self.is_cube_connected() {
+            self.log
+                .record(Tag::Colour, || format!("No cube connected, so {} lights nothing", plain(reason)));
+            return;
+        }
+        let Some(connection) = self.connect() else { return };
+        let mut lit = Vec::new();
+        for face in faces.iter().copied().filter(|face| (1..=12).contains(face)) {
+            let Some((name, hex)) = self.report(colour::of_face(&connection, face)) else { return };
+            lit.push((face as u8, name, hex));
+        }
+        let held = Arc::clone(&self.link);
+        let reason = plain(reason);
+        self.run(move |lines| {
+            let result = with_link(&held, |link| {
+                for (face, name, hex) in &lit {
+                    let bytes = colour::command(*face, hex.as_deref());
+                    link.write(uuids::COMMAND, &bytes)?;
+                    let [red, green, blue] = colour::rgb16(hex.as_deref());
+                    lines.record(Tag::Colour, || {
+                        format!(
+                            "The cube took face {face} {} {} as rgb16 {red:04x},{green:04x},{blue:04x} ({reason}), with no \
+                             read-back to confirm it",
+                            name.as_deref().map_or("no category".to_string(), plain),
+                            hex.as_deref().unwrap_or("off")
+                        )
+                    });
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                lines.record(Tag::Colour, || format!("The face colours did not all go ({reason}): {}", plain(&error)));
+            }
+            Outcome::Released
+        });
     }
 
     /// Clears what the app held about a link that has gone: liveness, the history timer and feed, the face and the
@@ -784,6 +828,11 @@ impl Device {
     /// Registers `callback` to run when the reconnect at launch does not find the paired cube.
     pub fn set_on_cube_not_found(&self, callback: impl Fn() + 'static) {
         self.on_cube_not_found.borrow_mut().push(Box::new(callback));
+    }
+
+    /// The face the connected cube last said was up. `None` with no cube connected or no face named yet.
+    pub fn cube_face(&self) -> Option<u8> {
+        self.cube_face.get().filter(|_| self.is_cube_connected())
     }
 
     /// Whether a link to the cube is held now.

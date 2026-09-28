@@ -2,6 +2,7 @@
 //! commands look like, and the rows the app keeps about it. Nothing here touches a radio; the session code
 //! drives a [`crate::port::Link`] it is handed.
 
+pub mod colour;
 pub mod command;
 pub mod face;
 pub mod history;

@@ -143,6 +143,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         radio,
         Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
     );
+    // The Faces tab asks the cube which face is up, and a face given a category, or a category recoloured or retired,
+    // relights the cube.
+    let face_device = std::rc::Rc::downgrade(&device);
+    faces.set_cube_face_source(move || face_device.upgrade().and_then(|device| device.cube_face()));
+    let assigned_device = std::rc::Rc::downgrade(&device);
+    faces.set_on_face_assigned(move |face, reason| {
+        if let Some(device) = assigned_device.upgrade() {
+            device.send_face_colours(&[face], &reason);
+        }
+    });
+    let recoloured_device = std::rc::Rc::downgrade(&device);
+    categories.set_on_faces_recoloured(move |faces, reason| {
+        if let Some(device) = recoloured_device.upgrade() {
+            device.send_face_colours(&faces, &reason);
+        }
+    });
     // What the cube files moves the timing picture, and so the tray.
     let history_faces = std::rc::Rc::downgrade(&faces);
     device.set_on_history_changed(move || {

@@ -40,6 +40,13 @@ export global FacesData {
     // Whether a category click does anything.
     in property <bool> rows-enabled: true;
 
+    // While a cube is followed: the face it is resting on (0 for none known) and whether that face keeps its
+    // category. A category click then puts the category on that face.
+    in property <bool> is-following-cube: false;
+    in property <int> device-face: 0;
+    in property <bool> is-face-locked: false;
+    callback face-lock-pressed();
+
     // The Create control: the button, or the name field with Save.
     in-out property <bool> creating: false;
     in-out property <string> typed-name;
@@ -242,6 +249,25 @@ export component FacesPane inherits Rectangle {
                         accessible-id: "timing-elapsed";
                         accessible-label: FacesData.elapsed;
                     }
+                }
+            }
+
+            // Which face of the cube is up, and its lock. Shown only while a cube is followed and says which face.
+            if FacesData.is-following-cube && FacesData.device-face > 0: HorizontalLayout {
+                alignment: center;
+                spacing: 12px;
+                Text {
+                    text: "Face " + FacesData.device-face;
+                    vertical-alignment: center;
+                    color: Palette.foreground;
+                    accessible-role: AccessibleRole.text;
+                    accessible-id: "timing-device-face";
+                    accessible-label: "Face " + FacesData.device-face;
+                }
+                Button {
+                    text: FacesData.is-face-locked ? "Unlock face" : "Lock face";
+                    accessible-id: "timing-face-lock";
+                    clicked => { FacesData.face-lock-pressed(); }
                 }
             }
 
