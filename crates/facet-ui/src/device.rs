@@ -161,6 +161,8 @@ pub struct Device {
     colours_asked_at: Cell<Option<std::time::Instant>>,
     /// Whether the cube's wish for task parameters has been said on this link; it is said once.
     has_said_task_parameters: Cell<bool>,
+    /// When the settings last went, so the cube stepping through its sync codes as they land is not answered twice.
+    settings_sent_at: Cell<Option<std::time::Instant>>,
     is_history_fetching: Cell<bool>,
     /// Why another fetch was asked for while one ran; it runs once that one ends.
     is_another_fetch_wanted: RefCell<Option<String>>,
@@ -219,6 +221,7 @@ impl Device {
             on_cube_not_found: RefCell::new(Vec::new()),
             colours_asked_at: Cell::new(None),
             has_said_task_parameters: Cell::new(false),
+            settings_sent_at: Cell::new(None),
             is_history_fetching: Cell::new(false),
             is_another_fetch_wanted: RefCell::new(None),
             history_timer: slint::Timer::default(),
@@ -801,6 +804,7 @@ impl Device {
         let Some(connection) = self.connect() else { return };
         let Some(settings) = self.report(rows::settings(&connection)) else { return };
         let cube_minutes = self.cube_status.get().map(|status| i64::from(status.auto_pause_minutes));
+        self.settings_sent_at.set(Some(std::time::Instant::now()));
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
             let result = with_link(&held, |link| {
@@ -900,9 +904,19 @@ impl Device {
             CubeSyncState::LedBrightnessRequired
             | CubeSyncState::BlinkIntervalRequired
             | CubeSyncState::AutoPauseRequired => {
-                self.log.record(Tag::Device, || format!("The cube wants its settings: {sync:?}"));
-                self.cube_status.set(None);
-                self.sync_settings(false);
+                let is_recent =
+                    self.settings_sent_at.get().is_some_and(|at| at.elapsed() < Duration::from_secs(10));
+                if is_recent {
+                    self.log.record(Tag::Device, || {
+                        format!("The cube wants its settings ({sync:?}), and they went less than 10s ago")
+                    });
+                } else {
+                    self.log.record(Tag::Device, || format!("The cube wants its settings: {sync:?}"));
+                    if sync == CubeSyncState::AutoPauseRequired {
+                        self.cube_status.set(None);
+                    }
+                    self.sync_settings(false);
+                }
             }
             CubeSyncState::TaskParametersRequired => {
                 if !self.has_said_task_parameters.replace(true) {
