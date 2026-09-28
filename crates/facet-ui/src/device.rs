@@ -38,6 +38,8 @@ use crate::{DeviceData, FoundDevice, SettingsWindow};
 
 /// How often a held link is asked whether it is still up.
 const LIVENESS_EVERY: Duration = Duration::from_secs(5);
+/// The longest a pairing waits for a scan it stopped to end before connecting anyway.
+const SCAN_END_WAIT: Duration = Duration::from_secs(5);
 /// How long each half of the low-battery blink lasts.
 const BLINK_EVERY: Duration = Duration::from_millis(500);
 
@@ -127,6 +129,9 @@ pub struct Device {
     battery: Cell<Option<u8>>,
     heard: RefCell<Vec<Advert>>,
     stop: Arc<AtomicBool>,
+    /// True from a scan job starting until the radio's scan has returned, which is later than `is_scanning` going
+    /// false only by the time the outcome takes to reach the UI thread.
+    is_radio_scanning: Arc<AtomicBool>,
     is_scanning: Cell<bool>,
     is_reaching_for_cube: Cell<bool>,
     is_factory_reset_running: Cell<bool>,
@@ -169,6 +174,7 @@ impl Device {
             battery: Cell::new(None),
             heard: RefCell::new(Vec::new()),
             stop: Arc::new(AtomicBool::new(false)),
+            is_radio_scanning: Arc::new(AtomicBool::new(false)),
             is_scanning: Cell::new(false),
             is_reaching_for_cube: Cell::new(false),
             is_factory_reset_running: Cell::new(false),
@@ -499,6 +505,8 @@ impl Device {
         self.draw();
         let stop = Arc::clone(&self.stop);
         let sender = self.sender.clone();
+        let is_radio_scanning = Arc::clone(&self.is_radio_scanning);
+        is_radio_scanning.store(true, Ordering::Relaxed);
         self.run(move |lines| {
             lines.record(Tag::Radio, || "Scanning, unfiltered".to_string());
             let result = radio.scan(Duration::from_secs(scan::SCAN_SECONDS), &stop, &mut |advert| {
@@ -506,6 +514,7 @@ impl Device {
                     stop.store(true, Ordering::Relaxed);
                 }
             });
+            is_radio_scanning.store(false, Ordering::Relaxed);
             Outcome::ScanEnded(result)
         });
     }
@@ -533,7 +542,20 @@ impl Device {
         let handle = handle.to_string();
         let pins = Arc::clone(&self.pins);
         let held = Arc::clone(&self.link);
+        let is_radio_scanning = Arc::clone(&self.is_radio_scanning);
         self.run(move |lines| {
+            // **BlueZ aborts a connection made while it is still discovering** (`le-connection-abort-by-local`,
+            // measured on the laptop 2026-09-28: the connect went out 200ms before the stopped scan had ended). So the
+            // scan this press stopped is waited out before connecting.
+            let waited = std::time::Instant::now();
+            while is_radio_scanning.load(Ordering::Relaxed) && waited.elapsed() < SCAN_END_WAIT {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if is_radio_scanning.load(Ordering::Relaxed) {
+                lines.record(Tag::Radio, || {
+                    "The scan had not ended after 5s, so connecting anyway".to_string()
+                });
+            }
             let stored = match stored_pin(&pins, lines) {
                 Ok(stored) => stored,
                 Err(message) => return Outcome::PairingFailed { label, message },
