@@ -13,8 +13,7 @@
 #   arrows were dead have nothing to check; the stepper itself being dead is checked instead.
 # - **Renaming is not built yet**, so the Name row is a plain value, and the two Swift checks on its refusal
 #   are gone until it is.
-# - **One check is the platform's**: on the Mac the Scan button is live, and on Linux, whose build has no radio
-#   yet, the tab says so.
+# - **The Scan button is live on both platforms**, each build having a radio.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
@@ -63,18 +62,12 @@ check "and the inner fold is back as it was built" "0" "$(on_tab device-led-brig
 
 check_contains "the Name row says there is no device" "$(element device-name)" "Not paired"
 
-case "$PLATFORM" in
-    mac)
-        scan_line=$(element device-scan)
-        if [ -n "$scan_line" ] && [[ "$scan_line" != *disabled* ]]; then
-            pass "the Scan button is live, this build having a radio"
-        else
-            fail "the Scan button is not live: $scan_line"
-        fi ;;
-    *)
-        check_contains "the tab says this build has no Bluetooth" \
-            "$(element_eventually device-scan-status "no Bluetooth")" "no Bluetooth" ;;
-esac
+scan_line=$(element device-scan)
+if [ -n "$scan_line" ] && [[ "$scan_line" != *disabled* ]]; then
+    pass "the Scan button is live, this build having a radio"
+else
+    fail "the Scan button is not live: $scan_line"
+fi
 
 # ---------------------------------------------------------------------------- the folds
 

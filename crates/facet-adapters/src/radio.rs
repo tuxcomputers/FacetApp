@@ -1,4 +1,4 @@
-//! [`Radio`] and [`Link`] on `btleplug`, which is CoreBluetooth on macOS. It runs its own Tokio runtime and
+//! [`Radio`] and [`Link`] on `btleplug`, which is CoreBluetooth on macOS and BlueZ on Linux. It runs its own Tokio runtime and
 //! blocks the calling thread on it, so every call belongs on a background thread.
 
 use std::collections::HashMap;
@@ -148,7 +148,8 @@ impl Radio for BtleplugRadio {
             }
         };
         // **A handle goes stale once its link drops**: CoreBluetooth forgets the peripheral, and connecting again
-        // takes a fresh scan to hear it (firmware finding 8). So an unknown peripheral is scanned for once.
+        // takes a fresh scan to hear it (firmware finding 8). BlueZ forgets it across a boot. So an unknown
+        // peripheral is scanned for once.
         let known = self.runtime.block_on(adapter.peripheral(&id)).is_ok();
         let id = if known {
             id

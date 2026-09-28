@@ -25,11 +25,12 @@ use std::time::Duration;
 use facet_adapters::dialogs::NativeFileChooser;
 use facet_adapters::http::UreqHttp;
 use facet_adapters::loopback::StdLoopbackListener;
+use facet_adapters::radio::BtleplugRadio;
 use facet_adapters::secrets::KeyringSecretStore;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
 use facet_core::google::Credentials;
-use facet_core::port::Opener;
+use facet_core::port::{Opener, Radio};
 use facet_core::setting;
 use facet_ui::app::App;
 use facet_ui::categories::Categories;
@@ -125,14 +126,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(StdLoopbackListener),
         credentials,
     );
-    // **No radio in this build yet**: btleplug's BlueZ backend links libdbus, which this machine and CI do not
-    // have installed. The tab says so. The PIN keyring item is named as on the Mac.
+    // The PIN keyring item is named as on the Mac.
+    let radio: Option<Arc<dyn Radio>> = match BtleplugRadio::new() {
+        Ok(radio) => Some(Arc::new(radio)),
+        Err(reason) => {
+            log.record_failure(Tag::Radio, || format!("No Bluetooth radio: {reason}"));
+            None
+        }
+    };
     let device = Device::attach(
         &ui,
         data_directory().join("appdata.sqlite"),
         std::rc::Rc::clone(&log),
         std::rc::Rc::clone(&notice),
-        None,
+        radio,
         Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
     );
     // Finds the paired cube again, when there is one; a launch with nothing paired does nothing here.

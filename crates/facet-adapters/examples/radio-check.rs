@@ -4,7 +4,7 @@
 //!
 //!     cargo run -p facet-adapters --example radio-check
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn main() {
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
@@ -76,7 +76,7 @@ fn main() {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn main() {
     eprintln!("this build has no radio adapter");
     std::process::exit(1);
