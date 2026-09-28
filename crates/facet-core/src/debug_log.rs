@@ -48,6 +48,10 @@ pub enum Tag {
     BleTx,
     /// An acknowledgement, answer or notification that came back over Bluetooth.
     BleRx,
+    /// The face the cube reports as up.
+    Face,
+    /// Asking the cube for its history, and what came back.
+    History,
 }
 
 impl Tag {
@@ -75,6 +79,8 @@ impl Tag {
         Tag::Device,
         Tag::BleTx,
         Tag::BleRx,
+        Tag::Face,
+        Tag::History,
     ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
@@ -102,6 +108,8 @@ impl Tag {
             Tag::Device => "device",
             Tag::BleTx => "ble-tx",
             Tag::BleRx => "ble-rx",
+            Tag::Face => "face",
+            Tag::History => "history",
         }
     }
 

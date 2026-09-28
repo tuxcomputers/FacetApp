@@ -25,10 +25,11 @@ use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::device::command::{self, CubeStatus};
 use facet_core::device::name::{self, NameDecision, NameProblem};
 use facet_core::device::rows::{self, DeviceInfo, DeviceSetting};
-use facet_core::device::session::ResetOutcome;
+use facet_core::device::session::{Fetched, ResetOutcome};
 use facet_core::device::trace::TracedRadio;
-use facet_core::device::{info, login, scan, session, uuids};
+use facet_core::device::{face, history, info, login, scan, session, uuids};
 use facet_core::port::{Advert, Link, Radio, RadioState, SecretLookup, SecretStore};
+use facet_core::{app_settings, cube_history};
 use rusqlite::Connection;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
@@ -94,6 +95,12 @@ enum Outcome {
     },
     /// A charge the cube sent while the link is up. Not a finished job.
     Battery(u8),
+    /// The face the cube says is up, sent while the link is up. Not a finished job.
+    Face(u8),
+    HistoryFetched {
+        reason: String,
+        result: Result<Fetched, String>,
+    },
     ResetEnded {
         label: String,
         outcome: ResetOutcome,
@@ -113,6 +120,7 @@ struct Paired {
     gap_name: Option<String>,
     info: DeviceInfo,
     battery: Option<u8>,
+    face: Option<u8>,
     status: Result<CubeStatus, String>,
     pin_stored: Result<(), String>,
 }
@@ -126,7 +134,18 @@ pub struct Device {
     radio: Option<Arc<dyn Radio>>,
     pins: Arc<dyn SecretStore>,
     link: Arc<Mutex<Option<Box<dyn Link>>>>,
+    /// The history characteristic's notifications for the held link, subscribed once at login.
+    history_feed: Arc<Mutex<Option<Receiver<Vec<u8>>>>>,
+    /// The face the cube last said was up, while the link is held.
+    cube_face: Cell<Option<u8>>,
+    is_history_fetching: Cell<bool>,
+    /// Why another fetch was asked for while one ran; it runs once that one ends.
+    is_another_fetch_wanted: RefCell<Option<String>>,
+    history_timer: slint::Timer,
+    on_history_changed: RefCell<Vec<Box<dyn Fn()>>>,
     battery: Cell<Option<u8>>,
+    /// A charge the cube sent before its login was recorded, applied once it is.
+    early_charge: Cell<Option<u8>>,
     heard: RefCell<Vec<Advert>>,
     stop: Arc<AtomicBool>,
     /// True from a scan job starting until the radio's scan has returned, which is later than `is_scanning` going
@@ -171,7 +190,14 @@ impl Device {
             radio,
             pins,
             link: Arc::new(Mutex::new(None)),
+            history_feed: Arc::new(Mutex::new(None)),
+            cube_face: Cell::new(None),
+            is_history_fetching: Cell::new(false),
+            is_another_fetch_wanted: RefCell::new(None),
+            history_timer: slint::Timer::default(),
+            on_history_changed: RefCell::new(Vec::new()),
             battery: Cell::new(None),
+            early_charge: Cell::new(None),
             heard: RefCell::new(Vec::new()),
             stop: Arc::new(AtomicBool::new(false)),
             is_radio_scanning: Arc::new(AtomicBool::new(false)),
@@ -396,13 +422,16 @@ impl Device {
                 // the cube sends belongs to no job at all.
                 Outcome::Heard(advert) => self.finish(Outcome::Heard(advert)),
                 Outcome::Battery(percent) => self.finish(Outcome::Battery(percent)),
+                Outcome::Face(face) => self.finish(Outcome::Face(face)),
                 outcome => {
                     self.outstanding.set(self.outstanding.get().saturating_sub(1));
                     self.finish(outcome);
                 }
             }
         }
-        if self.outstanding.get() == 0 {
+        // A held link sends notifications no job is waiting for, so the pump keeps running while one is held.
+        let is_link_held = self.link.try_lock().map_or(true, |slot| slot.is_some());
+        if self.outstanding.get() == 0 && !is_link_held {
             self.pump.stop();
         }
     }
@@ -464,13 +493,14 @@ impl Device {
             }
             Outcome::Sent { setting, value, result } => self.sent(setting, value, result),
             Outcome::LinkLost => {
-                self.liveness.stop();
-                self.battery.set(None);
+                self.link_gone();
                 if let Some(connection) = self.connect() {
                     self.report(rows::record_connection_lost(&connection, &*self.log));
                 }
                 self.check_battery_warning();
             }
+            Outcome::Face(face) => self.face_arrived(face),
+            Outcome::HistoryFetched { reason, result } => self.history_fetched(&reason, result),
             Outcome::Battery(reading) => self.charge_arrived(reading),
             Outcome::ResetEnded { label, outcome } => self.reset_ended(&label, outcome),
             Outcome::Renamed { name, result } => self.renamed(&name, result),
@@ -542,6 +572,7 @@ impl Device {
         let handle = handle.to_string();
         let pins = Arc::clone(&self.pins);
         let held = Arc::clone(&self.link);
+        let feed = Arc::clone(&self.history_feed);
         let is_radio_scanning = Arc::clone(&self.is_radio_scanning);
         self.run(move |lines| {
             // **BlueZ aborts a connection made while it is still discovering** (`le-connection-abort-by-local`,
@@ -572,7 +603,7 @@ impl Device {
             };
             match session::log_in(&*radio, &handle, &candidates, Some(&new_pin), lines) {
                 session::LoginOutcome::LoggedIn { link, pin, rotated } => {
-                    settle(link, &pin, rotated, stored.as_deref(), &pins, &held, lines, handle, label)
+                    settle(link, &pin, rotated, stored.as_deref(), &pins, &held, &feed, lines, handle, label)
                 }
                 outcome => Outcome::PairingFailed { message: outcome.describe(&label), label },
             }
@@ -597,6 +628,7 @@ impl Device {
         self.draw();
         let pins = Arc::clone(&self.pins);
         let held = Arc::clone(&self.link);
+        let feed = Arc::clone(&self.history_feed);
         self.run(move |lines| {
             lines.record(Tag::Pair, || "Looking for the paired cube".to_string());
             let stored = match stored_pin(&pins, lines) {
@@ -639,6 +671,7 @@ impl Device {
                             stored.as_deref(),
                             &pins,
                             &held,
+                            &feed,
                             lines,
                             advert.handle,
                             label,
@@ -663,6 +696,7 @@ impl Device {
         self.is_reaching_for_cube.set(false);
         self.heard.borrow_mut().clear();
         self.battery.set(paired.battery);
+        self.cube_face.set(paired.face);
         if let Err(reason) = &paired.pin_stored {
             self.log
                 .record_failure(Tag::Pin, || format!("The PIN on the cube could not be stored: {reason}"));
@@ -694,7 +728,157 @@ impl Device {
         }
         self.set_status(format!("Connected to {}.", paired.label));
         self.start_liveness();
+        if let Some(reading) = self.early_charge.take() {
+            self.charge_arrived(reading);
+        }
         self.check_battery_warning();
+        self.fetch_history("the link came up");
+        self.arm_history_timer(true);
+    }
+
+    /// Clears what the app held about a link that has gone: liveness, the history timer and feed, the face and the
+    /// charge.
+    fn link_gone(&self) {
+        self.liveness.stop();
+        if self.history_timer.running() {
+            self.history_timer.stop();
+            self.log.record(Tag::History, || "History timer stopped, the cube is not connected".to_string());
+        }
+        if let Ok(mut feed) = self.history_feed.lock() {
+            *feed = None;
+        }
+        if self.cube_face.take().is_some() {
+            self.log.record(Tag::Face, || "The face goes with the link".to_string());
+        }
+        self.battery.set(None);
+        self.notify_history_changed();
+    }
+
+    /// Registers `callback` to run whenever a history fetch has written to `device_event`, and when the link goes.
+    pub fn set_on_history_changed(&self, callback: impl Fn() + 'static) {
+        self.on_history_changed.borrow_mut().push(Box::new(callback));
+    }
+
+    fn notify_history_changed(&self) {
+        for callback in self.on_history_changed.borrow().iter() {
+            callback();
+        }
+    }
+
+    /// Takes the face the cube says is up. A turn onto another face is logged and fetches history.
+    fn face_arrived(&self, face: u8) {
+        if self.cube_face.get() == Some(face) || self.is_factory_reset_running.get() {
+            return;
+        }
+        self.cube_face.set(Some(face));
+        self.log.record(Tag::Face, || format!("Face {face} is up"));
+        self.fetch_history("the cube was turned");
+    }
+
+    /// Fetches the cube's history on a background thread and files it when it comes back. A fetch asked for while one
+    /// runs is run once that one ends, however many are asked for. Does nothing with no link held.
+    pub fn fetch_history(&self, reason: &str) {
+        let is_link_held = self.link.try_lock().map_or(true, |slot| slot.is_some());
+        if !is_link_held || self.is_factory_reset_running.get() {
+            return;
+        }
+        if self.is_history_fetching.get() {
+            self.log.record(Tag::History, || {
+                format!("Already fetching history ({reason}): asking again when this one is done")
+            });
+            self.is_another_fetch_wanted.borrow_mut().get_or_insert_with(|| reason.to_string());
+            return;
+        }
+        let Some(connection) = self.connect() else { return };
+        let Some(recorded) = self.report(cube_history::resume_point(&connection)) else { return };
+        self.is_history_fetching.set(true);
+        self.log.record(Tag::History, || {
+            format!(
+                "Fetching history ({reason}); on record: {}",
+                recorded
+                    .map_or("nothing".to_string(), |(number, start)| format!("event {number} at {start}"))
+            )
+        });
+        let held = Arc::clone(&self.link);
+        let feed = Arc::clone(&self.history_feed);
+        let reason = reason.to_string();
+        self.run(move |lines| {
+            let result = (|| {
+                let mut slot = held.lock().map_err(|_| "the link is poisoned".to_string())?;
+                let link = slot.as_mut().ok_or_else(|| "there is no cube connected".to_string())?;
+                let feed = feed.lock().map_err(|_| "the history feed is poisoned".to_string())?;
+                let feed = feed.as_ref().ok_or_else(|| "the history is not being followed".to_string())?;
+                session::fetch_history(&mut **link, feed, recorded, lines)
+            })();
+            Outcome::HistoryFetched { reason, result }
+        });
+    }
+
+    fn history_fetched(&self, reason: &str, result: Result<Fetched, String>) {
+        self.is_history_fetching.set(false);
+        let outcome = match self.connect() {
+            None => "the database would not open".to_string(),
+            Some(connection) => match result {
+                Ok(Fetched::Unchanged(frame)) => {
+                    match self.report(cube_history::record(&connection, &frame, true, &*self.log)) {
+                        Some(_) => format!("event {} again, {}s", frame.event_number, frame.duration_seconds),
+                        None => "the table refused the write".to_string(),
+                    }
+                }
+                Ok(Fetched::Frames { frames, latest }) => match history::plan(&frames, latest) {
+                    Some(batch) => {
+                        match self.report(cube_history::record_batch(&connection, &batch, &*self.log)) {
+                            Some(count) => format!("{count} frame(s) written"),
+                            None => "the table refused a write".to_string(),
+                        }
+                    }
+                    None => {
+                        let last = frames.iter().map(|frame| frame.event_number).max().unwrap_or(0);
+                        format!(
+                            "the stream stopped at event {last}, short of the cube's own latest {}, so none of it is \
+                             written",
+                            latest.unwrap_or(0)
+                        )
+                    }
+                },
+                Err(reason) => format!("failed, {}", plain(&reason)),
+            },
+        };
+        self.log.record(Tag::History, || format!("History fetch done ({reason}): {}", plain(&outcome)));
+        self.notify_history_changed();
+        if let Some(again) = self.is_another_fetch_wanted.borrow_mut().take() {
+            self.fetch_history(&again);
+        }
+    }
+
+    /// Arms the one-shot history timer on the interval the table holds now, read again at every firing. `announce`
+    /// logs the start.
+    fn arm_history_timer(&self, announce: bool) {
+        let seconds = self
+            .connect()
+            .and_then(|connection| self.report(app_settings::fetch_interval_seconds(&connection)))
+            .unwrap_or(10)
+            .clamp(1, 3600);
+        if announce {
+            self.log.record(Tag::History, || format!("History timer started, asking every {seconds}s"));
+        }
+        let weak = self.this.borrow().clone();
+        self.history_timer.start(
+            slint::TimerMode::SingleShot,
+            Duration::from_secs(seconds as u64),
+            move || {
+                let Some(device) = weak.upgrade() else { return };
+                let is_link_held = device.link.try_lock().map_or(true, |slot| slot.is_some());
+                if !is_link_held {
+                    return;
+                }
+                device
+                    .log
+                    .record(Tag::History, || format!("History timer fired, asking on a {seconds}s interval"));
+                device.fetch_history("the timer asked");
+                device.arm_history_timer(false);
+            },
+        );
     }
 
     /// Asks the held link, every [`LIVENESS_EVERY`], whether it is still up.
@@ -722,8 +906,7 @@ impl Device {
     /// Forgets the paired cube and drops the link. The PIN is kept, since it is what identifies this app's cube.
     fn forget(&self) {
         self.log.record(Tag::Click, || "Button clicked: Forget Device".to_string());
-        self.liveness.stop();
-        self.battery.set(None);
+        self.link_gone();
         self.check_battery_warning();
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
@@ -745,6 +928,7 @@ impl Device {
     /// app quits.
     pub fn quit(&self) {
         self.liveness.stop();
+        self.history_timer.stop();
         let link = match self.link.lock() {
             Ok(mut slot) => slot.take(),
             Err(_) => {
@@ -794,7 +978,7 @@ impl Device {
         };
         let label = pairing.name.clone().unwrap_or_else(|| "this TimeFlip".to_string());
         self.is_factory_reset_running.set(true);
-        self.liveness.stop();
+        self.link_gone();
         self.set_status(format!("Resetting {label}..."));
         self.draw();
         let held = Arc::clone(&self.link);
@@ -984,7 +1168,14 @@ impl Device {
             .connect()
             .and_then(|connection| self.report(rows::pairing(&connection)))
             .is_some_and(|pairing| pairing.is_cube_connected);
-        if !connected || self.is_factory_reset_running.get() {
+        if self.is_factory_reset_running.get() {
+            return;
+        }
+        if !connected {
+            // The login that subscribed has not been recorded yet; the charge is its to take.
+            if self.is_reaching_for_cube.get() {
+                self.early_charge.set(Some(reading));
+            }
             return;
         }
         let shown = info::charge_to_show(self.battery.get(), reading);
@@ -1148,6 +1339,60 @@ fn stored_pin(pins: &Arc<dyn SecretStore>, lines: &Lines) -> Result<Option<Strin
     }
 }
 
+/// Sets the cube's clock to now, as the first thing after a login, so its history carries usable timestamps. A clock
+/// that could not be set is said and the login goes on.
+fn set_the_clock(link: &mut dyn Link, lines: &Lines) {
+    let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(since) => since.as_secs(),
+        Err(error) => {
+            lines.record_failure(Tag::Command, || {
+                format!("This machine's clock is before 1970, so the cube is not set: {error}")
+            });
+            return;
+        }
+    };
+    if let Err(reason) = session::set_clock(link, now, lines) {
+        lines.record(Tag::Command, || format!("The clock on the cube could not be set: {}", plain(&reason)));
+    }
+}
+
+/// Subscribes to the cube's history and keeps the notifications in `feed` for [`session::fetch_history`].
+fn follow_history(link: &mut dyn Link, feed: &Arc<Mutex<Option<Receiver<Vec<u8>>>>>, lines: &Lines) {
+    match link.subscribe(uuids::HISTORY) {
+        Ok(frames) => match feed.lock() {
+            Ok(mut slot) => {
+                *slot = Some(frames);
+                lines.record(Tag::History, || "Following the history".to_string());
+            }
+            Err(_) => lines.record_failure(Tag::History, || "The history feed is poisoned".to_string()),
+        },
+        Err(reason) => {
+            lines.record(Tag::History, || format!("The history cannot be followed: {}", plain(&reason)))
+        }
+    }
+}
+
+/// Subscribes to the face that is up and forwards each face the cube names to the UI thread, until the link's
+/// notifications end or the window has gone.
+fn follow_faces(link: &mut dyn Link, lines: &Lines) {
+    match link.subscribe(uuids::FACES) {
+        Ok(faces) => {
+            lines.record(Tag::Face, || "Following the face".to_string());
+            let forward = lines.clone();
+            std::thread::spawn(move || {
+                for bytes in faces {
+                    if let Some(face) = face::cube_face(&bytes)
+                        && forward.0.send(Outcome::Face(face)).is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+        Err(reason) => lines.record(Tag::Face, || format!("The face cannot be followed: {}", plain(&reason))),
+    }
+}
+
 /// Subscribes to the cube's battery level and forwards each charge it sends to the UI thread, until the link's
 /// notifications end or the window has gone. A subscription the cube refuses is said and nothing more.
 fn follow_battery(link: &mut dyn Link, lines: &Lines) {
@@ -1181,6 +1426,7 @@ fn settle(
     stored: Option<&str>,
     pins: &Arc<dyn SecretStore>,
     held: &Arc<Mutex<Option<Box<dyn Link>>>>,
+    feed: &Arc<Mutex<Option<Receiver<Vec<u8>>>>>,
     lines: &Lines,
     handle: String,
     label: String,
@@ -1194,10 +1440,14 @@ fn settle(
     } else {
         Ok(())
     };
+    set_the_clock(&mut *link, lines);
     let gap_name = link.gap_name();
     let info = session::device_info(&mut *link, lines);
     let battery = session::battery(&mut *link, lines);
     follow_battery(&mut *link, lines);
+    follow_history(&mut *link, feed, lines);
+    follow_faces(&mut *link, lines);
+    let face = session::face(&mut *link, lines);
     let status = session::status(&mut *link, lines);
     match held.lock() {
         Ok(mut slot) => *slot = Some(link),
@@ -1205,7 +1455,7 @@ fn settle(
             return Outcome::PairingFailed { label, message: "The link could not be kept.".to_string() };
         }
     }
-    Outcome::Paired(Box::new(Paired { handle, label, gap_name, info, battery, status, pin_stored }))
+    Outcome::Paired(Box::new(Paired { handle, label, gap_name, info, battery, face, status, pin_stored }))
 }
 
 #[cfg(test)]
@@ -1354,12 +1604,20 @@ mod tests {
         }
     }
 
+    /// Drains until no job is outstanding, then a little longer for the notifications a held link forwards on threads
+    /// of their own.
     fn settle(device: &Device) {
         for _ in 0..200 {
             std::thread::sleep(Duration::from_millis(25));
             device.drain();
             if device.outstanding.get() == 0 {
-                return;
+                for _ in 0..6 {
+                    std::thread::sleep(Duration::from_millis(25));
+                    device.drain();
+                }
+                if device.outstanding.get() == 0 {
+                    return;
+                }
             }
         }
         panic!("the device job did not finish");

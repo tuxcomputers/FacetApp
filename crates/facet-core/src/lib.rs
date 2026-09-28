@@ -9,6 +9,7 @@
 
 pub mod app_settings;
 pub mod category;
+pub mod cube_history;
 pub mod database;
 pub mod debug_log;
 pub mod device;

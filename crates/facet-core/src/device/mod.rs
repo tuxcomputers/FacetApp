@@ -3,6 +3,8 @@
 //! drives a [`crate::port::Link`] it is handed.
 
 pub mod command;
+pub mod face;
+pub mod history;
 pub mod info;
 pub mod login;
 pub mod name;

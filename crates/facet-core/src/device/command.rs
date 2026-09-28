@@ -6,6 +6,8 @@
 
 /// Ask for the cube's clock. Answered by `[0x07]` then a big-endian u64 of seconds.
 pub const READ_TIME: u8 = 0x07;
+/// The most the clock read back may differ from the time sent before the set is called refused.
+pub const CLOCK_TOLERANCE_SECONDS: u64 = 5;
 /// Ask for lock, pause and auto-pause. Answered by four bare bytes with no echoed command byte.
 pub const READ_STATUS: u8 = 0x10;
 /// Erase everything the cube keeps in flash and put it back on the vendor PIN. Acknowledged at once; the wipe
@@ -20,6 +22,13 @@ pub const LED_BRIGHTNESS_RANGE: (i64, i64) = (1, 100);
 pub const LED_BLINK_SECONDS_RANGE: (i64, i64) = (5, 60);
 /// The battery warning control's range, in percent.
 pub const BATTERY_WARNING_RANGE: (i64, i64) = (1, 20);
+
+/// `0x08`: set the cube's clock to `seconds` since 1970, UTC, as a big-endian u64. Read back with `0x07`.
+pub fn set_clock(seconds: u64) -> Vec<u8> {
+    let mut bytes = vec![0x08];
+    bytes.extend_from_slice(&seconds.to_be_bytes());
+    bytes
+}
 
 /// `0x05`: auto-pause after `minutes`, clamped to [`AUTO_PAUSE_MINUTES_RANGE`], as a big-endian u16.
 pub fn set_auto_pause(minutes: i64) -> Vec<u8> {
