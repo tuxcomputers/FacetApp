@@ -13,6 +13,34 @@ pub fn battery_percent(bytes: &[u8]) -> Option<u8> {
     bytes.first().copied().filter(|percent| *percent <= 100)
 }
 
+/// How much higher a reading must be than the charge shown before the shown charge rises to it. A lower reading is
+/// taken at once.
+pub const RISE_TO_ADOPT: u8 = 2;
+/// How far above the warning level the charge must climb before the warning goes off again.
+pub const WARNING_CLEARS_ABOVE: u8 = 5;
+
+/// The charge to show after `reading` arrives, given the charge `shown` now. A reading outside 1 to 100 is ignored.
+pub fn charge_to_show(shown: Option<u8>, reading: u8) -> Option<u8> {
+    if !(1..=100).contains(&reading) {
+        return shown;
+    }
+    match shown {
+        Some(shown) if reading > shown && reading - shown < RISE_TO_ADOPT => Some(shown),
+        _ => Some(reading),
+    }
+}
+
+/// Whether the low-battery warning is on for a charge of `percent` against a warning level of `warning`, given
+/// whether it `was_low`: on at or below the level, and off only once the charge is more than
+/// [`WARNING_CLEARS_ABOVE`] above it. No charge is not low.
+pub fn is_battery_low(percent: Option<u8>, warning: u8, was_low: bool) -> bool {
+    match percent {
+        None => false,
+        Some(percent) if percent <= warning => true,
+        Some(percent) => was_low && percent <= warning.saturating_add(WARNING_CLEARS_ABOVE),
+    }
+}
+
 /// What a row on the Device tab shows for a value: `Not paired` when there is no paired cube, `Unknown` when the
 /// value has not been read, otherwise the value.
 pub fn shown(is_cube_paired: bool, value: Option<&str>) -> String {
@@ -34,6 +62,24 @@ mod tests {
         assert_eq!(battery_percent(&[87]), Some(87));
         assert_eq!(battery_percent(&[101]), None);
         assert_eq!(battery_percent(&[]), None);
+    }
+
+    #[test]
+    fn a_small_rise_is_held_and_a_fall_is_taken_at_once() {
+        assert_eq!(charge_to_show(None, 87), Some(87));
+        assert_eq!(charge_to_show(Some(87), 88), Some(87));
+        assert_eq!(charge_to_show(Some(87), 89), Some(89));
+        assert_eq!(charge_to_show(Some(87), 86), Some(86));
+        assert_eq!(charge_to_show(Some(87), 0), Some(87));
+    }
+
+    #[test]
+    fn the_warning_comes_on_at_the_level_and_goes_off_five_above_it() {
+        assert!(is_battery_low(Some(10), 10, false));
+        assert!(!is_battery_low(Some(11), 10, false));
+        assert!(is_battery_low(Some(15), 10, true));
+        assert!(!is_battery_low(Some(16), 10, true));
+        assert!(!is_battery_low(None, 10, true));
     }
 
     #[test]

@@ -7,7 +7,7 @@ thing that can say the app works on hardware; everything the crate tests prove i
 
 **Ten checks are back, 2026-09-27: `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11`, `12` and `13`.** The first
 nine pass 293 of 293 on both machines; `13-device-tab`, the Device tab with no cube, passes 37 of 37 on the Mac
-and on Linux. **The device range, `50`, `51`, `53`, `54`, `63`, `65`, `67` and `68`, was written on 2026-09-28 against what the Device tab does today and has not run yet.** What each one had to drop because the Rust app does not have it yet is said in its
+and on Linux. **The device range, `50`, `51`, `53`, `54`, `63`, `65`, `67` and `68`, passed on the Mac on 2026-09-28; `52`, `66` and `99` came with the reset and the rename the same day and have not run yet.** What each one had to drop because the Rust app does not have it yet is said in its
 own header. `07-history-timer` stays out: it is the cube's history fetch, and it comes back with the device
 range. `10-google-calendar` waits for calendar sync.
 

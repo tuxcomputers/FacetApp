@@ -1,4 +1,5 @@
-//! A cube in memory, for tests: it holds a PIN, judges what is presented, and answers `0x10`, `0x07` and `0x30`.
+//! A cube in memory, for tests: it holds a PIN, judges what is presented, and answers `0x10`, `0x07`, `0x30` and
+//! `0xFF`.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -13,6 +14,10 @@ struct State {
     connections: usize,
     /// Every write to the command characteristic other than a question.
     commands: Vec<Vec<u8>>,
+    /// How many connections after `0xFF` still find the old PIN, as a wipe still running does.
+    wipe_after: usize,
+    /// Connections left before a pending wipe finishes; `None` when none is pending.
+    wiping: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -29,6 +34,11 @@ impl FakeCube {
 
     pub fn connections(&self) -> usize {
         self.0.lock().expect("lock").connections
+    }
+
+    /// Makes a `0xFF` finish only after `connections` further connections have found the old PIN.
+    pub fn wipe_after(&self, connections: usize) {
+        self.0.lock().expect("lock").wipe_after = connections;
     }
 
     /// The writes to the command characteristic that change something.
@@ -58,7 +68,17 @@ impl Radio for FakeCube {
     }
 
     fn connect(&self, _handle: &str, _timeout: Duration) -> Result<Box<dyn Link>, String> {
-        self.0.lock().expect("lock").connections += 1;
+        let mut state = self.0.lock().expect("lock");
+        state.connections += 1;
+        match state.wiping {
+            Some(0) => {
+                state.pin = "000000".to_string();
+                state.wiping = None;
+            }
+            Some(left) => state.wiping = Some(left - 1),
+            None => {}
+        }
+        drop(state);
         Ok(Box::new(FakeLink { cube: self.clone(), logged_in: false, result: Vec::new() }))
     }
 }
@@ -116,6 +136,11 @@ impl Link for FakeLink {
                 }
                 Some(0x30) => {
                     state.pin = String::from_utf8_lossy(&bytes[1..]).into_owned();
+                    state.commands.push(bytes.to_vec());
+                    self.result = vec![0x02];
+                }
+                Some(0xFF) => {
+                    state.wiping = Some(state.wipe_after);
                     state.commands.push(bytes.to_vec());
                     self.result = vec![0x02];
                 }

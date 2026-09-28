@@ -5,6 +5,7 @@
 pub mod command;
 pub mod info;
 pub mod login;
+pub mod name;
 pub mod rows;
 pub mod scan;
 pub mod session;

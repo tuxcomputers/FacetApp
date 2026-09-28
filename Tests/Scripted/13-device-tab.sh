@@ -11,15 +11,13 @@
 #   ended `-heading-button`.
 # - **The steppers are Slint SpinBoxes with no arrow buttons**, so the Swift checks that the `-up` and `-down`
 #   arrows were dead have nothing to check; the stepper itself being dead is checked instead.
-# - **Renaming is not built yet**, so the Name row is a plain value, and the two Swift checks on its refusal
-#   are gone until it is.
 # - **The Scan button is live on both platforms**, each build having a radio.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=37
+EXPECTED_CHECKS=39
 start "the Device tab's two sections, and the folds that need no cube"
 
 open_settings
@@ -61,6 +59,12 @@ sleep 0.5
 check "and the inner fold is back as it was built" "0" "$(on_tab device-led-brightness)"
 
 check_contains "the Name row says there is no device" "$(element device-name)" "Not paired"
+# The Name row will not open for the same reason: renaming is a command that has to reach a cube. The live case is
+# `66-device-rename`.
+check_contains "and says why it will not open" "$(element device-name)" "no name to change"
+press device-name
+sleep 0.5
+check "so pressing the name opens no field" "0" "$(on_tab device-name-field)"
 
 scan_line=$(element device-scan)
 if [ -n "$scan_line" ] && [[ "$scan_line" != *disabled* ]]; then

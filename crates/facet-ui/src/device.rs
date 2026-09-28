@@ -1,14 +1,15 @@
-//! The Device tab: what the table holds about the paired cube, scanning for one, pairing with it, forgetting it,
-//! and the five device settings.
+//! The Device tab: what the table holds about the paired cube, scanning for one, pairing with it, renaming it,
+//! forgetting it, factory resetting it, and the five device settings.
 //!
 //! Radio work runs on background threads and comes back through a channel a timer drains. A background job
 //! cannot write to the trace, which belongs to the UI thread, so it collects its log lines and they are
 //! recorded, in order, when its outcome is acted on.
 //!
 //! **What is held here rather than read at the point of use**, each because it is not in the table: the live
-//! link to the cube, the battery level it last reported, and the devices the current scan has heard. Opening the
-//! tab rebuilds the list from a new scan, the battery is replaced by every read, and the link is dropped when
-//! it goes.
+//! link to the cube, the battery level it last reported, whether that level has the low-battery warning on, and
+//! the devices the current scan has heard. Opening the tab rebuilds the list from a new scan, the battery is
+//! replaced by every reading the cube sends, the warning is decided again from the table's warning level whenever
+//! the charge or that level changes, and the link is dropped when it goes.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -22,7 +23,9 @@ use facet_core::app_settings::Value;
 use facet_core::database;
 use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::device::command::{self, CubeStatus};
+use facet_core::device::name::{self, NameDecision, NameProblem};
 use facet_core::device::rows::{self, DeviceInfo, DeviceSetting};
+use facet_core::device::session::ResetOutcome;
 use facet_core::device::trace::TracedRadio;
 use facet_core::device::{info, login, scan, session, uuids};
 use facet_core::port::{Advert, Link, Radio, RadioState, SecretLookup, SecretStore};
@@ -35,6 +38,8 @@ use crate::{DeviceData, FoundDevice, SettingsWindow};
 
 /// How often a held link is asked whether it is still up.
 const LIVENESS_EVERY: Duration = Duration::from_secs(5);
+/// How long each half of the low-battery blink lasts.
+const BLINK_EVERY: Duration = Duration::from_millis(500);
 
 /// Where a background job logs: each line goes to the UI thread as it happens, through the same channel as the
 /// outcomes, so the trace keeps the order things happened in.
@@ -85,6 +90,16 @@ enum Outcome {
         value: i64,
         result: Result<(), String>,
     },
+    /// A charge the cube sent while the link is up. Not a finished job.
+    Battery(u8),
+    ResetEnded {
+        label: String,
+        outcome: ResetOutcome,
+    },
+    Renamed {
+        name: String,
+        result: Result<(), String>,
+    },
     LinkLost,
     Released,
 }
@@ -114,6 +129,10 @@ pub struct Device {
     stop: Arc<AtomicBool>,
     is_scanning: Cell<bool>,
     is_reaching_for_cube: Cell<bool>,
+    is_factory_reset_running: Cell<bool>,
+    is_battery_low: Cell<bool>,
+    is_blink_on: Cell<bool>,
+    blink: slint::Timer,
     status: RefCell<String>,
     sender: Sender<Outcome>,
     receiver: Receiver<Outcome>,
@@ -152,6 +171,10 @@ impl Device {
             stop: Arc::new(AtomicBool::new(false)),
             is_scanning: Cell::new(false),
             is_reaching_for_cube: Cell::new(false),
+            is_factory_reset_running: Cell::new(false),
+            is_battery_low: Cell::new(false),
+            is_blink_on: Cell::new(false),
+            blink: slint::Timer::default(),
             status: RefCell::new(String::new()),
             sender,
             receiver,
@@ -182,6 +205,19 @@ impl Device {
         data.on_scan_pressed(action(Device::scan_pressed));
         data.on_forget_pressed(action(Device::forget));
         data.on_reset_pressed(action(Device::reset_pressed));
+        data.on_rename_opened(action(Device::rename_opened));
+        let weak = Rc::downgrade(&device);
+        data.on_rename_edited(move |text| {
+            if let Some(device) = weak.upgrade() {
+                device.limit_rename(&text);
+            }
+        });
+        let weak = Rc::downgrade(&device);
+        data.on_rename_committed(move |text| {
+            if let Some(device) = weak.upgrade() {
+                device.rename_committed(&text);
+            }
+        });
         let weak = Rc::downgrade(&device);
         data.on_found_pressed(move |handle| {
             if let Some(device) = weak.upgrade() {
@@ -251,6 +287,11 @@ impl Device {
         data.set_paired(paired);
         data.set_cube_connected(connected);
         data.set_device_name(info::shown(paired, pairing.name.as_deref()).into());
+        let refusal = name::rename_refusal(paired, connected, pairing.name.as_deref())
+            .or_else(|| self.is_factory_reset_running.get().then_some(name::RenameRefusal::NotConnected));
+        data.set_can_rename(refusal.is_none());
+        data.set_rename_help(refusal.map_or("", |refusal| refusal.help()).into());
+        data.set_battery_alert(self.is_battery_low.get() && self.is_blink_on.get());
         data.set_connection(
             if !paired {
                 "Manual mode, no device"
@@ -280,6 +321,7 @@ impl Device {
         data.set_can_scan(self.radio.is_some());
         data.set_is_scanning(self.is_scanning.get());
         data.set_is_reaching_for_cube(self.is_reaching_for_cube.get());
+        data.set_is_factory_reset_running(self.is_factory_reset_running.get());
         let all = data.get_scan_all();
         let found: Vec<FoundDevice> = self
             .heard
@@ -344,8 +386,10 @@ impl Device {
                         self.log.record(tag, || message);
                     }
                 }
-                // A scan reports every device it hears before it ends, and only its end is a finished job.
+                // A scan reports every device it hears before it ends, and only its end is a finished job; a charge
+                // the cube sends belongs to no job at all.
                 Outcome::Heard(advert) => self.finish(Outcome::Heard(advert)),
+                Outcome::Battery(percent) => self.finish(Outcome::Battery(percent)),
                 outcome => {
                     self.outstanding.set(self.outstanding.get().saturating_sub(1));
                     self.finish(outcome);
@@ -419,7 +463,11 @@ impl Device {
                 if let Some(connection) = self.connect() {
                     self.report(rows::record_connection_lost(&connection, &*self.log));
                 }
+                self.check_battery_warning();
             }
+            Outcome::Battery(reading) => self.charge_arrived(reading),
+            Outcome::ResetEnded { label, outcome } => self.reset_ended(&label, outcome),
+            Outcome::Renamed { name, result } => self.renamed(&name, result),
             Outcome::Released | Outcome::Log(..) => {}
         }
         self.draw();
@@ -624,6 +672,7 @@ impl Device {
         }
         self.set_status(format!("Connected to {}.", paired.label));
         self.start_liveness();
+        self.check_battery_warning();
     }
 
     /// Asks the held link, every [`LIVENESS_EVERY`], whether it is still up.
@@ -653,6 +702,7 @@ impl Device {
         self.log.record(Tag::Click, || "Button clicked: Forget Device".to_string());
         self.liveness.stop();
         self.battery.set(None);
+        self.check_battery_warning();
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
             if let Ok(mut slot) = held.lock()
@@ -689,13 +739,283 @@ impl Device {
         }
     }
 
+    /// Asks whether to factory reset the connected cube, and resets it on a yes. Cancel is the first choice, so a
+    /// stray Return does not reset.
     fn reset_pressed(&self) {
         self.log.record(Tag::Click, || "Button clicked: Reset Device".to_string());
-        self.notice.tell(
-            "Resetting the cube is not built yet",
-            "Facet cannot factory reset a cube yet. Taking its batteries out puts it back on the factory PIN, which is \
-             the part of a reset most often wanted.",
+        let weak = self.this.borrow().clone();
+        self.notice.ask(
+            "Reset this TimeFlip to factory settings?",
+            "This erases everything stored on the device -- face colours, task settings, name, and password -- back \
+             to factory defaults. This cannot be undone.",
+            &["Cancel", "Reset Device"],
+            move |choice| {
+                let Some(device) = weak.upgrade() else { return };
+                if choice == 1 {
+                    device.reset();
+                } else {
+                    device.log.record(Tag::Pair, || "The reset was called off".to_string());
+                }
+            },
         );
+    }
+
+    /// Sends `0xFF` over the held link and proves the wipe on the factory PIN, on a background thread. Forget,
+    /// Reset and the Name row stand down until it ends.
+    fn reset(&self) {
+        let Some(radio) = self.radio.clone() else { return };
+        let Some(connection) = self.connect() else { return };
+        let Some(pairing) = self.report(rows::pairing(&connection)) else { return };
+        let Some(handle) = pairing.handle.clone().filter(|_| pairing.is_cube_connected) else {
+            self.log.record(Tag::Pair, || "Asked to reset with no cube connected".to_string());
+            return;
+        };
+        let label = pairing.name.clone().unwrap_or_else(|| "this TimeFlip".to_string());
+        self.is_factory_reset_running.set(true);
+        self.liveness.stop();
+        self.set_status(format!("Resetting {label}..."));
+        self.draw();
+        let held = Arc::clone(&self.link);
+        self.run(move |lines| {
+            let link = match held.lock() {
+                Ok(mut slot) => slot.take(),
+                Err(_) => None,
+            };
+            let Some(mut link) = link else {
+                return Outcome::ResetEnded {
+                    label,
+                    outcome: ResetOutcome::Failed("there is no cube connected".to_string()),
+                };
+            };
+            let outcome = session::factory_reset(
+                &*radio,
+                &handle,
+                &mut *link,
+                session::RESET_PROOF_EVERY,
+                session::RESET_PROOF_ATTEMPTS,
+                lines,
+            );
+            // A reset that could not be sent leaves the link as it was, so it is held again.
+            if matches!(outcome, ResetOutcome::Failed(_))
+                && let Ok(mut slot) = held.lock()
+            {
+                *slot = Some(link);
+            }
+            Outcome::ResetEnded { label, outcome }
+        });
+    }
+
+    fn reset_ended(&self, label: &str, outcome: ResetOutcome) {
+        self.is_factory_reset_running.set(false);
+        self.log.record(Tag::Pair, || {
+            format!(
+                "Reset: {}",
+                match &outcome {
+                    ResetOutcome::Confirmed => "confirmed",
+                    ResetOutcome::Unconfirmed => "not confirmed",
+                    ResetOutcome::Failed(_) => "not sent",
+                }
+            )
+        });
+        let Some(connection) = self.connect() else { return };
+        match outcome {
+            ResetOutcome::Confirmed => {
+                self.battery.set(None);
+                if self.report(rows::record_factory_reset(&connection, &*self.log)) != Some(true) {
+                    self.notice.tell(
+                        "The reset was not saved",
+                        "The cube is back to factory settings, but the database would not record that it is no \
+                         longer paired.",
+                    );
+                }
+                self.set_status(format!("{label} was reset and is back to factory settings."));
+            }
+            ResetOutcome::Unconfirmed => {
+                self.battery.set(None);
+                self.report(rows::record_connection_lost(&connection, &*self.log));
+                self.set_status(format!(
+                    "{label} did not come back after the reset, so nothing has been changed. Flip it to wake it, \
+                     then try again."
+                ));
+            }
+            ResetOutcome::Failed(reason) => {
+                self.log.record(Tag::Command, || {
+                    format!("The cube would not take the reset: {}", plain(&reason))
+                });
+                self.set_status(format!("Could not send the reset to {label}: {reason}"));
+                self.start_liveness();
+            }
+        }
+        self.check_battery_warning();
+    }
+
+    /// Opens the Name row for editing, with the name on record in it.
+    fn rename_opened(&self) {
+        let Some(connection) = self.connect() else { return };
+        let Some(pairing) = self.report(rows::pairing(&connection)) else { return };
+        if name::rename_refusal(pairing.is_cube_paired, pairing.is_cube_connected, pairing.name.as_deref())
+            .is_some()
+        {
+            return;
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            let data = ui.global::<DeviceData>();
+            data.set_editing_device_name(pairing.name.unwrap_or_default().into());
+            data.set_is_editing_device_name(true);
+        }
+    }
+
+    /// Cuts the name being typed to the most the cube stores.
+    fn limit_rename(&self, text: &str) {
+        if text.chars().count() > name::MAXIMUM_LENGTH
+            && let Some(ui) = self.ui.upgrade()
+        {
+            let cut: String = text.chars().take(name::MAXIMUM_LENGTH).collect();
+            ui.global::<DeviceData>().set_editing_device_name(cut.into());
+        }
+    }
+
+    /// Sends a name typed into the Name row to the cube, and records it once the cube has taken it.
+    fn rename_committed(&self, typed: &str) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.global::<DeviceData>().set_is_editing_device_name(false);
+        }
+        let Some(connection) = self.connect() else { return };
+        let Some(pairing) = self.report(rows::pairing(&connection)) else { return };
+        let name = match name::decide(typed, pairing.name.as_deref()) {
+            NameDecision::Ignore => {
+                self.log.record(Tag::Settings, || "The device name was left as it was".to_string());
+                self.draw();
+                return;
+            }
+            NameDecision::Refuse(problem) => {
+                self.log.record(Tag::Settings, || {
+                    format!("The device cannot be called {}: {}", plain(typed), problem.title())
+                });
+                self.notice.tell(problem.title(), &problem.message());
+                self.draw();
+                return;
+            }
+            NameDecision::Write(name) => name,
+        };
+        let Some(bytes) = command::set_name(&name) else {
+            self.renamed(&name, Err("the name would not encode".to_string()));
+            return;
+        };
+        self.log.record(Tag::Settings, || format!("Renaming the cube to {}", plain(&name)));
+        let held = Arc::clone(&self.link);
+        self.run(move |lines| {
+            let result = (|| {
+                let mut slot = held.lock().map_err(|_| "the link is poisoned".to_string())?;
+                let link = slot.as_mut().ok_or_else(|| "there is no cube connected".to_string())?;
+                link.write(uuids::COMMAND, &bytes)?;
+                // 0x15 has no read-back: the cube reports the name as its GAP name on the next connection.
+                lines.record(Tag::Command, || {
+                    "The cube took the write; nothing can read this command back".to_string()
+                });
+                Ok(())
+            })();
+            Outcome::Renamed { name, result }
+        });
+    }
+
+    fn renamed(&self, name: &str, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                let Some(connection) = self.connect() else { return };
+                let previous = self.report(rows::pairing(&connection)).and_then(|pairing| pairing.name);
+                match self.report(rows::record_name(
+                    &connection,
+                    name,
+                    "renamed from the Device tab",
+                    &*self.log,
+                )) {
+                    Some(true) => {
+                        self.log.record(Tag::Settings, || {
+                            format!(
+                                "The cube is now called {}, and will go on advertising its old name",
+                                plain(name)
+                            )
+                        });
+                        self.notice.tell(
+                            "The TimeFlip has been renamed",
+                            &name::rename_lag_notice(name, previous.as_deref()),
+                        );
+                    }
+                    _ => self.refused(),
+                }
+            }
+            Err(reason) => {
+                self.log.record(Tag::Settings, || {
+                    format!("The device name: the cube did not take {}, so the row goes back", plain(name))
+                });
+                let problem = NameProblem::WriteFailed(reason);
+                self.notice.tell(problem.title(), &problem.message());
+            }
+        }
+        self.draw();
+    }
+
+    /// Takes a charge the cube sent, as [`info::charge_to_show`] decides, while a cube is connected.
+    fn charge_arrived(&self, reading: u8) {
+        let connected = self
+            .connect()
+            .and_then(|connection| self.report(rows::pairing(&connection)))
+            .is_some_and(|pairing| pairing.is_cube_connected);
+        if !connected || self.is_factory_reset_running.get() {
+            return;
+        }
+        let shown = info::charge_to_show(self.battery.get(), reading);
+        if shown != self.battery.get() {
+            self.battery.set(shown);
+            if let Some(percent) = shown {
+                self.log.record(Tag::Device, || {
+                    if percent == reading {
+                        format!("Charge {percent}%")
+                    } else {
+                        format!("Charge {percent}% (the cube said {reading}%)")
+                    }
+                });
+            }
+            self.check_battery_warning();
+        }
+    }
+
+    /// Decides the low-battery warning from the charge shown and the warning level in the table, read now, and
+    /// starts or stops the Battery row blinking. Logs the change, the colour being unreadable from outside.
+    fn check_battery_warning(&self) {
+        let warning = self
+            .connect()
+            .and_then(|connection| self.report(rows::settings(&connection)))
+            .map_or(10, |settings| settings.battery_warning_percent.clamp(0, 100) as u8);
+        let was = self.is_battery_low.get();
+        let is_low = info::is_battery_low(self.battery.get(), warning, was);
+        if is_low != was {
+            self.is_battery_low.set(is_low);
+            let percent = self.battery.get().map_or("no".to_string(), |percent| format!("{percent}%"));
+            self.log.record(Tag::Device, || {
+                format!(
+                    "Battery warning {} at {percent}, the warning level being {warning}%",
+                    if is_low { "on" } else { "off" }
+                )
+            });
+            if is_low {
+                let weak = self.this.borrow().clone();
+                self.blink.start(slint::TimerMode::Repeated, BLINK_EVERY, move || {
+                    if let Some(device) = weak.upgrade() {
+                        device.is_blink_on.set(!device.is_blink_on.get());
+                        if let Some(ui) = device.ui.upgrade() {
+                            ui.global::<DeviceData>()
+                                .set_battery_alert(device.is_battery_low.get() && device.is_blink_on.get());
+                        }
+                    }
+                });
+            } else {
+                self.blink.stop();
+                self.is_blink_on.set(false);
+            }
+        }
+        self.draw();
     }
 
     /// Stores a setting no command carries, with a read-back.
@@ -706,6 +1026,9 @@ impl Device {
             .unwrap_or(false);
         if !stored {
             self.refused();
+        }
+        if setting == DeviceSetting::BatteryWarning {
+            self.check_battery_warning();
         }
         self.draw();
     }
@@ -803,6 +1126,29 @@ fn stored_pin(pins: &Arc<dyn SecretStore>, lines: &Lines) -> Result<Option<Strin
     }
 }
 
+/// Subscribes to the cube's battery level and forwards each charge it sends to the UI thread, until the link's
+/// notifications end or the window has gone. A subscription the cube refuses is said and nothing more.
+fn follow_battery(link: &mut dyn Link, lines: &Lines) {
+    match link.subscribe(uuids::BATTERY_LEVEL) {
+        Ok(charges) => {
+            lines.record(Tag::Device, || "Following the battery".to_string());
+            let forward = lines.clone();
+            std::thread::spawn(move || {
+                for bytes in charges {
+                    if let Some(percent) = info::battery_percent(&bytes)
+                        && forward.0.send(Outcome::Battery(percent)).is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+        Err(reason) => {
+            lines.record(Tag::Device, || format!("The battery cannot be followed: {}", plain(&reason)))
+        }
+    }
+}
+
 /// After a login to `handle` on `pin`: stores the PIN when it is new, reads Device Information, battery and
 /// status, and holds the link.
 #[allow(clippy::too_many_arguments)]
@@ -829,6 +1175,7 @@ fn settle(
     let gap_name = link.gap_name();
     let info = session::device_info(&mut *link, lines);
     let battery = session::battery(&mut *link, lines);
+    follow_battery(&mut *link, lines);
     let status = session::status(&mut *link, lines);
     match held.lock() {
         Ok(mut slot) => *slot = Some(link),
@@ -932,6 +1279,7 @@ mod tests {
                     match bytes {
                         [0x30, rest @ ..] => *pin = String::from_utf8_lossy(rest).into_owned(),
                         [0x05, high, low] => self.minutes = u16::from_be_bytes([*high, *low]),
+                        [0xFF] => *pin = "000000".to_string(),
                         _ => {}
                     }
                     if bytes != [0x10] {
@@ -1057,7 +1405,8 @@ mod tests {
         let held = rows::pairing(&connection).expect("read");
         assert!(held.is_cube_paired && held.is_cube_connected);
         assert_eq!(data.get_connection(), "Connected");
-        assert_eq!(data.get_battery(), "87%");
+        // The charge read at login is replaced by the one the cube sends once the battery is followed.
+        assert_eq!(data.get_battery(), "86%");
         assert_eq!(data.get_firmware(), "FW_v3.64");
         assert!(data.get_cube_connected());
 
@@ -1069,6 +1418,24 @@ mod tests {
         device.send_setting(DeviceSetting::LedBrightness, 70);
         settle(&device);
         assert_eq!(rows::settings(&connection).expect("read").led_brightness_percent, 70);
+
+        // A name the cube cannot store is refused before anything is sent; one it can is sent and then recorded.
+        device.rename_opened();
+        assert!(data.get_is_editing_device_name());
+        assert_eq!(data.get_editing_device_name(), "TimeFlip v2.0");
+        let before = sent.lock().expect("lock").len();
+        device.rename_committed("Cube \u{1F3B2}");
+        assert_eq!(notice.title(), "The TimeFlip cannot store that name");
+        assert_eq!(sent.lock().expect("lock").len(), before);
+        notice.choose(0);
+        device.rename_committed("Facet cube");
+        settle(&device);
+        assert_eq!(sent.lock().expect("lock").last(), Some(&[&[0x15, 10][..], b"Facet cube"].concat()));
+        let held = rows::pairing(&connection).expect("read");
+        assert_eq!(held.name.as_deref(), Some("Facet cube"));
+        assert_eq!(held.previous_name.as_deref(), Some("TimeFlip v2.0"));
+        assert_eq!(notice.title(), "The TimeFlip has been renamed");
+        notice.choose(0);
 
         // A relaunch: the new controller finds the table saying connected, clears it, and reconnects on the
         // stored PIN, rotating nothing.
@@ -1091,6 +1458,8 @@ mod tests {
         settle(&device);
         assert_eq!(data.get_connection(), "Connected");
         assert_eq!(pin.lock().expect("lock").as_str(), before);
+        // The fake still reports the name the rename replaced, which does not undo it.
+        assert_eq!(rows::pairing(&connection).expect("read").name.as_deref(), Some("Facet cube"));
         drop(device);
 
         // A store that will not answer stops the reconnect before any PIN is presented.
@@ -1123,6 +1492,31 @@ mod tests {
         );
         device.open();
         settle(&device);
+        device.reconnect();
+        settle(&device);
+
+        // Reset asks first, and Cancel sends nothing; confirmed, the cube is wiped, proved on the factory PIN, and
+        // forgotten.
+        let before = sent.lock().expect("lock").len();
+        device.reset_pressed();
+        assert_eq!(notice.title(), "Reset this TimeFlip to factory settings?");
+        notice.choose(0);
+        assert_eq!(sent.lock().expect("lock").len(), before);
+        device.reset_pressed();
+        notice.choose(1);
+        for _ in 0..300 {
+            std::thread::sleep(Duration::from_millis(25));
+            device.drain();
+            if device.outstanding.get() == 0 {
+                break;
+            }
+        }
+        assert_eq!(sent.lock().expect("lock").last(), Some(&vec![0xFF]));
+        assert_eq!(pin.lock().expect("lock").as_str(), "000000");
+        let held = rows::pairing(&connection).expect("read");
+        assert!(!held.is_cube_paired && held.handle.is_none() && held.name.is_none());
+        assert_eq!(held.previous_name.as_deref(), Some("Facet cube"));
+        assert!(data.get_scan_status().contains("back to factory settings"));
         device.forget();
         settle(&device);
         let held = rows::pairing(&connection).expect("read");

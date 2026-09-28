@@ -7,15 +7,16 @@
 #
 # **Converted from the Swift suite 2026-09-28**, against the Device tab `feature/deviceTab` builds:
 #
-# - **The charge is read once, on connecting.** The cube's battery notifications are not subscribed to yet, so the
-#   Swift checks on a pushed charge and on the figure holding steady are gone until they are.
-# - **The warning has no effect yet**, the menu bar not blinking at a low charge, so only its row is checked.
+# - **The charge is read on connecting, and then followed**: the app subscribes to the cube's battery level. A charge
+#   the cube pushes cannot be provoked from here, so the subscription is what is checked.
+# - **The warning cannot be tripped from here**: it is at most 20% and a cube in use is well above it. The Battery
+#   row blinking red at or below it is covered by the crate tests, and its row is what is checked.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=12
+EXPECTED_CHECKS=13
 start "the cube's charge, and the battery warning"
 
 require_a_paired_cube "there is no charge to read"
@@ -45,6 +46,8 @@ if [ -n "$percent" ] && [ "$percent" -ge 0 ] && [ "$percent" -le 100 ]; then
 else
     fail "the charge read as '${percent:-nothing}' from '$answer'"
 fi
+
+expect_log "and the app follows it from then on" "$since" "Following the battery" 20
 
 open_settings
 select_tab Device

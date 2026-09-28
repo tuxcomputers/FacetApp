@@ -16,7 +16,7 @@
 // Everything shown comes from `DeviceData`, which the Device controller in `src/device.rs` fills from the table
 // and the radio.
 
-import { CheckBox, Button, ScrollView } from "std-widgets.slint";
+import { CheckBox, Button, ScrollView, LineEdit, Palette } from "std-widgets.slint";
 import { Metrics } from "metrics.slint";
 import { Panel, SectionHeading, SettingsRow, StepperField, ValueText, Footnote } from "widgets.slint";
 
@@ -50,7 +50,18 @@ export global DeviceData {
     in property <[FoundDevice]> found: [];
     // While a pairing is under way the results are not offered: one attempt at a time.
     in property <bool> is-reaching-for-cube: false;
+    // While a reset is being proved nothing else may reach for the cube.
+    in property <bool> is-factory-reset-running: false;
     in property <bool> can-scan: true;
+
+    // The Name row opens for editing only while `can-rename`; `rename-help` says why not otherwise.
+    in property <bool> can-rename: false;
+    in property <string> rename-help: "";
+    in-out property <bool> is-editing-device-name: false;
+    in-out property <string> editing-device-name: "";
+
+    // True on the lit half of each blink while the charge is at or below the warning level.
+    in property <bool> battery-alert: false;
 
     in-out property <bool> pause-on-lock: true;
     in-out property <int> battery-warning-percent: 10;
@@ -65,6 +76,9 @@ export global DeviceData {
     callback scan-pressed();
     callback found-pressed(string);
     callback forget-pressed();
+    callback rename-opened();
+    callback rename-edited(string);
+    callback rename-committed(string);
     callback reset-pressed();
     callback pause-on-lock-toggled(bool);
     callback battery-warning-edited(int);
@@ -110,10 +124,50 @@ export component DevicePane inherits Rectangle {
                 if DeviceData.timeflip-expanded: VerticalLayout {
                     spacing: Metrics.row-spacing;
 
+                    // **The name is a button that opens a field**, as a category name is: Return sends what was
+                    // typed, and Escape leaves the name as it was.
                     SettingsRow {
                         label: "Name";
                         dimmed: !DeviceData.cube-connected;
-                        ValueText { text: DeviceData.device-name; value-id: "device-name"; }
+                        if !DeviceData.is-editing-device-name: Rectangle {
+                            accessible-role: button;
+                            accessible-id: "device-name";
+                            accessible-label: DeviceData.device-name;
+                            accessible-description: DeviceData.rename-help;
+                            accessible-enabled: DeviceData.can-rename;
+                            accessible-action-default => { if DeviceData.can-rename { DeviceData.rename-opened(); } }
+                            min-width: 240px;
+                            Text {
+                                width: 100%;
+                                text: DeviceData.device-name;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                color: Palette.foreground;
+                            }
+                            TouchArea {
+                                mouse-cursor: DeviceData.can-rename ? text : default;
+                                clicked => { if DeviceData.can-rename { DeviceData.rename-opened(); } }
+                            }
+                        }
+                        if DeviceData.is-editing-device-name: FocusScope {
+                            key-pressed(event) => {
+                                if event.text == Key.Escape {
+                                    DeviceData.is-editing-device-name = false;
+                                    return accept;
+                                }
+                                reject
+                            }
+                            LineEdit {
+                                width: 240px;
+                                text <=> DeviceData.editing-device-name;
+                                accessible-id: "device-name-field";
+                                accessible-label: "Name";
+                                edited(text) => { DeviceData.rename-edited(text); }
+                                accepted(text) => { DeviceData.rename-committed(text); }
+                                init => { self.focus(); self.select-all(); }
+                            }
+                        }
                     }
                     SettingsRow {
                         label: "Connection";
@@ -122,7 +176,11 @@ export component DevicePane inherits Rectangle {
                     SettingsRow {
                         label: "Battery";
                         dimmed: !DeviceData.cube-connected;
-                        ValueText { text: DeviceData.battery; value-id: "device-battery"; }
+                        ValueText {
+                            text: DeviceData.battery;
+                            value-id: "device-battery";
+                            color: DeviceData.battery-alert ? #e0243a : Palette.foreground;
+                        }
                     }
 
                     // **Folded, because four strings a cube reports about itself are the tab's least urgent
@@ -189,13 +247,14 @@ export component DevicePane inherits Rectangle {
                         }
                         if DeviceData.paired: Button {
                             text: "Forget Device";
-                            enabled: !DeviceData.is-reaching-for-cube;
+                            enabled: !DeviceData.is-reaching-for-cube && !DeviceData.is-factory-reset-running;
                             accessible-id: "device-forget";
                             clicked => { DeviceData.forget-pressed(); }
                         }
                         if DeviceData.paired: Button {
                             text: "Reset Device";
-                            enabled: DeviceData.cube-connected && !DeviceData.is-reaching-for-cube;
+                            enabled: DeviceData.cube-connected && !DeviceData.is-reaching-for-cube
+                                && !DeviceData.is-factory-reset-running;
                             accessible-id: "device-reset";
                             clicked => { DeviceData.reset-pressed(); }
                         }

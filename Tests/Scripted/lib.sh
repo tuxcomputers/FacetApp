@@ -342,8 +342,12 @@ ask_about_the_device() {
 
     if action_required \
         "May this run use your TimeFlip?" \
-        "The device scripts pair with the cube, connect to it, and change its auto-pause," \
-        "LED brightness and blink interval, putting each one back afterwards." \
+        "The device scripts pair with the cube, connect to it, rename it and change its" \
+        "auto-pause, LED brightness and blink interval, putting each one back afterwards." \
+        "" \
+        "THE CUBE IS FACTORY RESET TWICE: by 52-device-reset, which pairs it again, and by" \
+        "99-quit at the end, which leaves it on the factory PIN 000000. Face colours, task" \
+        "settings, its name and its PIN go back to factory defaults, and that cannot be undone." \
         "" \
         "A cube on the factory PIN 000000 is moved onto six random digits, kept in this" \
         "machine's keyring (the login Keychain on the Mac). A cube on a PIN another machine" \

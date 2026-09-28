@@ -19,6 +19,23 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long to wait after a refused PIN before connecting again for the next one.
 pub const SETTLE_BETWEEN_CANDIDATES: Duration = Duration::from_secs(1);
 
+/// How often a reset cube is asked to take the vendor PIN, and how many times, before the reset is called unconfirmed.
+/// The wipe takes several seconds after `0xFF` is acknowledged, and the cube goes on taking its old PIN until it is
+/// done (firmware finding 6).
+pub const RESET_PROOF_EVERY: Duration = Duration::from_secs(3);
+pub const RESET_PROOF_ATTEMPTS: usize = 40;
+
+/// How a factory reset ended.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ResetOutcome {
+    /// The cube took `0xFF` and then accepted the vendor PIN on a connection of its own, so the wipe took.
+    Confirmed,
+    /// The cube took `0xFF` but went on refusing the vendor PIN for every attempt. It may still have been wiped.
+    Unconfirmed,
+    /// `0xFF` could not be sent, with the reason. Nothing on the cube changed.
+    Failed(String),
+}
+
 /// How a login ended.
 pub enum LoginOutcome {
     /// A PIN was accepted, and the cube is now on `pin`. `link` is the live connection.
@@ -144,6 +161,54 @@ pub fn log_in(
     LoginOutcome::Refused
 }
 
+/// Factory resets the logged-in cube on `link` with `0xFF`, then proves it: the link is let go, since the cube keeps it
+/// up through the wipe, and the vendor PIN is presented on a fresh connection to `handle` every `every`, up to
+/// `attempts` times, until the cube accepts it. Nothing is rotated: the cube is left on the vendor PIN.
+pub fn factory_reset(
+    radio: &dyn Radio,
+    handle: &str,
+    link: &mut dyn Link,
+    every: Duration,
+    attempts: usize,
+    log: &impl Record,
+) -> ResetOutcome {
+    log.record(Tag::Command, || format!("Sending {}", command::hex(&[command::FACTORY_RESET])));
+    if let Err(reason) = link.write(uuids::COMMAND, &[command::FACTORY_RESET]) {
+        return ResetOutcome::Failed(reason);
+    }
+    log.record(Tag::Command, || {
+        "The cube took the reset and keeps the link up, so the app lets go and looks for it on the factory PIN"
+            .to_string()
+    });
+    disconnect(link, log);
+    for attempt in 1..=attempts {
+        std::thread::sleep(every);
+        let mut proof = match radio.connect(handle, CONNECT_TIMEOUT) {
+            Ok(proof) => proof,
+            Err(reason) => {
+                log.record(Tag::Command, || format!("Reset proof {attempt}: no connection, {reason}"));
+                continue;
+            }
+        };
+        let verdict = present_pin(&mut *proof, login::VENDOR_PIN, log);
+        disconnect(&mut *proof, log);
+        match verdict {
+            Ok(Verdict::Accepted) => {
+                log.record(Tag::Command, || "The cube is on the factory PIN, so the reset took".to_string());
+                return ResetOutcome::Confirmed;
+            }
+            Ok(_) => {
+                log.record(Tag::Command, || format!("Reset proof {attempt}: not on the factory PIN yet"))
+            }
+            Err(reason) => log.record(Tag::Command, || format!("Reset proof {attempt}: {reason}")),
+        }
+    }
+    log.record(Tag::Command, || {
+        format!("The cube never took the factory PIN in {attempts} attempts, so the reset is not confirmed")
+    });
+    ResetOutcome::Unconfirmed
+}
+
 /// Disconnects, saying so when the disconnect itself fails.
 pub fn disconnect(link: &mut dyn Link, log: &impl Record) {
     if let Err(reason) = link.disconnect() {
@@ -266,6 +331,36 @@ mod tests {
             }
             _ => panic!("expected a login"),
         }
+    }
+
+    fn logged_in(cube: &FakeCube) -> Box<dyn Link> {
+        match log_in(cube, "cube", &pins(&[cube.pin().as_str()]), None, &Trace::none()) {
+            LoginOutcome::LoggedIn { link, .. } => link,
+            _ => panic!("expected a login"),
+        }
+    }
+
+    #[test]
+    fn a_reset_is_proved_on_the_factory_pin_once_the_wipe_has_finished() {
+        let cube = FakeCube::new("123456");
+        cube.wipe_after(2);
+        let mut link = logged_in(&cube);
+        let outcome = factory_reset(&cube, "cube", &mut *link, Duration::ZERO, 5, &Trace::none());
+        assert_eq!(outcome, ResetOutcome::Confirmed);
+        assert_eq!(cube.pin(), "000000");
+        assert_eq!(cube.commands(), vec![vec![0xFF]]);
+        // One login, then two refused proofs while the wipe runs, then the accepted one.
+        assert_eq!(cube.connections(), 4);
+    }
+
+    #[test]
+    fn a_reset_the_cube_never_proves_is_unconfirmed() {
+        let cube = FakeCube::new("123456");
+        cube.wipe_after(10);
+        let mut link = logged_in(&cube);
+        let outcome = factory_reset(&cube, "cube", &mut *link, Duration::ZERO, 3, &Trace::none());
+        assert_eq!(outcome, ResetOutcome::Unconfirmed);
+        assert_eq!(cube.connections(), 4);
     }
 
     #[test]

@@ -14,7 +14,8 @@
 #
 # - **The Keychain is not read.** The app says when storing the PIN fails, and that is what is checked, since reading
 #   the item from a script puts a macOS access prompt in front of the run.
-# - **Reset is not built**: pressing it says so and sends nothing, and that is what is checked.
+# - **Reset is only offered here, and called off.** Pressing it asks first, Cancel sends nothing, and the reset itself
+#   is `52-device-reset`.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
@@ -148,17 +149,17 @@ check_contains "and the firmware" "$(element device-firmware)" "$firmware"
 press device-more
 sleep 0.5
 
-# ---------------------------------------------------------------------------- Reset, which is not built
+# ---------------------------------------------------------------------------- Reset, offered and called off
 
 since=$(mark)
 press device-reset
 expect_log "pressing Reset is heard" "$since" "Button clicked: Reset Device"
-check_contains "and it says a reset is not built yet" "$(element_eventually notice-title "not built")" "not built"
-check "nothing was sent to the cube" "0" \
-    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-tx';")"
-press_title OK
+check "and it asks first, offering a way out" "Cancel|Reset Device" "$(alert_buttons)"
+press_title Cancel
 sleep 0.5
-check "the notice goes when dismissed" "no" "$(alert_is_open && echo yes || echo no)"
+check "Cancel sends nothing to the cube" "0" \
+    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-tx';")"
+check "the notice goes" "no" "$(alert_is_open && echo yes || echo no)"
 check "and the cube is still connected" "1" "$(setting connection connected)"
 
 close_settings

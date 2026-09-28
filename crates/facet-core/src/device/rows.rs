@@ -186,9 +186,25 @@ pub fn record_login(
     )?;
     set(connection, "connection", "$.connection_lost", "''", None)?;
     set(connection, "device_uuid", "$.uuid", "?3", Some(handle))?;
-    if let Some(name) = gap_name.filter(|name| !name.trim().is_empty()) {
-        set(connection, "device_name", "$.name", "?3", Some(name))?;
-    }
+    let before = pairing(connection)?;
+    let adopted = match gap_name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => {
+            log.record(Tag::Pair, || format!("The cube now reports its name as {}", plain(name)));
+            match name_adoption(&before, name) {
+                NameAdoption::Adopt => record_name(connection, name, "the cube said so on connecting", log)?,
+                NameAdoption::Unchanged => true,
+                NameAdoption::Stale => {
+                    log.record(Tag::Pair, || {
+                        "The cube reports the name it had before the rename, which the system is a connection \
+                         behind on, so the record stands"
+                            .to_string()
+                    });
+                    true
+                }
+            }
+        }
+        None => true,
+    };
     for (path, value) in [
         ("$.manufacturer", &info.manufacturer),
         ("$.model", &info.model),
@@ -200,10 +216,8 @@ pub fn record_login(
         }
     }
     let held = pairing(connection)?;
-    let stored = held.is_cube_paired
-        && held.is_cube_connected
-        && held.handle.as_deref() == Some(handle)
-        && gap_name.is_none_or(|name| name.trim().is_empty() || held.name.as_deref() == Some(name));
+    let stored =
+        held.is_cube_paired && held.is_cube_connected && held.handle.as_deref() == Some(handle) && adopted;
     let label = plain(gap_name.unwrap_or("the cube"));
     log.record(Tag::Pair, || {
         format!(
@@ -270,6 +284,92 @@ pub fn record_no_link_at_launch(connection: &Connection, log: &impl Record) -> R
             "The last run left the cube marked connected, and no link survives a relaunch{}",
             if stored { "" } else { " REFUSED, the table still says connected" }
         )
+    });
+    Ok(stored)
+}
+
+/// What a GAP name reported on connecting does to the name on record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameAdoption {
+    /// The name on record already.
+    Unchanged,
+    /// The name a rename replaced, which the platform reports for one connection after a rename: the record stands.
+    Stale,
+    /// Anything else becomes the name on record.
+    Adopt,
+}
+
+/// What `reported` does to the name `held` has on record.
+pub fn name_adoption(held: &Pairing, reported: &str) -> NameAdoption {
+    if held.name.as_deref() == Some(reported) {
+        NameAdoption::Unchanged
+    } else if held.name.is_some() && held.previous_name.as_deref() == Some(reported) {
+        NameAdoption::Stale
+    } else {
+        NameAdoption::Adopt
+    }
+}
+
+/// Records `name` as what the cube is called, `because` saying why. A different name already on record moves to
+/// `previous_name`, which the scan filter keeps. Returns whether the table holds it; an empty name changes
+/// nothing and is refused.
+pub fn record_name(
+    connection: &Connection,
+    name: &str,
+    because: &str,
+    log: &impl Record,
+) -> Result<bool, rusqlite::Error> {
+    let name = name.trim();
+    if name.is_empty() {
+        log.record(Tag::Pair, || {
+            "Asked to record an empty name for the cube, which is not a name, so nothing changed".to_string()
+        });
+        return Ok(false);
+    }
+    let before = pairing(connection)?;
+    if let Some(previous) = before.name.as_deref().filter(|previous| *previous != name) {
+        set(connection, "device_name", "$.previous_name", "?3", Some(previous))?;
+        log.record(Tag::Pair, || {
+            format!("The cube was called {}, which the scan filter keeps", plain(previous))
+        });
+    }
+    set(connection, "device_name", "$.name", "?3", Some(name))?;
+    let stored = pairing(connection)?.name.as_deref() == Some(name);
+    log.record(Tag::Pair, || {
+        if stored {
+            format!("The cube is called {}: {because}", plain(name))
+        } else {
+            format!("THE NAME {} WAS NOT RECORDED, the table refused a write", plain(name))
+        }
+    });
+    Ok(stored)
+}
+
+/// Records a confirmed factory reset: the cube is forgotten as [`record_forget`] does, and its name moves to
+/// `previous_name`, so a scan still knows it in case the wipe did not take. The stored PIN is not the table's and is
+/// left alone. Returns whether the table holds it.
+pub fn record_factory_reset(connection: &Connection, log: &impl Record) -> Result<bool, rusqlite::Error> {
+    let forgotten = record_forget(connection, log)?;
+    let before = pairing(connection)?;
+    if let Some(name) = before.name.as_deref() {
+        set(connection, "device_name", "$.previous_name", "?3", Some(name))?;
+        set(connection, "device_name", "$.name", "''", None)?;
+        log.record(Tag::Pair, || {
+            format!(
+                "The cube was called {}; keeping it in the scan filter in case the wipe did not take",
+                plain(name)
+            )
+        });
+    }
+    let held = pairing(connection)?;
+    let stored =
+        forgotten && held.name.is_none() && held.previous_name == before.name.or(before.previous_name);
+    log.record(Tag::Pair, || {
+        if stored {
+            "Reset the cube and forgot it".to_string()
+        } else {
+            "RESET NOT FULLY RECORDED, the table refused a write".to_string()
+        }
     });
     Ok(stored)
 }
@@ -361,5 +461,44 @@ mod tests {
         let held = pairing(&connection).expect("read");
         assert!(!held.is_cube_paired && held.handle.is_none() && held.info.firmware.is_none());
         assert_eq!(held.name.as_deref(), Some("TimeFlip v2.0"));
+    }
+
+    #[test]
+    fn a_rename_keeps_the_old_name_and_the_stale_report_after_it_is_ignored() {
+        let connection = seeded();
+        let log = Trace::none();
+        let info = DeviceInfo::default();
+        assert!(record_login(&connection, "cube", Some("TimeFlip v2.0"), &info, &log).expect("login"));
+        assert!(record_name(&connection, "Facet cube", "renamed from the Device tab", &log).expect("rename"));
+        let held = pairing(&connection).expect("read");
+        assert_eq!(held.name.as_deref(), Some("Facet cube"));
+        assert_eq!(held.previous_name.as_deref(), Some("TimeFlip v2.0"));
+
+        // The next connection can still report the old name, which does not undo the rename.
+        assert!(record_login(&connection, "cube", Some("TimeFlip v2.0"), &info, &log).expect("login"));
+        assert_eq!(pairing(&connection).expect("read").name.as_deref(), Some("Facet cube"));
+        assert!(record_login(&connection, "cube", Some("Facet cube"), &info, &log).expect("login"));
+        assert_eq!(known_names(&connection).expect("read"), vec!["Facet cube", "TimeFlip v2.0"]);
+
+        // A name from somewhere else is adopted, and the one it replaces is kept.
+        assert!(record_login(&connection, "cube", Some("Desk"), &info, &log).expect("login"));
+        let held = pairing(&connection).expect("read");
+        assert_eq!(held.name.as_deref(), Some("Desk"));
+        assert_eq!(held.previous_name.as_deref(), Some("Facet cube"));
+        assert!(!record_name(&connection, "  ", "typed", &log).expect("empty"));
+    }
+
+    #[test]
+    fn a_confirmed_reset_forgets_the_cube_and_keeps_its_name_for_the_scan() {
+        let connection = seeded();
+        let log = Trace::none();
+        let info = DeviceInfo { firmware: Some("FW_v3.64".into()), ..DeviceInfo::default() };
+        assert!(record_login(&connection, "cube", Some("Facet cube"), &info, &log).expect("login"));
+        assert!(record_factory_reset(&connection, &log).expect("reset"));
+        let held = pairing(&connection).expect("read");
+        assert!(!held.is_cube_paired && !held.is_cube_connected && held.handle.is_none());
+        assert!(held.info.firmware.is_none() && held.name.is_none());
+        assert_eq!(held.previous_name.as_deref(), Some("Facet cube"));
+        assert_eq!(known_names(&connection).expect("read"), vec!["Facet cube"]);
     }
 }

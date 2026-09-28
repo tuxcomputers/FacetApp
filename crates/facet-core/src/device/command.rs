@@ -8,6 +8,9 @@
 pub const READ_TIME: u8 = 0x07;
 /// Ask for lock, pause and auto-pause. Answered by four bare bytes with no echoed command byte.
 pub const READ_STATUS: u8 = 0x10;
+/// Erase everything the cube keeps in flash and put it back on the vendor PIN. Acknowledged at once; the wipe
+/// finishes several seconds later and the link stays up through it (firmware finding 6).
+pub const FACTORY_RESET: u8 = 0xFF;
 
 /// The auto-pause control's range, in whole minutes. 0 turns auto-pause off.
 pub const AUTO_PAUSE_MINUTES_RANGE: (i64, i64) = (0, 240);
@@ -23,6 +26,19 @@ pub fn set_auto_pause(minutes: i64) -> Vec<u8> {
     let minutes = minutes.clamp(AUTO_PAUSE_MINUTES_RANGE.0, AUTO_PAUSE_MINUTES_RANGE.1) as u16;
     let [high, low] = minutes.to_be_bytes();
     vec![0x05, high, low]
+}
+
+/// `0x15`: the cube's name, as its length and then its ASCII. `None` for a name that is empty, not ASCII, or longer
+/// than [`super::name::MAXIMUM_LENGTH`]. There is no read-back for it: the cube reports the name as its GAP name on
+/// the next connection.
+pub fn set_name(name: &str) -> Option<Vec<u8>> {
+    let length = u8::try_from(name.len()).ok()?;
+    if name.is_empty() || !name.is_ascii() || name.len() > super::name::MAXIMUM_LENGTH {
+        return None;
+    }
+    let mut bytes = vec![0x15, length];
+    bytes.extend_from_slice(name.as_bytes());
+    Some(bytes)
 }
 
 /// `0x09`: LED brightness, clamped to [`LED_BRIGHTNESS_RANGE`]. There is no read-back for it.
@@ -82,6 +98,17 @@ pub fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_goes_as_its_length_then_its_ascii() {
+        assert_eq!(
+            set_name("Facet cube"),
+            Some(vec![0x15, 0x0A, 0x46, 0x61, 0x63, 0x65, 0x74, 0x20, 0x63, 0x75, 0x62, 0x65])
+        );
+        assert_eq!(set_name(""), None);
+        assert_eq!(set_name("Caf\u{e9}"), None);
+        assert_eq!(set_name("abcdefghijklmnopqrs"), None);
+    }
 
     #[test]
     fn settings_commands_clamp_and_encode() {
