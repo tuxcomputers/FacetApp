@@ -38,7 +38,7 @@ if [ -n "$read_at" ] && [ -n "$accepted_at" ] && [ "$read_at" -gt "$accepted_at"
 else
     fail "the battery read (row ${read_at:-none}) did not follow the PIN being accepted (row ${accepted_at:-none})"
 fi
-answer=$(dsql "SELECT message FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-rx' AND message LIKE 'batteryLevel: %' ORDER BY debug_log_id LIMIT 1;")
+answer=$(dsql "SELECT message FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-rx' AND message LIKE 'batteryLevel: % (%)' ORDER BY debug_log_id LIMIT 1;")
 check_contains "and the cube answers with a percentage" "$answer" "%)"
 percent=$(printf '%s' "$answer" | sed -E 's/.*\(([0-9]+)%\)$/\1/')
 if [ -n "$percent" ] && [ "$percent" -ge 0 ] && [ "$percent" -le 100 ]; then

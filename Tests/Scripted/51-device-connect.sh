@@ -132,9 +132,12 @@ check "the firmware kept is what the cube said" "$firmware" "$(setting device_in
 
 # ---------------------------------------------------------------------------- the tab
 
-battery=$(dsql "SELECT message FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-rx' AND message LIKE 'batteryLevel: %' ORDER BY debug_log_id DESC LIMIT 1;" | sed -E 's/.*\(([0-9]+%)\)$/\1/')
+battery=$(dsql "SELECT message FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-rx' AND message LIKE 'batteryLevel: % (%)' ORDER BY debug_log_id DESC LIMIT 1;" | sed -E 's/.*\(([0-9]+%)\)$/\1/')
+# A charge the cube pushed after the read replaces it, and is logged as `Charge N%` rather than as a trace row.
+pushed=$(dsql "SELECT message FROM debug_log WHERE debug_log_id > $since AND tag = 'device' AND message LIKE 'Charge %' ORDER BY debug_log_id DESC LIMIT 1;" | sed -E 's/^Charge ([0-9]+%).*/\1/')
+battery=${pushed:-$battery}
 check_contains "the tab reads as connected" "$(element_eventually device-connection "Connected")" "Connected"
-check_contains "the charge on the tab is the one read" "$(element device-battery)" "$battery"
+check_contains "the charge on the tab is the latest the cube gave" "$(element device-battery)" "$battery"
 check_contains "the status names the cube" "$(element device-scan-status)" "Connected to"
 check "Scan is gone, there being a cube" "0" "$(on_tab device-scan)"
 check "and Forget is offered" "1" "$(on_tab device-forget)"
