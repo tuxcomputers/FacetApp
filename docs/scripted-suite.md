@@ -5,8 +5,9 @@
 **The suite that drives a running copy of the app, with a real cube, by accessibility.** It is the only
 thing that can say the app works on hardware; everything the crate tests prove is proven against doubles.
 
-**Nine checks are back, 2026-09-27: `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11` and `12`**, passing 293
-of 293 on both machines. What each one had to drop because the Rust app does not have it yet is said in its
+**Ten checks are back, 2026-09-27: `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11`, `12` and `13`.** The first
+nine pass 293 of 293 on both machines; `13-device-tab`, the Device tab with no cube, passes 37 of 37 on the Mac
+and on Linux. **The device range, `50`, `51`, `53`, `54`, `63`, `65`, `67` and `68`, passed on the Mac on 2026-09-28; `52`, `66` and `99` came with the reset and the rename the same day and have not run yet.** What each one had to drop because the Rust app does not have it yet is said in its
 own header. `07-history-timer` stays out: it is the cube's history fetch, and it comes back with the device
 range. `10-google-calendar` waits for calendar sync.
 
@@ -76,6 +77,8 @@ cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 | `64-face-colours` | `0x11`, twelve colours when a cube connects and one when a face changes |
 | `65-auto-pause` | The delay stepped, sent as `0x05`, read back with `0x10`, and only then written down |
 | `66-device-rename` | `0x15` to the hardware, the row written only after it |
+| `67-pause-on-lock` | The pause-on-lock row, kept in the table and sent nowhere. **New with the Rust app** |
+| `68-device-link-lost` | A held link dropping: noticed, recorded, the pairing kept, and a relaunch reaching the cube. **New with the Rust app** |
 | `99-quit` | The way out closes what was left open, and the cube is left as the factory made it |
 
 **Four of them (`63`, `65`, `66`, and `51`'s PIN half) are the read-back rule made visible**: the app asks

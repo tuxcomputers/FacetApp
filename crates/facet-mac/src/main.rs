@@ -19,14 +19,16 @@ use std::time::Duration;
 use facet_adapters::dialogs::NativeFileChooser;
 use facet_adapters::http::UreqHttp;
 use facet_adapters::loopback::StdLoopbackListener;
+use facet_adapters::radio::BtleplugRadio;
 use facet_adapters::secrets::KeyringSecretStore;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
 use facet_core::google::Credentials;
-use facet_core::port::Opener;
+use facet_core::port::{Opener, Radio};
 use facet_core::setting;
 use facet_ui::app::App;
 use facet_ui::categories::Categories;
+use facet_ui::device::Device;
 use facet_ui::faces::Faces;
 use facet_ui::google::Google;
 use facet_ui::notice::Notice;
@@ -115,6 +117,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(StdLoopbackListener),
         credentials,
     );
+    // **The cube's PIN has a keyring item of its own**, `au.com.tux.facet.cube`: the Swift app's
+    // `au.com.tux.facet.device` is its fallback and must not be written.
+    let radio: Option<Arc<dyn Radio>> = match BtleplugRadio::new() {
+        Ok(radio) => Some(Arc::new(radio)),
+        Err(reason) => {
+            log.record_failure(Tag::Radio, || format!("No Bluetooth radio: {reason}"));
+            None
+        }
+    };
+    let device = Device::attach(
+        &ui,
+        data_directory().join("appdata.sqlite"),
+        Rc::clone(&log),
+        Rc::clone(&notice),
+        radio,
+        Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
+    );
+    // Finds the paired cube again, when there is one; a launch with nothing paired does nothing here.
+    device.reconnect();
     // A time entry recorded while the Report is on screen changes its figures.
     let changed_report = Rc::downgrade(&report);
     faces.set_on_timing_changed(move || {
@@ -232,6 +253,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_categories = Rc::clone(&categories);
     let pump_report = Rc::clone(&report);
     let pump_app = Rc::clone(&app);
+    let pump_device = Rc::clone(&device);
 
     // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
     // is after every toggle, every click on the Faces tab and every tick.
@@ -289,6 +311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pump_categories.refresh();
                         pump_report.open();
                         pump_app.open();
+                        pump_device.open();
                     }
                 }
                 "settings" => {
@@ -299,11 +322,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pump_categories.refresh();
                         pump_report.open();
                         pump_app.open();
+                        pump_device.open();
                     }
                 }
                 "quit" => {
                     pump_log.record(Tag::Quit, || "Quitting on the menu item".to_string());
                     pump_faces.quit();
+                    pump_device.quit();
                     // Not a discarded Result: a quit that the loop refuses leaves the app running with
                     // nothing said about why, which is the shape CLAUDE.md has a section about. The Linux
                     // composition root reports the same failure the same way.

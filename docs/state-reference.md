@@ -73,7 +73,9 @@ wanted to work without the cube.
 | `hasReadTheCube` | true / false | `CubeFirstReading`, per launch and one-way |
 | `isConnecting` | true / false | `CubeFirstReading.isConnecting(isManualMode:)` |
 | `isDisconnectingDeliberately` | true / false | `BluetoothRadio.isDisconnectingDeliberately`, and the argument of `BlueZCubeRadio.dropTheLink` |
-| `isFactoryResetRunning` | true / false | today two separate flags |
+| `isFactoryResetRunning` | true / false | today two separate flags; in Rust one, `Device.is_factory_reset_running` in `facet-ui`, from the confirmed `0xFF` until its proof ends |
+| `isEditingDeviceName` | true / false | `DeviceData.is-editing-device-name`, the Name row's field being open |
+| `renameRefusal` | `notPaired`, `notConnected`, `nameUnknown`, or none | `device::name::rename_refusal`, read from the table at the point of use |
 
 `isCubeConnected` is the connection, not the pairing: a paired cube in another room can be neither paused nor
 locked. `isDeviceReachable` folds into it. The reading keeps `cubeFace` after a link drops because the face is
@@ -120,7 +122,7 @@ state, and had a quit report a command refused that the cube had taken.
 | `isReadingTheValue` | `CubeCommandChannel.isReadingTheValue` |
 | `isReadingDeviceInfo` | `DeviceLogin.isReadingInfo` |
 | `isReadingDoubleTap` | `DeviceLogin.isAskingAboutTaps` |
-| `isFollowingBattery` | `DeviceLogin.isFollowingBattery` |
+| `isFollowingBattery` | `DeviceLogin.isFollowingBattery`; in Rust not held, the subscription made at login being the whole of it (`Following the battery`) |
 | `isSigningIn` | `AppSettingsPane.isSigningIn`, both platforms |
 | `isCalendarChanging` | `AppSettingsPane.isCalendarChanging` -- a create, rename or delete is out |
 | `isWriteInFlight` | `DeviceSettingsSync.isWriteInFlight(_:)`, per setting |
@@ -132,10 +134,10 @@ state, and had a quit report a command refused that the cube had taken.
 | `cubeLockState` | `unknown` / `locked` / `unlocked` | `BluetoothRadio.cubeStatus?.isLocked` |
 | `cubePauseState` | `unknown` / `paused` / `running` | `device_event.paused` on the open row, or `cubeStatus?.isPaused` live |
 | `cubeFace` | 1 to 12, or none | `device_event.device_face` on the open row; `BluetoothRadio.currentFace` live |
-| `batteryPercent` | 0 to 100, or none | `BluetoothRadio.batteryPercent` |
+| `batteryPercent` | 0 to 100, or none | `BluetoothRadio.batteryPercent`; in Rust `Device.battery`, through `device::info::charge_to_show` |
 | `batteryWarningPercent` | 1 to 20 | `setting.low_battery_level.percent` |
-| `isBatteryLow` | true / false | `LowBatteryWatch.isLow`, latched |
-| `isBlinkOn` | true / false | `LowBatteryWatch` display phase |
+| `isBatteryLow` | true / false | `LowBatteryWatch.isLow`, latched; in Rust `Device.is_battery_low`, decided by `device::info::is_battery_low` |
+| `isBlinkOn` | true / false | `LowBatteryWatch` display phase; in Rust `Device.is_blink_on` |
 | `cubeSyncState` | `ok`, `factoryReset`, `timeRequired`, `faceColoursRequired`, `ledBrightnessRequired`, `blinkIntervalRequired`, `taskParametersRequired`, `autoPauseRequired`, `unknown` | `DeviceSystemStateRules.Sync` |
 | `cubeHardwareState` | `ok`, `accelerometer`, `flash`, `accelerometerAndFlash`, `unknown` | `DeviceSystemStateRules.Hardware` |
 | `isDoubleTapEnabled` | true / false | `setting.double_tap_settings.enabled` |

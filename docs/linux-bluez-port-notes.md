@@ -172,6 +172,17 @@ BlueZ reports every UUID as a lowercase 128-bit string, so the app's `"180A"` ar
 `0000180a-0000-1000-8000-00805f9b34fb`. Compare case-insensitively and expand the short forms, or the Device
 Information service will look absent.
 
+### 6. A connection made while discovery is still running is aborted
+
+**Measured 2026-09-28 on the laptop, through btleplug from the Rust app.** Pressing a scan row stopped the scan and
+connected at once; the connect went out at `21:24:58.617`, the scan reported its end at `.818`, and the connection
+failed at `59.217` with `le-connection-abort-by-local`. The same press had worked on an earlier run, so it is a race,
+and CoreBluetooth on the Mac never loses it.
+
+**Wait for the scan to have ended before connecting.** `Device::pair` in `crates/facet-ui/src/device.rs` waits, up
+to five seconds, for the stopped scan's own call to return. The reconnect at launch already scans and then connects
+in sequence, so it never met this.
+
 ## What the cube offered that the app names nowhere
 
 The probe resolved five services, of which the app knows three. The other two:

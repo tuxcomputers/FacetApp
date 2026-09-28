@@ -2,8 +2,13 @@
 
 [← Back to README](../README.md) · [The Mac →](system-mac.md) · [What is being asked of this machine →](handover-linux.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Port findings →](port-findings.md)
 
-**What the Linux machine is, and everything needed to build and drive Facet on it.** This is the second
-platform. It is now the tower, below; most of this file was measured on the laptop it replaced, and says so.
+**What the Linux machines are, and everything needed to build and drive Facet on them.** This is the second
+platform. There are two boxes, the tower and the laptop, each in its own section below.
+
+**Since 2026-09-28 the laptop is the Linux machine again, until the tower's Bluetooth antenna is delivered.**
+The tower replaced it on 2026-09-27 and is the faster box by a wide margin, but radio work needs a cube in range
+of a working antenna, and until one is fitted that is the laptop. Once it is, the tower is the Linux machine
+again. **Most of the sections after these two were measured on the laptop**, and say so where it matters.
 
 **Every line is either measured, with the date, or it is marked unknown.** Nothing in between, and
 nothing inferred from what should be the case. A guess written into a facts file is worse than no line
@@ -11,20 +16,19 @@ at all, because the next reader cannot tell it from a measurement.
 
 ---
 
-## Since 2026-09-27 the Linux machine is the tower
+## The tower
 
-**The laptop described in the rest of this file was retired on 2026-09-27**, and Linux stamps now come from
-`harry@tower`. The laptop was CPU-starved: during a full scripted run its load average reached 8.7 on 4
-threads. **The sections after this one were measured on the laptop** and have not been re-measured on the
-tower unless they say so.
+**The faster of the two, and the Linux machine whenever radio work is not needed.** Linux stamps came from here
+from 2026-09-27. The sections after the laptop's have not been re-measured here unless they say so.
 
 | | |
 |---|---|
-| Reached as | `ssh harry@tower` |
+| Reached as | `ssh harry@tower`, at home only; the Mac's `/etc/hosts` pins it to `192.168.0.50` |
+| Host name | `tower.home` |
 | Chip | AMD Ryzen 7 5700X, 8 cores / 16 threads |
 | Memory | 62 GiB |
-| Distribution | Linux Mint 22.2, kernel 6.8.0-139-generic |
-| Desktop | **Cinnamon 6.4.14 on X11** |
+| Distribution | Linux Mint 22.3, kernel 6.8.0-142-generic |
+| Desktop | **Cinnamon 6.6.9 on X11** |
 | Tray host | `xapp-sn-watcher` |
 | Secret store | `gnome-keyring`, unlocked at login |
 | File dialogs | `xdg-desktop-portal` 1.20.0, `default=gtk` with `xdg-desktop-portal-gtk` 1.15.1 |
@@ -33,8 +37,13 @@ tower unless they say so.
 | Filesystem | ext4 on NVMe |
 | Time zone, locale | `Australia/Brisbane`, `en_AU.UTF-8` |
 | Rust | 1.98.1 through rustup, the same as the Mac |
+| Bluetooth | Controller `hci0`, `48:68:4A:4C:6B:B0`, present and listed by `bluetoothctl`. **The antenna is not fitted yet**, per the owner |
+| `libdbus-1-dev` | 1.14.10-4ubuntu4.1, installed |
 
-`/etc/os-release`, `lscpu`, `free`, `cinnamon --version`, `xrandr`, `dpkg -l`, `timedatectl`. Measured 2026-09-27.
+`/etc/os-release`, `lscpu`, `free`, `cinnamon --version`, `xrandr`, `dpkg -l`, `timedatectl`. Measured 2026-09-27;
+the distribution, kernel, desktop, Bluetooth and `libdbus-1-dev` rows re-measured 2026-09-28, the box having moved
+from Mint 22.2 and Cinnamon 6.4.14 in between. **Whether the controller reaches the cube without the antenna has
+not been measured.**
 
 **What a fresh Mint needed, beyond its defaults**: rustup, and
 `sudo apt install libfontconfig-dev x11vnc libsecret-tools gh`. `build-essential`, `pkg-config`, `wmctrl` and
@@ -60,21 +69,30 @@ the AT-SPI round trips.
 
 ---
 
-## The laptop, which the rest of this file describes
+## The laptop
+
+**The Linux machine for radio work until the tower has its antenna.** Retired on 2026-09-27 and brought back
+on 2026-09-28. It is CPU-starved: during a full scripted run its load average reached 8.7 on 4 threads, and a
+full run takes nearly twice as long as on the tower. **Its Bluetooth is the one that has reached the cube**, as
+the Bluetooth section below records.
 
 | | |
 |---|---|
-| Model | **A MacBook Pro running Linux**, `MacBookPro14,2` |
+| Reached as | `ssh harry@192.168.0.112`, at home |
+| Model | **A MacBook Pro running Linux**, `MacBookPro14,2`, host name `harry-MacBookPro` |
 | Chip | Intel Core i7-7567U @ 3.50GHz, 2 cores / 4 threads |
 | Memory | 15 GiB |
 | Architecture | `x86_64` |
 | Distribution | **Linux Mint 22.3 "Zena"**, Ubuntu 24.04 `noble` base |
-| Kernel | 7.0.0-31-generic, built 2026-08-10 |
+| Kernel | 7.0.0-34-generic |
 | Desktop | **MATE 1.26.1** |
 | Display server | **X11**, `XDG_SESSION_TYPE=x11` |
+| Rust | 1.98.1 through rustup |
+| Bluetooth | Controller `hci0`, `88:E9:FE:5F:1B:52`, built in and powered |
+| `libdbus-1-dev` | 1.14.10-4ubuntu4.1, installed |
 
 `hostnamectl`, `lscpu`, `/etc/os-release`, `mate-session --version`. Measured 2026-09-07, re-checked
-2026-09-20.
+2026-09-20; kernel, Rust, Bluetooth and `libdbus-1-dev` re-measured 2026-09-28.
 
 **The two machines differ by instruction set as well as by operating system**: `arm64` there, `x86_64`
 here. Both are little-endian, which is what the BLE frame parsing cares about, but **no built artefact
@@ -272,8 +290,9 @@ Mac formatted that crate without being able to compile it.
 
 **`cargo clippy` is the gate that is already green**: exit 0 across `facet-core`, `facet-ui` and
 `facet-linux` with all targets, carrying two warnings, both `manual Range::contains` in
-`facet-ui/src/status_icon.rs`. Those are in code moved verbatim from `facet-mac` and were left alone so
-the move stayed reviewable as a move. Re-measured 2026-09-25 on `main`: still exit 0, and still those two.
+`facet-ui/src/status_icon.rs`. Re-measured 2026-09-25 on `main`: still exit 0, and still those two. **Both
+were fixed on the Mac on 2026-09-28** (`d8bde5a`, on `feature/deviceTab`), where clippy is now clean; not yet
+re-run here.
 **CI gates on formatting and not on clippy.**
 
 **The probes are excluded from the workspace** and resolve their own dependencies:
@@ -493,10 +512,12 @@ token with it and puts a password dialog in front of whoever is at the screen.
 | Cube, as this box names it | `E8:DB:D8:CF:F9:0F`, address type **random** |
 | Cube name | `TimeFlip v2.0`, the same string the Mac sees |
 | As the app's own identifier | `FACE7000-0000-0000-0000-E8DBD8CFF90F`, derived from the address |
+| As btleplug names it | `hci0/dev_E8_DB_D8_CF_F9_0F`, the BlueZ object path under the adapter. It is the handle a pairing here would store in `device_uuid`; no pairing has been made on Linux yet, so no such row has been seen. Its adverts carry **no RSSI** |
 | Paired / Bonded / Trusted | **no / no / no**, and that is correct here |
 
 Adapter and BlueZ measured 2026-09-07; the cube rows re-confirmed 2026-09-20 with `bluetoothctl info`
-against the cube in range.
+against the cube in range. The btleplug row measured 2026-09-28 on the laptop by `cargo run -p facet-adapters --example
+radio-check`, which connected, read battery and Device Information, and had the vendor PIN refused as expected.
 
 **The address is random rather than public, so durability could not be assumed — but it has now been
 measured.** `E8:DB:D8:CF:F9:0F` was the same before and after a factory reset

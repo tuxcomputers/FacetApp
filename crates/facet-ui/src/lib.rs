@@ -27,12 +27,14 @@ slint::include_modules!();
 pub mod app;
 pub mod categories;
 pub mod create;
+pub mod device;
 pub mod faces;
 pub mod google;
 pub mod icons;
 pub mod notice;
 pub mod report;
 pub mod status_icon;
+pub mod timed;
 
 /// Re-exported because every generated component needs it and nothing else about it is interesting.
 ///

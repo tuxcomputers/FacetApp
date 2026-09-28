@@ -19,7 +19,7 @@ import "fonts/Inter-SemiBold.ttf";
 import "fonts/Inter-Bold.ttf";
 import { Metrics } from "metrics.slint";
 import { AppPane } from "app-settings.slint";
-import { DevicePane } from "device.slint";
+import { DevicePane, DeviceData, FoundDevice } from "device.slint";
 import { CategoriesPane } from "categories.slint";
 import { FacesPane, FacesData, FaceCategory } from "faces.slint";
 import { NoticeOverlay, NoticeData } from "notice.slint";
@@ -27,7 +27,7 @@ import { CategoriesData, ActiveCategory, RetiredCategory, IconChoice, ColourChoi
 import { ReportData, ReportDay, ReportEntry, ReportTotal } from "report.slint";
 import { AppData } from "app-settings.slint";
 
-export { FacesData, FaceCategory, NoticeData, CategoriesData, ActiveCategory, RetiredCategory, IconChoice, ColourChoice, ReportData, ReportDay, ReportEntry, ReportTotal, AppData }
+export { FacesData, FaceCategory, NoticeData, CategoriesData, ActiveCategory, RetiredCategory, IconChoice, ColourChoice, ReportData, ReportDay, ReportEntry, ReportTotal, AppData, DeviceData, FoundDevice }
 import { ReportPane } from "report.slint";
 
 component TabPill inherits Rectangle {

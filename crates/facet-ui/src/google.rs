@@ -22,6 +22,7 @@ use rusqlite::Connection;
 use slint::ComponentHandle;
 
 use crate::notice::Notice;
+use crate::timed;
 use crate::{AppData, SettingsWindow};
 
 /// What a background job came back with.
@@ -71,45 +72,20 @@ struct Remote {
     credentials: Option<Credentials>,
 }
 
-/// How long a secret store call may take before it is treated as unanswered.
-const STORE_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Runs `work` on its own thread and waits up to [`STORE_TIMEOUT`] for it. `None` when it did not answer in
-/// time; the thread is left to finish on its own.
-fn within<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
-    let (sender, receiver) = channel();
-    std::thread::spawn(move || {
-        // A closed channel means the caller stopped waiting, and the answer has nobody to go to.
-        if sender.send(work()).is_err() {
-            eprintln!("facet: the secret store answered after its timeout, and the answer was dropped");
-        }
-    });
-    receiver.recv_timeout(STORE_TIMEOUT).ok()
-}
-
 impl Remote {
-    /// The saved refresh token. A locked store blocks rather than failing, so an answer that does not come
-    /// within [`STORE_TIMEOUT`] is `Unavailable`. Call on a background thread.
+    /// The saved refresh token, within [`timed::STORE_TIMEOUT`]. Call on a background thread.
     fn look_up(&self) -> SecretLookup {
-        let store = Arc::clone(&self.store);
-        within(move || store.look_up()).unwrap_or_else(|| {
-            SecretLookup::Unavailable(format!("it did not answer within {} seconds", STORE_TIMEOUT.as_secs()))
-        })
+        timed::look_up(&self.store)
     }
 
-    /// Saves the refresh token, as [`SecretStore::store`], with the same timeout. Call on a background thread.
+    /// Saves the refresh token, within [`timed::STORE_TIMEOUT`]. Call on a background thread.
     fn store(&self, secret: &str) -> Result<bool, String> {
-        let store = Arc::clone(&self.store);
-        let secret = secret.to_string();
-        within(move || store.store(&secret))
-            .unwrap_or_else(|| Err(format!("it did not answer within {} seconds", STORE_TIMEOUT.as_secs())))
+        timed::store(&self.store, secret)
     }
 
-    /// Removes the refresh token, as [`SecretStore::clear`], with the same timeout. Call on a background thread.
+    /// Removes the refresh token, within [`timed::STORE_TIMEOUT`]. Call on a background thread.
     fn clear(&self) -> Result<(), String> {
-        let store = Arc::clone(&self.store);
-        within(move || store.clear())
-            .unwrap_or_else(|| Err(format!("it did not answer within {} seconds", STORE_TIMEOUT.as_secs())))
+        timed::clear(&self.store)
     }
 
     /// A fresh access token from the stored refresh token. Call on a background thread.

@@ -18,9 +18,9 @@
 # The proof that access came back is not a row: it is `Google calendar confirmed`, which the app writes only
 # after really fetching the calendar from Google.
 #
-# **Converted from the Swift suite 2026-09-27.** The Swift script asked y/n at the terminal before opening
-# the browser; runs are now started where there is no terminal, so the browser opening is the ask. The
-# secret store is checked directly, before and after, where the Swift script took the disconnect's word.
+# **Converted from the Swift suite 2026-09-27.** It asks y/n at the terminal before opening the browser, and pauses
+# once the sign-in has come back, as the Swift script did. The secret store is checked directly, before and after,
+# where the Swift script took the disconnect's word.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
@@ -33,21 +33,6 @@ open_settings
 select_tab App
 
 account() { sql "SELECT json_extract(setting_value, '\$.$1') FROM setting WHERE setting_name = 'google_account';"; }
-
-# Whether the secret store holds the refresh token, as yes or no. **Never prints the token**: the lookup's
-# output is counted, not shown. A probe whose failure is the answer, so its status is the result rather than
-# something to report.
-token_stored() {
-    local bytes
-    case "$PLATFORM" in
-        mac)
-            security find-generic-password -s au.com.tux.facet.google-refresh -a refresh-token >/dev/null 2>&1 \
-                && echo yes || echo no ;;
-        linux)
-            bytes=$(secret-tool lookup service au.com.tux.facet.google-refresh username refresh-token 2>/dev/null | wc -c)
-            [ "${bytes:-0}" -gt 0 ] && echo yes || echo no ;;
-    esac
-}
 
 email=$(account email)
 before_id=$(account calendar_id)
@@ -93,20 +78,26 @@ check "and neither is its name" "$before_name" "$(account calendar_name)"
 
 # ---------------------------------------------------------------------------- connecting again
 
-echo ""
-yellow "##############################################################################"
-yellow "##"
-yellow "##  OVER TO YOU -- SIGN IN TO GOOGLE IN THE BROWSER"
-yellow "##"
-yellow "##    Facet is opening your browser at Google's sign-in page."
-yellow "##    Sign in as $email, the same account, or the calendar will not resolve."
-yellow "##    Approve the access it asks for. The run carries on by itself."
-yellow "##"
-yellow "##    Nobody signing in within 4 minutes fails this script and leaves Facet"
-yellow "##    SIGNED OUT; sign in on Settings -> App to put it back."
-yellow "##"
-yellow "##############################################################################"
-echo ""
+if ! action_required \
+    "Sign in to Google, so the run can check the calendar survived." \
+    "1. Press y. Facet opens your browser at Google's sign-in page." \
+    "2. Sign in as $email -- the same account, or the calendar will not resolve." \
+    "3. Approve the access it asks for, then come back here." \
+    "" \
+    "The run waits for you and carries on by itself once you are done." \
+    "Answering anything else leaves Facet SIGNED OUT, and every later run's" \
+    "Google checks fail until you sign in on the App tab by hand."; then
+    fail "the sign-in was declined, so reconnecting is untested"
+    echo ""
+    red   "  #########################################################################"
+    red   "  ##  Facet is left signed out of Google."
+    red   "  ##  The calendar id is still stored, so signing in on Settings -> App"
+    red   "  ##  will pick the same calendar back up."
+    red   "  #########################################################################"
+    echo ""
+    finish
+    exit 0
+fi
 
 since=$(mark)
 asked=$SECONDS
@@ -122,6 +113,16 @@ else
     finish
     exit 1
 fi
+
+# Stops once the sign-in is detected: the browser is in front, and what the app does next (checking the stored
+# calendar against Google) is worth watching. The checks below read from the mark taken before the sign-in, so the
+# pause cannot lose anything.
+wait_for_dev "the sign-in came back" \
+    "Facet is connected again as $email." \
+    "" \
+    "Bring Facet's Settings window to the front if you want to watch what follows:" \
+    "it re-checks the stored calendar against Google, and the next checks read" \
+    "whether it confirmed the same one or gave up and made another."
 
 check "it is the same account" "$email" "$(account email)"
 check "and its sign-in is back in the secret store" "yes" "$(token_stored)"

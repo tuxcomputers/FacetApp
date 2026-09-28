@@ -8,9 +8,9 @@ They need no AI, no Claude, and nothing installed beyond what building the app a
 
 ---
 
-**Status, 2026-09-27: nine checks are back, and they pass on both machines.** `00`, `03`, `04`, `05`, `06`,
-`08`, `09`, `11` and `12`, 293 checks, with each machine's latest run in `last-run-mac.md` and
-`last-run-linux.md`. **`11-google-reconnect` needs a person**: it opens the browser for a Google sign-in and
+**Status, 2026-09-27: ten checks are back.** `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11` and `12` pass on both
+machines, 293 checks, with each machine's latest run in `last-run-mac.md` and `last-run-linux.md`;
+`13-device-tab` passes its 37 on both, run on its own (on Linux on 2026-09-28, with the radio) and not yet in a stamped full run. **The device range passed on the Mac on 2026-09-28**: `50`, `51`, `53`, `54`, `63`, `65`, `67` and `68`. `52-device-reset`, `66-device-rename` and `99-quit` came with the reset and the rename later that day and have not run yet. **`11-google-reconnect` needs a person**: it opens the browser for a Google sign-in and
 waits four minutes for it, so a full run wants somebody near the screen. The rest of the 32 numbered checks
 are still missing, because a check for a feature the Rust app does not have yet cannot pass. [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists all 32 with
 what each proved, and each goes back as its feature lands.
@@ -233,11 +233,11 @@ correctly, so it passes and the line says which case it met.
 | `11-google-reconnect` | disconnect keeps the calendar, and signing back in still reaches it (**asks you to sign in**) |
 | `12-daily-limit` | a category spending its `daily_limit` stops the clock, and every way of starting it again refuses |
 | `13-device-tab` | the Device tab's two sections folding, including a fold inside a fold, and every Settings control dead with no cube |
-| `50-device-scan` | the radio comes up, the scan lists what answers it, and stops on its own |
-| `51-device-connect` | pairing, the PIN the cube is on, and what the Device tab says afterwards |
-| `52-device-reset` | the factory reset, and the cube coming back on the vendor PIN |
-| `53-device-reconnect` | a paired app reaching its own cube at launch, with the window shut |
-| `54-device-battery` | the charge: read on connecting, pushed after that, and shown without flapping |
+| `50-device-scan` | the scan lists the cube, stops when pressed, ends by itself after fifteen seconds, and All Devices widens it |
+| `51-device-connect` | pairing: every step of the login, the PIN rotated or kept, what the table and the tab say afterwards, and Reset offered and called off |
+| `52-device-reset` | the factory reset: asked, called off, then sent, proved on the vendor PIN, and forgotten, and the wiped cube paired onto a new PIN |
+| `53-device-reconnect` | a quit closing the link, a paired app reaching its own cube at launch with the window shut, Forget, and a launch with nothing paired |
+| `54-device-battery` | the charge read as the link comes up, followed from then on, and shown on the tab, and the battery warning row |
 | `55-device-face` | the face the cube is on, in the menu bar and on the Faces tab (**asks you to turn the cube**) |
 | `56-manual-mode` | a paired app that cannot find its cube: what a click refuses, and what taking manual mode stops (**asks you to switch Bluetooth off and on**) |
 | `57-cube-pause` | the status item's right half: one click stops and starts the cube, two lock and unlock it (**ends by asking you to turn a paused cube**) |
@@ -250,7 +250,9 @@ correctly, so it passes and the line says which case it met.
 | `64-face-colours` | the cube lit in its faces colours: twelve on connecting, and one when a category is recoloured |
 | `65-auto-pause` | the cube auto-pause delay: stepped, sent as `0x05`, read back with `0x10`, then written down, and the cube stopping itself on it (**asks you to turn the cube, then to leave it alone for a minute**) |
 | `66-device-rename` | the cube renamed from the Device tab: `0x15` to the hardware, the row written only after it, and the cube still found afterwards |
-| `99-quit` | the way out closes what was open |
+| `67-pause-on-lock` | the pause-on-lock row: written to the table and sent nowhere |
+| `68-device-link-lost` | the link dropping is noticed and recorded, the pairing kept, and a relaunch reaching the cube again (**asks you to switch Bluetooth off and on**) |
+| `99-quit` | the cube factory reset, so it is left on the vendor PIN, and the app quitting |
 
 ## How a check is written
 

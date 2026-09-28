@@ -38,6 +38,16 @@ pub enum Tag {
     Limit,
     Report,
     Google,
+    Radio,
+    Login,
+    Pin,
+    Pair,
+    Command,
+    Device,
+    /// A write, subscription or read request sent over Bluetooth.
+    BleTx,
+    /// An acknowledgement, answer or notification that came back over Bluetooth.
+    BleRx,
 }
 
 impl Tag {
@@ -57,6 +67,14 @@ impl Tag {
         Tag::Limit,
         Tag::Report,
         Tag::Google,
+        Tag::Radio,
+        Tag::Login,
+        Tag::Pin,
+        Tag::Pair,
+        Tag::Command,
+        Tag::Device,
+        Tag::BleTx,
+        Tag::BleRx,
     ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
@@ -76,6 +94,14 @@ impl Tag {
             Tag::Limit => "limit",
             Tag::Report => "report",
             Tag::Google => "google",
+            Tag::Radio => "radio",
+            Tag::Login => "login",
+            Tag::Pin => "pin",
+            Tag::Pair => "pair",
+            Tag::Command => "command",
+            Tag::Device => "device",
+            Tag::BleTx => "ble-tx",
+            Tag::BleRx => "ble-rx",
         }
     }
 

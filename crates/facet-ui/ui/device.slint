@@ -6,24 +6,32 @@
 // - **TimeFlip** is the cube itself: what the app knows about it, and what to press to get one. Its rows say
 //   plainly when the answer is that it knows nothing, and under them sit the controls that change with the
 //   state, Scan while there is nothing paired and Forget and Reset once there is.
-// - **Settings** are what the cube is set to: stored here and sent to it on connect, so they are readable and
-//   meaningful with no cube present, which is why they are drawn rather than hidden.
+// - **Settings** are what the cube is set to: stored here and sent to it while connected, so they are readable
+//   with no cube present, which is why they are drawn rather than hidden.
 //
 // **The whole Settings section is dead while no cube is connected**, every row of it, including the two that
 // no command carries. It is a section about a cube, so it answers the question about a cube the same way in
-// every row; a row staying live because of how it happens to be stored would ask somebody to work out which
-// kind each row is. Nothing is paired yet, so this tab draws that state and the section is dead throughout.
+// every row.
 //
-// Nothing here reads and nothing here writes. The numbers are what the DDL seeds and the words are what
-// `DeviceInfoRules` says for an unpaired app, stated as `in` properties so that wiring this up later is
-// setting them.
+// Everything shown comes from `DeviceData`, which the Device controller in `src/device.rs` fills from the table
+// and the radio.
 
-import { CheckBox, Button, ScrollView } from "std-widgets.slint";
+import { CheckBox, Button, ScrollView, LineEdit, Palette } from "std-widgets.slint";
 import { Metrics } from "metrics.slint";
 import { Panel, SectionHeading, SettingsRow, StepperField, ValueText, Footnote } from "widgets.slint";
 
-export component DevicePane inherits Rectangle {
-    // Seeded `paired` is false, and every reading below is what that state reads as.
+// One device a scan heard.
+export struct FoundDevice {
+    handle: string,
+    label: string,
+}
+
+export global DeviceData {
+    in-out property <bool> timeflip-expanded: true;
+    in-out property <bool> settings-expanded: true;
+    in-out property <bool> more-expanded: false;
+    in-out property <bool> led-expanded: false;
+
     in property <bool> paired: false;
     in property <string> device-name: "Not paired";
     in property <string> connection: "Manual mode, no device";
@@ -32,26 +40,60 @@ export component DevicePane inherits Rectangle {
     in property <string> model: "Not paired";
     in property <string> hardware: "Not paired";
     in property <string> firmware: "Not paired";
+
     // Says what the radio is doing, and it is not decoration: an empty list means "nothing found",
     // "Bluetooth is off" and "not allowed to use Bluetooth" all at once, and those want three different
     // things done about them.
     in property <string> scan-status: "";
+    in property <bool> is-scanning: false;
+    in-out property <bool> scan-all: false;
+    in property <[FoundDevice]> found: [];
+    // While a pairing is under way the results are not offered: one attempt at a time.
+    in property <bool> is-reaching-for-cube: false;
+    // While a reset is being proved nothing else may reach for the cube.
+    in property <bool> is-factory-reset-running: false;
+    in property <bool> can-scan: true;
 
-    // Seeded `pause_on_lock`, `low_battery_level`, `auto_pause_minutes` and `led_settings`.
-    in property <bool> pause-on-lock: true;
-    in property <int> battery-warning-percent: 10;
-    in property <int> auto-pause-minutes: 0;
-    in property <int> led-brightness-percent: 50;
-    in property <int> led-blink-seconds: 15;
+    // The Name row opens for editing only while `can-rename`; `rename-help` says why not otherwise.
+    in property <bool> can-rename: false;
+    in property <string> rename-help: "";
+    in-out property <bool> is-editing-device-name: false;
+    in-out property <string> editing-device-name: "";
+
+    // True on the lit half of each blink while the charge is at or below the warning level.
+    in property <bool> battery-alert: false;
+
+    in-out property <bool> pause-on-lock: true;
+    in-out property <int> battery-warning-percent: 10;
+    in-out property <int> auto-pause-minutes: 0;
+    in-out property <int> led-brightness-percent: 50;
+    in-out property <int> led-blink-seconds: 15;
 
     // Every row of the Settings section is dead together, decided in one place for all of them.
     in property <bool> cube-connected: false;
 
-    property <bool> timeflip-expanded: true;
-    property <bool> settings-expanded: true;
-    property <bool> more-expanded: false;
-    property <bool> led-expanded: false;
+    callback section-toggled(string, bool);
+    callback scan-pressed();
+    callback found-pressed(string);
+    callback forget-pressed();
+    callback rename-opened();
+    callback rename-edited(string);
+    callback rename-committed(string);
+    callback reset-pressed();
+    callback pause-on-lock-toggled(bool);
+    callback battery-warning-edited(int);
+    callback auto-pause-edited(int);
+    callback led-brightness-edited(int);
+    callback led-blink-edited(int);
+}
 
+component FoundRow inherits Button {
+    in property <FoundDevice> device;
+    text: root.device.label;
+    accessible-id: "device-scan-result-" + root.device.handle;
+}
+
+export component DevicePane inherits Rectangle {
     accessible-role: tab-panel;
     accessible-id: "settings-pane-device";
     accessible-label: "Device";
@@ -75,23 +117,70 @@ export component DevicePane inherits Rectangle {
                 SectionHeading {
                     title: "TimeFlip";
                     heading-id: "device-timeflip-section-heading";
-                    expanded <=> root.timeflip-expanded;
+                    expanded <=> DeviceData.timeflip-expanded;
+                    toggled(open) => { DeviceData.section-toggled("device-timeflip-section", open); }
                 }
 
-                if root.timeflip-expanded: VerticalLayout {
+                if DeviceData.timeflip-expanded: VerticalLayout {
                     spacing: Metrics.row-spacing;
 
+                    // **The name is a button that opens a field**, as a category name is: Return sends what was
+                    // typed, and Escape leaves the name as it was.
                     SettingsRow {
                         label: "Name";
-                        ValueText { text: root.device-name; value-id: "device-name"; }
+                        dimmed: !DeviceData.cube-connected;
+                        if !DeviceData.is-editing-device-name: Rectangle {
+                            accessible-role: button;
+                            accessible-id: "device-name";
+                            accessible-label: DeviceData.device-name;
+                            accessible-description: DeviceData.rename-help;
+                            accessible-enabled: DeviceData.can-rename;
+                            accessible-action-default => { if DeviceData.can-rename { DeviceData.rename-opened(); } }
+                            min-width: 240px;
+                            Text {
+                                width: 100%;
+                                text: DeviceData.device-name;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                color: Palette.foreground;
+                            }
+                            TouchArea {
+                                mouse-cursor: DeviceData.can-rename ? text : default;
+                                clicked => { if DeviceData.can-rename { DeviceData.rename-opened(); } }
+                            }
+                        }
+                        if DeviceData.is-editing-device-name: FocusScope {
+                            key-pressed(event) => {
+                                if event.text == Key.Escape {
+                                    DeviceData.is-editing-device-name = false;
+                                    return accept;
+                                }
+                                reject
+                            }
+                            LineEdit {
+                                width: 240px;
+                                text <=> DeviceData.editing-device-name;
+                                accessible-id: "device-name-field";
+                                accessible-label: "Name";
+                                edited(text) => { DeviceData.rename-edited(text); }
+                                accepted(text) => { DeviceData.rename-committed(text); }
+                                init => { self.focus(); self.select-all(); }
+                            }
+                        }
                     }
                     SettingsRow {
                         label: "Connection";
-                        ValueText { text: root.connection; value-id: "device-connection"; }
+                        ValueText { text: DeviceData.connection; value-id: "device-connection"; }
                     }
                     SettingsRow {
                         label: "Battery";
-                        ValueText { text: root.battery; value-id: "device-battery"; }
+                        dimmed: !DeviceData.cube-connected;
+                        ValueText {
+                            text: DeviceData.battery;
+                            value-id: "device-battery";
+                            color: DeviceData.battery-alert ? #e0243a : Palette.foreground;
+                        }
                     }
 
                     // **Folded, because four strings a cube reports about itself are the tab's least urgent
@@ -101,27 +190,32 @@ export component DevicePane inherits Rectangle {
                         title: "More";
                         heading-id: "device-more";
                         nested: true;
-                        expanded <=> root.more-expanded;
+                        expanded <=> DeviceData.more-expanded;
+                        toggled(open) => { DeviceData.section-toggled("device-more", open); }
                     }
-                    if root.more-expanded: VerticalLayout {
+                    if DeviceData.more-expanded: VerticalLayout {
                         padding-left: Metrics.nested-indent;
                         spacing: Metrics.row-spacing;
 
                         SettingsRow {
                             label: "Manufacturer";
-                            ValueText { text: root.manufacturer; value-id: "device-manufacturer"; }
+                            dimmed: !DeviceData.cube-connected;
+                            ValueText { text: DeviceData.manufacturer; value-id: "device-manufacturer"; }
                         }
                         SettingsRow {
                             label: "Model";
-                            ValueText { text: root.model; value-id: "device-model"; }
+                            dimmed: !DeviceData.cube-connected;
+                            ValueText { text: DeviceData.model; value-id: "device-model"; }
                         }
                         SettingsRow {
                             label: "Hardware";
-                            ValueText { text: root.hardware; value-id: "device-hardware"; }
+                            dimmed: !DeviceData.cube-connected;
+                            ValueText { text: DeviceData.hardware; value-id: "device-hardware"; }
                         }
                         SettingsRow {
                             label: "Firmware";
-                            ValueText { text: root.firmware; value-id: "device-firmware"; }
+                            dimmed: !DeviceData.cube-connected;
+                            ValueText { text: DeviceData.firmware; value-id: "device-firmware"; }
                         }
                     }
 
@@ -137,29 +231,51 @@ export component DevicePane inherits Rectangle {
                         padding-top: 11px;
                         padding-bottom: 11px;
 
-                        if !root.paired: Button {
-                            text: "Scan for Devices";
+                        if !DeviceData.paired: Button {
+                            text: DeviceData.is-scanning ? "Stop Scan" : "Scan for Devices";
+                            enabled: DeviceData.can-scan && !DeviceData.is-reaching-for-cube;
                             accessible-id: "device-scan";
+                            clicked => { DeviceData.scan-pressed(); }
                         }
                         // **A filtered scan is the default and this is the way out of it.** The filter matches
                         // the vendor name and the names this cube has carried, which is also what hides a cube
                         // whose name the app has never seen.
-                        if !root.paired: CheckBox {
+                        if !DeviceData.paired: CheckBox {
                             text: "All Devices";
+                            checked <=> DeviceData.scan-all;
                             accessible-id: "device-scan-all";
                         }
-                        if root.paired: Button { text: "Forget Device"; accessible-id: "device-forget"; }
-                        if root.paired: Button { text: "Reset Device"; accessible-id: "device-reset"; }
+                        if DeviceData.paired: Button {
+                            text: "Forget Device";
+                            enabled: !DeviceData.is-reaching-for-cube && !DeviceData.is-factory-reset-running;
+                            accessible-id: "device-forget";
+                            clicked => { DeviceData.forget-pressed(); }
+                        }
+                        if DeviceData.paired: Button {
+                            text: "Reset Device";
+                            enabled: DeviceData.cube-connected && !DeviceData.is-reaching-for-cube
+                                && !DeviceData.is-factory-reset-running;
+                            accessible-id: "device-reset";
+                            clicked => { DeviceData.reset-pressed(); }
+                        }
 
                         Rectangle { horizontal-stretch: 1; }
 
                         // The words give way before the controls do: a window too narrow for both shortens the
                         // message, not the button that starts the scan.
-                        ValueText { text: root.scan-status; value-id: "device-scan-status"; }
+                        ValueText { text: DeviceData.scan-status; value-id: "device-scan-status"; }
                     }
 
-                    // The found devices go here, one row each, the whole row being the button. Empty until a
-                    // scan has found something, and absent rather than empty so it leaves no gap.
+                    // The found devices, one row each, the whole row being the button. Absent rather than empty
+                    // until a scan has found something, so it leaves no gap.
+                    if !DeviceData.paired && DeviceData.found.length > 0: VerticalLayout {
+                        spacing: Metrics.row-spacing;
+                        for device in DeviceData.found: FoundRow {
+                            device: device;
+                            enabled: !DeviceData.is-reaching-for-cube;
+                            clicked => { DeviceData.found-pressed(device.handle); }
+                        }
+                    }
                 }
             }
 
@@ -170,10 +286,11 @@ export component DevicePane inherits Rectangle {
                 SectionHeading {
                     title: "Settings";
                     heading-id: "device-settings-section-heading";
-                    expanded <=> root.settings-expanded;
+                    expanded <=> DeviceData.settings-expanded;
+                    toggled(open) => { DeviceData.section-toggled("device-settings-section", open); }
                 }
 
-                if root.settings-expanded: VerticalLayout {
+                if DeviceData.settings-expanded: VerticalLayout {
                     spacing: Metrics.row-spacing;
 
                     // Says what the app does to the cube when it locks it: the lock drives the pause, not the
@@ -181,24 +298,26 @@ export component DevicePane inherits Rectangle {
                     // it, and it is here rather than on the App tab because it is about the cube.
                     SettingsRow {
                         label: "Pause the device when locking it";
-                        dimmed: !root.cube-connected;
+                        dimmed: !DeviceData.cube-connected;
                         CheckBox {
-                            checked: root.pause-on-lock;
-                            enabled: root.cube-connected;
+                            checked <=> DeviceData.pause-on-lock;
+                            enabled: DeviceData.cube-connected;
                             accessible-id: "device-pause-on-lock";
+                            toggled => { DeviceData.pause-on-lock-toggled(self.checked); }
                         }
                     }
 
                     SettingsRow {
                         label: "Battery warning at";
-                        dimmed: !root.cube-connected;
+                        dimmed: !DeviceData.cube-connected;
                         StepperField {
-                            value: root.battery-warning-percent;
+                            value <=> DeviceData.battery-warning-percent;
                             minimum: 1;
                             maximum: 20;
                             suffix: "%";
-                            enabled: root.cube-connected;
+                            enabled: DeviceData.cube-connected;
                             field-id: "device-battery-warning";
+                            edited(value) => { DeviceData.battery-warning-edited(value); }
                         }
                     }
 
@@ -207,14 +326,15 @@ export component DevicePane inherits Rectangle {
                     // vendor protocol's own disabled-by-default behaviour.
                     SettingsRow {
                         label: "Auto-pause (0 disable, max 240m)";
-                        dimmed: !root.cube-connected;
+                        dimmed: !DeviceData.cube-connected;
                         StepperField {
-                            value: root.auto-pause-minutes;
+                            value <=> DeviceData.auto-pause-minutes;
                             minimum: 0;
                             maximum: 240;
                             suffix: "min";
-                            enabled: root.cube-connected;
+                            enabled: DeviceData.cube-connected;
                             field-id: "device-auto-pause";
+                            edited(value) => { DeviceData.auto-pause-edited(value); }
                         }
                     }
 
@@ -222,9 +342,10 @@ export component DevicePane inherits Rectangle {
                         title: "LED";
                         heading-id: "device-led";
                         nested: true;
-                        expanded <=> root.led-expanded;
+                        expanded <=> DeviceData.led-expanded;
+                        toggled(open) => { DeviceData.section-toggled("device-led", open); }
                     }
-                    if root.led-expanded: VerticalLayout {
+                    if DeviceData.led-expanded: VerticalLayout {
                         padding-left: Metrics.nested-indent;
                         spacing: Metrics.row-spacing;
 
@@ -233,26 +354,28 @@ export component DevicePane inherits Rectangle {
                         // drag logged thirty-odd changes, every one of them a device write.
                         SettingsRow {
                             label: "Brightness";
-                            dimmed: !root.cube-connected;
+                            dimmed: !DeviceData.cube-connected;
                             StepperField {
-                                value: root.led-brightness-percent;
+                                value <=> DeviceData.led-brightness-percent;
                                 minimum: 1;
                                 maximum: 100;
                                 suffix: "%";
-                                enabled: root.cube-connected;
+                                enabled: DeviceData.cube-connected;
                                 field-id: "device-led-brightness";
+                                edited(value) => { DeviceData.led-brightness-edited(value); }
                             }
                         }
                         SettingsRow {
                             label: "Blink Interval";
-                            dimmed: !root.cube-connected;
+                            dimmed: !DeviceData.cube-connected;
                             StepperField {
-                                value: root.led-blink-seconds;
+                                value <=> DeviceData.led-blink-seconds;
                                 minimum: 5;
                                 maximum: 60;
                                 suffix: "sec";
-                                enabled: root.cube-connected;
+                                enabled: DeviceData.cube-connected;
                                 field-id: "device-led-blink";
+                                edited(value) => { DeviceData.led-blink-edited(value); }
                             }
                         }
                     }
@@ -261,10 +384,10 @@ export component DevicePane inherits Rectangle {
                     // Settings section goes dead with no cube and says nothing about why. Every row being
                     // greyed with no reason given reads as a fault rather than as a state, so this says which.
                     // Inside the panel rather than under it: it has no reason to outlive its section.
-                    if !root.cube-connected: Footnote {
+                    if !DeviceData.cube-connected: Footnote {
                         note-id: "device-settings-gate-note";
-                        text: "These are what the cube is set to, and they are sent to it on connect. There is "
-                            + "no cube paired, so there is nothing to send them to yet.";
+                        text: "These are what the cube is set to, and they are sent to it while it is connected. "
+                            + "There is no cube connected, so there is nothing to send them to yet.";
                     }
                 }
             }

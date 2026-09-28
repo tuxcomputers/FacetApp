@@ -90,6 +90,9 @@ confirmation mechanism, so there are three cases.
 - **A dedicated read-back exists**: `0x10` (lock, pause, auto-pause), `0x14` (task parameters), `0x17`
   (double-tap registers), `0x07` (the clock). **Write, read back, compare, and only then believe it.**
   This is a standing rule in `CLAUDE.md`, not a per-command choice.
+- **`0xFF` is confirmed by logging in**: the cube keeps the link up through the wipe and goes on taking its old PIN
+  for several seconds (finding 6), so the app lets go and presents `000000` every 3 seconds, for up to 120, on
+  connections of its own. Only an accepted vendor PIN counts as the reset having happened.
 - **No read-back is defined**: `0x09`, `0x0A` (LED), `0x11` (face colour), `0x15` (name). For the first
   three the app is the system of record: what it last sent is the only account of what the cube holds,
   and the cube asks for a value back through the system-state sync-required codes when it has lost one.

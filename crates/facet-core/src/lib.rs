@@ -11,6 +11,7 @@ pub mod app_settings;
 pub mod category;
 pub mod database;
 pub mod debug_log;
+pub mod device;
 pub mod face;
 pub mod google;
 pub mod google_flow;

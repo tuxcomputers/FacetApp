@@ -317,43 +317,51 @@ device_required() {
     [ -n "$run" ] && [ "$answered" = "$run" ] && [ "$remembered" = "yes" ]
 }
 
-# Asks, once, and writes the answer against this run's id. **Only `00-setup` calls this.** It is separate from
-# `device_required` so that reading the answer cannot turn into asking for it: a script that reaches a prompt
-# nobody is watching hangs the run, and the whole point of asking at the top is that somebody is still there.
+# Whether the secret store holds the Google refresh token, as yes or no. **Never prints the token**: the lookup's
+# output is counted, not shown. A probe whose failure is the answer, so its status is the result rather than
+# something to report.
+token_stored() {
+    local bytes
+    case "$PLATFORM" in
+        mac)
+            security find-generic-password -s au.com.tux.facet.google-refresh -a refresh-token >/dev/null 2>&1 \
+                && echo yes || echo no ;;
+        linux)
+            bytes=$(secret-tool lookup service au.com.tux.facet.google-refresh username refresh-token 2>/dev/null | wc -c)
+            [ "${bytes:-0}" -gt 0 ] && echo yes || echo no ;;
+    esac
+}
+
+# Asks, once, and writes the answer against this run's id. **Only `00-setup` calls this**, so that reading the answer
+# with `device_required` can never turn into asking for it part way through a run nobody is watching.
+#
+# The prompt is the whole of the consent for what the device range does to the cube, so it says all of it.
 ask_about_the_device() {
     local run="${TESTLOG_RUN_ID:-}"
     mkdir -p "$(dirname "$DEVICE_GATE")" 2>/dev/null || true
 
-    # **Everything the run does to the cube, said once, because this is the only time it is asked.** That
-    # includes the two things somebody agreeing to "is your device nearby" has plainly not agreed to on the
-    # face of it: the PIN is changed, and the cube is wiped. Both are stated in full here rather than asked
-    # about again later, so this prompt has to be worth reading -- it is the whole of the consent.
     if action_required \
-        "May this run use your TimeFlip? It will be RESET to factory settings." \
-        "THIS WIPES THE CUBE. The setup below erases everything stored on the device --" \
-        "face colours, task settings, its name and its PIN -- back to factory defaults," \
-        "and that cannot be undone. The cube comes back on the vendor PIN 000000, which is" \
-        "the first one Facet presents, so pairing it again afterwards is one press of Scan," \
-        "but anything you had set on the device itself is gone." \
+        "May this run use your TimeFlip?" \
+        "The device scripts pair with the cube, connect to it, rename it and change its" \
+        "auto-pause, LED brightness and blink interval, putting each one back afterwards." \
         "" \
-        "**It is wiped now, at the start, and again by 52-device-reset.** This run begins by" \
-        "pairing the cube and resetting it, so every script after this one starts from a" \
-        "factory cube the app has never seen." \
+        "THE CUBE IS FACTORY RESET TWICE: by 52-device-reset, which pairs it again, and by" \
+        "99-quit at the end, which leaves it on the factory PIN 000000. Face colours, task" \
+        "settings, its name and its PIN go back to factory defaults, and that cannot be undone." \
         "" \
-        "The runs also change its PIN. They present 000000, and a cube answering to it is put" \
-        "on six random digits kept in the login Keychain." \
+        "A cube on the factory PIN 000000 is moved onto six random digits, kept in this" \
+        "machine's keyring (the login Keychain on the Mac). A cube on a PIN another machine" \
+        "set cannot be paired here: take its batteries out first to put it back on 000000." \
+        "" \
+        "68-device-link-lost asks you to switch Bluetooth off and back on." \
         "" \
         "Then:" \
         "1. Flip the cube onto any face -- a sleeping cube does not advertise, so it cannot be found." \
-        "2. Check Bluetooth is on." \
+        "2. Check Bluetooth is on, and that no other app is connected to the cube." \
         "3. Press y and leave everything alone; the rest runs by itself." \
         "" \
-        "Asked once for the whole run, here at the top. Every script that needs the cube takes" \
-        "this answer, so leave it where it is until the run finishes." \
-        "" \
-        "The FIRST time Facet ever scans, macOS asks whether it may use Bluetooth. That" \
-        "is once, not once per run or per build: after it is allowed the app just scans." \
-        "If the prompt does appear, allow it -- until you do the radio never answers." \
+        "The FIRST time Facet ever scans, macOS asks whether it may use Bluetooth. Allow it," \
+        "or the radio never answers." \
         "" \
         "Answer anything else and the run stops at 50-device-scan. The scripts before it" \
         "still run, and CI will refuse the branch until somebody with a cube runs it."; then
@@ -365,277 +373,106 @@ ask_about_the_device() {
     return 1
 }
 
-# Pairs a cube from scratch, with the Device tab already on show. Answers 0 once the app says `Paired with`.
+# Starts a scan from the Device tab and waits for a TimeFlip row to be drawn. Answers 0 with the row's identifier in
+# `SCAN_ROW`, 2 when the radio cannot be used (the app's words in `SCAN_REASON`), and 1 for anything else.
 #
-# **Three scripts needed this and had two copies of it**, which is the point at which it stops being repetition and
-# starts being a place for them to drift apart. `51-device-connect` keeps its own, deliberately: that one is the
-# script whose subject *is* connecting, and every step of it is a check rather than a means to an end.
-#
-# **From scratch, forgetting first**, which is now only for the scripts whose subject is a pairing. `00-setup` pairs a
-# cube to wipe it, `51-device-connect` makes the pairing the rest of the run uses, and `52`, `53`, `54`, `55` and `56`
-# reach this through `restore_the_pairing` at the *end*, putting back the one they gave up. Nothing calls it to arrange
-# a cube it merely needs -- see `require_a_paired_cube`.
-#
-# **The caller decides what a failure means**, because it differs: an unusable radio says nothing about the app, and a
-# cube that would not answer is the bench having stopped working. So this says what happened in the log and answers
-# with which of the two it was:
-#
-#   0  paired
-#   2  the radio cannot be used, which says nothing about the app -- `PAIR_REASON` holds the app's own words
-#   1  everything else: nothing answered the scan, no row to press, or the PIN was refused
-pair_a_cube() {
-    PAIR_REASON=""
-    PAIR_STATUS=0
+# The Device tab must be on show with nothing paired. A scan that is already running is waited out rather than
+# pressed, since pressing Scan during a scan stops it. A scan that finds nothing is left to end by itself.
+scan_for_a_cube() {
+    SCAN_ROW=""
+    SCAN_REASON=""
+    if [ -z "$(element device-scan)" ]; then
+        SCAN_REASON="there is no Scan button on screen: open Settings on the Device tab, with nothing paired"
+        return 1
+    fi
+    case "$(element device-scan)" in
+        *"Stop Scan"*)
+            step "a scan is already running; waiting for it to end before starting one"
+            if ! wait_for "$(mark)" "The scan ended%" 25 >/dev/null; then
+                SCAN_REASON="a scan was already running and had not ended 25s later"
+                return 1
+            fi
+            ;;
+    esac
 
-    # **The Scan button has to be on screen, and this is checked rather than assumed.** `press` swallows everything --
-    # its output, its exit code, and the case where the element is not in the tree at all -- so pressing a button that
-    # is not there does nothing and says nothing. The wait below then times out after a full minute and reports the
-    # radio as the culprit, which is a diagnosis pointing away from the fault: on 2026-08-22 `57-cube-pause` reached
-    # here without ever having opened the Settings window, sat for 60 seconds, and skipped itself blaming a
-    # permission prompt that was not there.
-    if [ -z "$(element device-scan)" ] && [ -z "$(element device-forget)" ]; then
-        PAIR_REASON="neither Scan nor Forget is on screen -- open the Settings window on the Device tab first"
-        PAIR_STATUS=1
+    local since waited=0
+    since=$(mark)
+    press device-scan
+    if ! wait_for "$since" "Scanning, unfiltered" 20 >/dev/null; then
+        SCAN_REASON=$(dsql "SELECT message FROM debug_log WHERE debug_log_id > $since AND tag = 'radio' AND (message LIKE 'Bluetooth%' OR message LIKE 'Facet has not been allowed%') ORDER BY debug_log_id DESC LIMIT 1;")
+        [ -n "$SCAN_REASON" ] && return 2
+        SCAN_REASON="the scan never started in 20s -- is the macOS Bluetooth permission prompt waiting?"
         return 1
     fi
 
+    # A heard device is drawn rather than logged, so the tree is what is polled. Bounded just past the scan's own
+    # fifteen seconds.
+    while [ "$waited" -lt 180 ]; do
+        SCAN_ROW=$(tree | grep -m1 -o "device-scan-result-[^ ]*" || true)
+        [ -n "$SCAN_ROW" ] && return 0
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    SCAN_REASON="the scan ran its full 15 seconds and no TimeFlip was listed -- is the cube awake?"
+    return 1
+}
+
+# Pairs the cube from the Device tab, which must be on show. Answers 0 once the app logs `Paired with`, with the
+# window still open on the Device tab. A cube already paired is forgotten first.
+#
+#   0  paired, and the link is up
+#   2  the radio cannot be used, which says nothing about the app -- `PAIR_REASON` holds the app's own words
+#   1  everything else: nothing listed, or the cube refused every PIN
+pair_a_cube() {
+    PAIR_REASON=""
+    if [ -z "$(element device-scan)" ] && [ -z "$(element device-forget)" ]; then
+        PAIR_REASON="neither Scan nor Forget is on screen -- open the Settings window on the Device tab first"
+        return 1
+    fi
     if [ -n "$(element device-forget)" ]; then
         step "already paired; forgetting first so this pairs its own cube"
         press device-forget
         sleep 1
     fi
 
-    # **A scan already listening is waited out, not pressed into.** The Scan button is the one button either way:
-    # pressing it during a scan stops that scan instead of starting one, so the wait below then sits out its whole
-    # minute for a `Scan started` row nothing is going to write, and answers with the radio. That is a diagnosis
-    # pointing away from the fault for the second time in this function -- run 170 (2026-09-07) stopped here, because
-    # `56-manual-mode` runs a scan to prove the radio came back and the window it leaves behind outlasted the sleep
-    # that was meant to cover it.
-    # **A scan already listening is waited out, not pressed into.** The Scan button is the one button either way:
-    # pressing it during a scan stops that scan instead of starting one, so the wait below then sits out its whole
-    # minute for a `Scan started` row nothing is going to write, and answers with the radio. That is a diagnosis
-    # pointing away from the fault for the second time in this function -- run 170 (2026-09-07) stopped here, because
-    # `56-manual-mode` runs a scan to prove the radio came back and the window it leaves behind outlasted the sleep
-    # that was meant to cover it.
-    case "$(element device-scan)" in
-        *"Stop Scan"*)
-            step "a scan is already running; waiting for it to end before starting one"
-            if ! wait_for "$(mark)" "%Scan timed out%" 25 >/dev/null; then
-                PAIR_REASON="a scan was already running and had not ended 25s later, so this could not start one of its own"
-                PAIR_STATUS=1
-                return 1
-            fi
-            ;;
+    scan_for_a_cube
+    case $? in
+        0) ;;
+        2) PAIR_REASON="$SCAN_REASON"; return 2 ;;
+        *) PAIR_REASON="$SCAN_REASON"; return 1 ;;
     esac
 
-    local since row
+    local since
     since=$(mark)
-    press device-scan
-    sleep 0.5
-
-    step "waiting for the radio to come up..."
-    if ! wait_for "$since" "%Scan started%" 60 >/dev/null; then
-        PAIR_REASON=$(dsql "SELECT message FROM debug_log WHERE debug_log_id > $since AND message LIKE 'Scan unavailable:%' ORDER BY debug_log_id DESC LIMIT 1;")
-        [ -n "$PAIR_REASON" ] && { PAIR_STATUS=2; return 2; }
-        PAIR_REASON="the radio never answered in 60s -- is the macOS Bluetooth permission prompt waiting?"
-        PAIR_STATUS=1
-        return 1
-    fi
-
-    step "listening for advertisements..."
-    # Bounded just past the scan's own window (`BluetoothRadio.timeoutSeconds`, fifteen seconds), for the reason
-    # `50-device-scan` carries: waiting less than the radio listens calls a scan empty while it is still running, and
-    # waiting longer waits for something nothing is looking for any more.
-    if ! wait_for "$since" "%: peripheral %" 18 >/dev/null; then
-        # The scan is stopped on the way out: leaving the radio listening behind a script that has given up is what
-        # the timeout exists to prevent, and this path is reached before it fires.
-        press device-scan
-        PAIR_REASON="the scan ran its full 15 seconds and no TimeFlip answered it -- is the cube awake?"
-        PAIR_STATUS=1
-        return 1
-    fi
-
-    row=$(tree | grep -m1 -o "device-scan-result-[0-9A-Za-z:-]*")
-    if [ -z "$row" ]; then
-        press device-scan
-        PAIR_REASON="the app logged a device but drew no row to press"
-        PAIR_STATUS=1
-        return 1
-    fi
-
-    since=$(mark)
-    press "$row"
+    press "$SCAN_ROW"
     step "pairing..."
     if ! wait_for "$since" "Paired with %" 60 >/dev/null; then
-        PAIR_REASON="the cube was found but would not pair -- it may be on a PIN this app cannot present"
-        PAIR_STATUS=1
+        PAIR_REASON=$(dsql "SELECT message FROM debug_log WHERE debug_log_id > $since AND tag = 'pair' ORDER BY debug_log_id DESC LIMIT 1;")
+        PAIR_REASON="the cube was listed but did not pair${PAIR_REASON:+: $PAIR_REASON}"
         return 1
     fi
-
-    # **A pairing is enough to make the app follow the cube again** (2026-08-29): timing by hand is read from `paired`
-    # at the point of use, so writing that row is the whole of it and nothing has to be restarted.
-    #
-    # **The relaunch below is kept for the link, not for the mode.** What the scripts after this one inherit is a cube
-    # the app has actually reached -- a login, a face, a charge and a status -- and the relink is what guarantees one
-    # rather than leaving them to a connection that may or may not still be up. It also puts the lock and the pause a
-    # quit applies back where they were.
-    #
-    # **What it looks like when this is missing** is not a pairing failure, which is why it is worth the words: the
-    # cube pairs, connects, and answers, and the Faces tab draws the *manual* session instead of the cube's face. Run
-    # 84 (2026-08-23) failed on `55-device-face` reading `Limit 3` off manual face 14 where it wanted `Meeting` off
-    # cube face 2, with every device script before it green.
-    #
-    # Restarting is exactly what the app tells a user to do, and doing it here rather than in every caller keeps the
-    # meaning of "pair a cube" whole: pair it, and be a launch that uses it.
-    if ! relink_a_cube; then
-        PAIR_REASON="paired, but the launch restarted to use it did not reach the cube again within 90s"
-        PAIR_STATUS=1
-        return 1
-    fi
-    # Put the window back where the caller left it. Every one of them opens Settings on the Device tab before calling
-    # this and carries on using it afterwards.
-    open_settings
-    select_tab Device
     return 0
 }
 
-# **Takes the link down and lets the app bring it back up, without touching the pairing.**
-#
-# For the three scripts whose subject is what happens *as* a link comes up: the charge pulled on connecting (`54`),
-# the face read as the link opens (`55`), the clock set and the characteristics found after the login (`57`). None of
-# that can be asserted against a connection that is already up, because those rows are older than any mark the script
-# can take -- and none of it needs a new pairing, which is what calling `pair_a_cube` for it would cost.
-#
-# **A quit and a launch, which is the app's own reconnect.** `quit_app` lets the cube go and the launch after it
-# reaches for the cube on record, running the same login as a fresh pairing does: `DeviceLogin` is what asks for the
-# charge, the face and the state, and it runs on every connect rather than only on a first one. `53-device-reconnect`
-# is the script that proves that path, so everything relying on it here is already covered.
-#
-# **It is also how the run gets a link rather than only a pairing.** Following the cube needs no relaunch since
-# 2026-08-29 -- the app reads `paired` when it is asked, so it follows one the moment it is paired -- but what the
-# range wants is a cube actually reached, with a face, a charge and a status behind it. `51-device-connect` ends with
-# this for that reason, and hands the rest of the range a launch that has already talked to the pairing it made.
-#
-# **What it leaves behind: an unlocked, running cube, and it has to undo a quit to get there.** The app pauses and
-# locks the cube on its way out ("Quit: the cube is paused and locked"), so the launch this makes inherits one -- and
-# a cube that arrives stopped is a cube every script after it has to cope with. Coping is what the branches were:
-# `55`, `57`, `60` and `62` each carried an `if` asking what state the hardware had been left in, which is a check
-# that may or may not run and, on run 117, one that did not.
-#
-# So it is undone here, once, and every script downstream is entitled to a cube that is unlocked and counting. **Not a
-# guess about the state**: a quit always locks and always pauses, so the toggle below is aimed at a known state rather
-# than at whatever it finds. `57` locks the cube itself, that being its subject; nothing else has to think about it.
-#
-# **The window is the caller's business, not this function's**: `51` ends with it shut and `57` never opens one, while
-# `pair_a_cube` and the two scripts that read the Device tab afterwards put it back themselves.
+# Quits the app and launches it again, and waits for it to reconnect to the paired cube on its own. Answers 0 once
+# the app logs `Reconnected to`, and 1 when it has not within 90 seconds. Leaves the Settings window shut.
 relink_a_cube() {
     quit_app
     sleep 1
     local relaunched
     relaunched=$(mark)
     ensure_app_running
-    # Waited for rather than assumed: every caller goes straight on to something that needs the link up.
-    wait_for "$relaunched" "%: loggedIn" 90 >/dev/null || return 1
-
-    free_the_cube || return 1
-    return 0
+    wait_for "$relaunched" "Reconnected to %" 90 >/dev/null
 }
 
-# Takes off the lock and the pause a quit put on, so what follows inherits a cube that is counting.
+# Stops the run unless a cube is paired and connected: the device scripts after `51-device-connect` run on the cube it
+# pairs, and each leaves it behind. `$1` says what cannot be checked without one. Not a check, so it is not counted.
 #
-# **Aimed at a known state rather than at whatever it finds.** The app pauses and locks the cube on its way out
-# ("Quit: the cube is paused and locked"), always and both, so the dropdown's Lock item -- which unlocks and resumes in
-# one gesture (`CubeLock.resume`) -- undoes exactly the pair that was applied. Nothing is asked first, because there is
-# nothing to ask.
-#
-# **Every quit has to come through here, and that is the whole of the invariant.** `relink_a_cube` calls it, so
-# everything reached through `pair_a_cube` or `restore_the_pairing` is covered; `58-wrong-pin` quits on its own terms
-# and calls it directly. Run 119 (2026-08-27) is what one uncovered quit costs: `58` left the cube locked and paused,
-# `59` had no reason to care, and `60-device-backlog` took its cube out of range already stopped -- so the figure it
-# expects to go on counting stood still, and the failure read as the app having stopped following a cube.
-free_the_cube() {
-    local freeing
-    freeing=$(mark)
-    # **The app has to have asked the cube what state it is in before that menu item means anything.**
-    # `DeviceLogin.askWhatStateItIsIn` is what makes the Lock line honest, and its own comment says why: a freshly
-    # connected app would otherwise have to guess which way the item reads, and the guess it makes -- unlocked -- is
-    # exactly wrong for the cube this app locked on the way out last time. The answer is a `0x10` round trip and
-    # lands a second or so after the login.
-    #
-    # **Without this wait the item is pressed while it still says Lock, and the cube gets locked instead of freed.**
-    # Measured on Linux 2026-09-20: `Asking the cube what state it is in` at :02, `Menu item clicked: Lock` at :03,
-    # and `The cube is locked and paused` at :03 -- the answer arriving after the press it should have decided. The
-    # race is not Linux-specific; that platform is simply where it was lost first.
-    wait_for "$freeing" "The cube is %locked and %" 25 >/dev/null || {
-        red "  the app never read the cube state, so the Lock item cannot be trusted either way"
-        return 1
-    }
-    click_left
-    sleep 0.8
-    # **Through the menu port**, because this is a status-item item and not a window control. `press` searches the
-    # accessibility tree, which on Linux the tray is not in at all -- it is a D-Bus object -- so this reported
-    # `nothing in the tree matches name toggle-cube-lock` while the item sat in the menu (2026-09-20). The six
-    # presses in the check scripts were converted when `menu_press` was added and this one, being inside a helper,
-    # was missed.
-    menu_press toggle-cube-lock
-    wait_for "$freeing" "The cube is unlocked" 20 >/dev/null || return 1
-    wait_for "$freeing" "The cube is running" 20 >/dev/null || return 1
-    # **And then on the table, which is a second thing rather than the same one said twice.** The rows above say the
-    # cube confirmed the commands; what the callers of this actually inherit is the app's record of the cube, and that
-    # is written by the history fetch the resume sets off -- a couple of hundred milliseconds later, because a resumed
-    # cube files a fresh event and the app has to go and read it. Until it lands, the newest open segment is still the
-    # paused one this just undid.
-    #
-    # **Measured on 2026-08-28.** `57-cube-pause` asserts exactly this query at the top, failed on it with `1`, and the
-    # row that would have answered `0` was written 300ms after the check ran. The race has always been here and was
-    # simply always won; twelve face colours now go out on every connect, and the resume confirming between them moved
-    # the fetch late enough to lose it. The same query as the assertion on purpose, so what this promises and what
-    # that checks cannot come to differ.
-    if ! wait_sql "0" \
-        "SELECT paused FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY device_event_id DESC LIMIT 1;" \
-        15 >/dev/null
-    then
-        red "  the cube was unlocked and resumed, but device_event still shows it stopped"
-        return 1
-    fi
-    step "unlocked and counting again, which is what every script after this one is entitled to"
-    return 0
-}
-
-# ---------------------------------------------------------------------------- one pairing, for the whole device range
-#
-# **The device scripts run on the cube `51-device-connect` pairs, and every one of them leaves a cube behind.** A
-# script that needs a connection inherits the live one rather than forgetting it and pairing again, and a script whose
-# subject *is* giving a cube up -- the reset in `52`, the checked forgets in `53`, `54`, `55` and `56` -- calls
-# `restore_the_pairing` before it finishes so the next one still has what it expects.
-#
-# **This is the suite being read as a sequence, which is what it is.** Each script already starts from the state the
-# one above it left; pairing defensively at the top was the one place that was not true, and it cost a forget, a
-# ten-second scan, a pairing and a relaunch in each of eight scripts to arrive at a cube that was already sitting
-# there connected. What it bought was a single script surviving being run on its own, which is not a promise this
-# folder makes about anything else it depends on: `09-report` needs the entries `06` records, and nothing in it
-# arranges them.
-#
-# **So running one on its own is the caller's problem**, and `--keep` is how it is done. What this does instead is
-# make the failure immediate and say which state is missing, because the alternative is silent and late: with
-# nothing paired the Reset and Forget buttons are simply not on the tab, `press` says nothing about an element that
-# is not there, and the first wait after it times out sixty seconds later blaming the radio.
-#
-# **Not a check.** A precondition is a statement about the bench, not a verdict on the app, and counting it would put
-# the state the hardware was left in into `EXPECTED_CHECKS` (`57-cube-pause` records the run that was refused for
-# exactly that). It stops the run instead.
+# A launch still reaching for its cube is given 90 seconds to get there.
 require_a_paired_cube() {
     local paired connected
     paired=$(setting paired paired)
     if [ "$paired" = "1" ]; then
-        # **A launch that has just started is still on its way to the cube, and that is not a bench fault.** Reaching
-        # a paired cube again is a scan, a connect and a login; `ensure_app_running` waits for the *process* to appear
-        # and not for the radio, so a script run on its own reads this a second later and finds it false.
-        #
-        # Run 115 (2026-08-27): `run.sh --keep 62` refused outright on a cube that was paired, awake, and about forty
-        # seconds from connected, because the run before it had quit the app on its way out. In the suite this costs
-        # nothing -- the script above has left the link up, so the first poll answers -- and 90s is the same budget
-        # `relink_a_cube` gives the same wait.
         connected=$(wait_sql "1" "SELECT json_extract(setting_value, '\$.connected') FROM setting WHERE setting_name = 'connection';" 90)
     fi
     [ "$paired" = "1" ] && [ "$connected" = "1" ] && return 0
@@ -651,16 +488,8 @@ require_a_paired_cube() {
     exit 2
 }
 
-# **Puts back the pairing this script gave up**, for the next script in the range, which inherits rather than arranges.
-#
-# **Not a check either**, for `require_a_paired_cube`'s reason: whether a cube can be paired again is not the subject
-# of any script that calls this, and every one of them has already asserted the giving-up that made it necessary.
-#
-# **But never a skip, which is the part that cost a run.** `00-setup` has already confirmed a TimeFlip is here, so from
-# that point on "no cube could be paired" is a bench that has stopped working, not an answer. Passed over quietly it
-# read as green: on 2026-08-22 `55-device-face` tested nothing at all because a busy database dropped one write of
-# `recordPairing`, and the run finished `outcome: passed`. So this stops the run and exits non-zero, because
-# everything after it would otherwise fail at a cube that is not there and report it as the app being wrong.
+# Pairs the cube again, for a script that gave its pairing up, so the next script still has one. Not a check. Stops
+# the run when it cannot, since everything after it needs the cube.
 restore_the_pairing() {
     if pair_a_cube; then
         step "the cube is paired again, which is what the next script starts from"
@@ -1604,6 +1433,20 @@ element() { tree | grep -m1 -E "id=$1($|[[:space:]])" || true; }
 #
 # **For a check made straight after an action changes the element.** The accessibility tree catches up with the
 # app after the change, and on Linux that has taken longer than a read made at once.
+# `notice_text [wanted] [timeout]` -- the whole of the notice showing, title to buttons, waiting up to `timeout` seconds
+# (default 5) for it to contain `wanted`. A message with a blank line in it spans several lines of the tree, so
+# `element notice-message` holds only its first paragraph and this is what reads the rest.
+notice_text() {
+    local wanted="${1:-}" timeout="${2:-5}" waited=0 text=""
+    while [ "$waited" -lt "$((timeout * 5))" ]; do
+        text=$(platform_alert_message)
+        case "$text" in *"$wanted"*) break ;; esac
+        sleep 0.2
+        waited=$((waited + 1))
+    done
+    printf '%s\n' "$text"
+}
+
 element_eventually() {
     local identifier="$1" wanted="$2" timeout="${3:-5}" waited=0 line=""
     while [ "$waited" -lt "$((timeout * 5))" ]; do
