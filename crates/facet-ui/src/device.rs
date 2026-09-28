@@ -829,6 +829,9 @@ impl Device {
                 link.write(uuids::COMMAND, &command::set_led_brightness(settings.led_brightness_percent))?;
                 lines.record(Tag::Command, || format!("Telling the cube blink period {}s", settings.led_blink_seconds));
                 link.write(uuids::COMMAND, &command::set_led_blink(settings.led_blink_seconds))?;
+                if let Err(error) = session::turn_double_tap_off(link, lines) {
+                    lines.record(Tag::Command, || format!("The double tap could not be checked: {}", plain(&error)));
+                }
                 let mut status = None;
                 if cube_minutes != Some(settings.auto_pause_minutes) {
                     lines.record(Tag::Command, || {

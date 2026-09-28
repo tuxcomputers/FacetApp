@@ -334,6 +334,37 @@ pub fn set_lock(link: &mut dyn Link, on: bool, log: &impl Record) -> Result<(Cub
     Ok((status, took))
 }
 
+/// Makes sure the logged-in cube's double tap cannot fire: reads the registers with `0x17`, and when the window is not
+/// already 0 sends [`command::DOUBLE_TAP_OFF`] with `0x16` and reads them back. Returns whether the window read is 0.
+pub fn turn_double_tap_off(link: &mut dyn Link, log: &impl Record) -> Result<bool, String> {
+    let read = |link: &mut dyn Link| -> Result<[u8; 4], String> {
+        let answer = ask(link, command::READ_DOUBLE_TAP, log)?;
+        command::double_tap(&answer)
+            .ok_or_else(|| format!("the answer to 0x17 was not the registers ({})", command::hex(&answer)))
+    };
+    let [threshold, limit, latency, window] = read(link)?;
+    log.record(Tag::Command, || {
+        format!("The cube's double tap is Threshold {threshold}, Limit {limit}, Latency {latency}, Window {window}")
+    });
+    if window == 0 {
+        log.record(Tag::Command, || "Double tap is off on the cube already".to_string());
+        return Ok(true);
+    }
+    let bytes = command::set_double_tap(command::DOUBLE_TAP_OFF);
+    log.record(Tag::Command, || format!("Sending {}", command::hex(&bytes)));
+    link.write(uuids::COMMAND, &bytes)?;
+    let is_off = read(link)?[3] == 0;
+    log.record(Tag::Command, || {
+        if is_off {
+            "Double tap is off on the cube"
+        } else {
+            "The cube would not take the double tap registers"
+        }
+        .to_string()
+    });
+    Ok(is_off)
+}
+
 /// How long a history stream may go without a frame before it is taken as over.
 pub const HISTORY_FRAME_TIMEOUT: Duration = Duration::from_secs(6);
 
@@ -600,6 +631,11 @@ mod tests {
             Ok((true, true))
         );
         assert_eq!(set_lock(&mut *link, false, &log).map(|(_, took)| took), Ok(true));
+        assert_eq!(turn_double_tap_off(&mut *link, &log), Ok(true));
+        assert_eq!(cube.commands().last(), Some(&vec![0x16, 0x3A, 90, 0x3B, 20, 0x3C, 50, 0x3D, 0]));
+        let sent = cube.commands().len();
+        assert_eq!(turn_double_tap_off(&mut *link, &log), Ok(true));
+        assert_eq!(cube.commands().len(), sent, "a window already at 0 sends nothing");
         assert_eq!(battery(&mut *link, &log), Some(87));
         assert_eq!(device_info(&mut *link, &log).firmware.as_deref(), Some("FW_v3.64"));
     }

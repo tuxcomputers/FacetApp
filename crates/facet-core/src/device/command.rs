@@ -45,6 +45,30 @@ pub fn set_auto_pause(minutes: i64) -> Vec<u8> {
     vec![0x05, high, low]
 }
 
+/// Ask for the accelerometer's double-tap registers. Answered by `17 3A TH 3B LI 3C LT 3D WD`, which echoes its own
+/// command byte.
+pub const READ_DOUBLE_TAP: u8 = 0x17;
+
+/// The double-tap registers the app sends: the cube's own factory threshold, limit and latency (measured, finding 11)
+/// with the window at 0, which leaves a second knock no time to arrive in. No command turns the gesture off.
+pub const DOUBLE_TAP_OFF: [u8; 4] = [90, 20, 50, 0];
+
+/// `0x16`: the double-tap registers `[threshold, limit, latency, window]`, each after its register address.
+pub fn set_double_tap(registers: [u8; 4]) -> Vec<u8> {
+    let [threshold, limit, latency, window] = registers;
+    vec![0x16, 0x3A, threshold, 0x3B, limit, 0x3C, latency, 0x3D, window]
+}
+
+/// Reads a `0x17` answer as `[threshold, limit, latency, window]`. `None` for an answer that is not a `0x17` one.
+pub fn double_tap(answer: &[u8]) -> Option<[u8; 4]> {
+    match answer {
+        [0x17, 0x3A, threshold, 0x3B, limit, 0x3C, latency, 0x3D, window, ..] => {
+            Some([*threshold, *limit, *latency, *window])
+        }
+        _ => None,
+    }
+}
+
 /// `0x15`: the cube's name, as its length and then its ASCII. `None` for a name that is empty, not ASCII, or longer
 /// than [`super::name::MAXIMUM_LENGTH`]. There is no read-back for it: the cube reports the name as its GAP name on
 /// the next connection.
@@ -115,6 +139,13 @@ pub fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_double_tap_registers_go_and_come_back_with_their_addresses() {
+        assert_eq!(set_double_tap(DOUBLE_TAP_OFF), vec![0x16, 0x3A, 90, 0x3B, 20, 0x3C, 50, 0x3D, 0]);
+        assert_eq!(double_tap(&[0x17, 0x3A, 90, 0x3B, 20, 0x3C, 50, 0x3D, 0, 0, 0]), Some([90, 20, 50, 0]));
+        assert_eq!(double_tap(&[0x02, 0x02, 0, 5]), None);
+    }
 
     #[test]
     fn a_name_goes_as_its_length_then_its_ascii() {

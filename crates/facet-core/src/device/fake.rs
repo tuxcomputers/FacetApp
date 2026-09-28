@@ -24,6 +24,7 @@ struct State {
     face: u8,
     is_locked: bool,
     is_paused: bool,
+    double_tap: [u8; 4],
     /// The cube's history, as frames of 17 bytes, oldest first.
     history: Vec<[u8; 17]>,
     /// Where each connection's history notifications go.
@@ -40,6 +41,7 @@ impl FakeCube {
             clock: 1_789_886_547,
             face: 2,
             is_paused: true,
+            double_tap: [90, 20, 50, 50],
             ..State::default()
         })))
     }
@@ -209,6 +211,14 @@ impl Link for FakeLink {
                 Some(0x07) => {
                     self.result = vec![0x07];
                     self.result.extend_from_slice(&state.clock.to_be_bytes());
+                }
+                Some(0x17) => {
+                    let [threshold, limit, latency, window] = state.double_tap;
+                    self.result = vec![0x17, 0x3A, threshold, 0x3B, limit, 0x3C, latency, 0x3D, window];
+                }
+                Some(0x16) if bytes.len() == 9 => {
+                    state.double_tap = [bytes[2], bytes[4], bytes[6], bytes[8]];
+                    state.commands.push(bytes.to_vec());
                 }
                 Some(0x08) if bytes.len() == 9 => {
                     state.clock = u64::from_be_bytes(bytes[1..9].try_into().expect("eight bytes"));
