@@ -797,7 +797,8 @@ impl Device {
     }
 
     /// Pauses the cube if it is running and resumes it if it is paused, on a background thread. Which way is read
-    /// from the open cube segment. Refused, and said, with no cube connected or with the cube locked.
+    /// from the open cube segment, or from the cube's last `0x10` answer while there is none. Refused, and said, with
+    /// no cube connected or with the cube locked.
     pub fn toggle_cube_pause(&self) {
         if !self.is_cube_connected() {
             self.log.record(Tag::Command, || {
@@ -815,7 +816,12 @@ impl Device {
         let Some(reading) = self.report(facet_core::timing::read_cube(&connection, now_seconds())) else {
             return;
         };
-        let pause = !reading.as_ref().is_some_and(|reading| reading.is_paused);
+        // The open cube segment says which way, and with none yet the cube's own last answer does.
+        let is_paused = match &reading {
+            Some(reading) => reading.is_paused,
+            None => self.cube_status.get().is_some_and(|status| status.is_paused),
+        };
+        let pause = !is_paused;
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
             let status =
