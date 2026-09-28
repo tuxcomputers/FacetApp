@@ -486,7 +486,10 @@ impl Device {
         let pins = Arc::clone(&self.pins);
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
-            let stored = stored_pin(&pins, lines);
+            let stored = match stored_pin(&pins, lines) {
+                Ok(stored) => stored,
+                Err(message) => return Outcome::PairingFailed { label, message },
+            };
             let candidates = login::pairing_candidates(stored.as_deref());
             let new_pin = match login::new_pin() {
                 Ok(pin) => pin,
@@ -526,7 +529,10 @@ impl Device {
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
             lines.record(Tag::Pair, || "Looking for the paired cube".to_string());
-            let stored = stored_pin(&pins, lines);
+            let stored = match stored_pin(&pins, lines) {
+                Ok(stored) => stored,
+                Err(message) => return Outcome::ReconnectFailed { message },
+            };
             let stop = AtomicBool::new(false);
             let mut found: Vec<Advert> = Vec::new();
             let scanned = radio.scan(Duration::from_secs(scan::SCAN_SECONDS), &stop, &mut |advert| {
@@ -783,14 +789,16 @@ impl Device {
     }
 }
 
-/// The PIN the store holds, or `None` when it holds none or cannot be read, which is said.
-fn stored_pin(pins: &Arc<dyn SecretStore>, lines: &Lines) -> Option<String> {
+/// The PIN the store holds, or `None` when it holds none. An error, already logged, is a store that would not
+/// answer, and says so in words fit for the Device tab; the caller stops there rather than presenting a PIN.
+fn stored_pin(pins: &Arc<dyn SecretStore>, lines: &Lines) -> Result<Option<String>, String> {
     match timed::look_up(pins) {
-        SecretLookup::Found(pin) => Some(pin),
-        SecretLookup::Missing => None,
+        SecretLookup::Found(pin) => Ok(Some(pin)),
+        SecretLookup::Missing => Ok(None),
         SecretLookup::Unavailable(reason) => {
-            lines.record_failure(Tag::Pin, || format!("The stored PIN could not be read: {reason}"));
-            None
+            lines
+                .record_failure(Tag::Pin, || format!("The stored PIN could not be read: {}", plain(&reason)));
+            Err(format!("The stored PIN could not be read, so no cube was contacted: {reason}"))
         }
     }
 }
@@ -962,6 +970,20 @@ mod tests {
         }
     }
 
+    /// A store that never answers with a secret, as a Keychain waiting on a permission prompt.
+    struct UnreadableStore;
+    impl SecretStore for UnreadableStore {
+        fn store(&self, _secret: &str) -> Result<bool, String> {
+            Err("locked".into())
+        }
+        fn look_up(&self) -> SecretLookup {
+            SecretLookup::Unavailable("locked".into())
+        }
+        fn clear(&self) -> Result<(), String> {
+            Err("locked".into())
+        }
+    }
+
     fn settle(device: &Device) {
         for _ in 0..200 {
             std::thread::sleep(Duration::from_millis(25));
@@ -1069,7 +1091,38 @@ mod tests {
         settle(&device);
         assert_eq!(data.get_connection(), "Connected");
         assert_eq!(pin.lock().expect("lock").as_str(), before);
+        drop(device);
 
+        // A store that will not answer stops the reconnect before any PIN is presented.
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let locked = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::new(UnreadableStore),
+        );
+        locked.open();
+        settle(&locked);
+        locked.reconnect();
+        settle(&locked);
+        assert!(data.get_scan_status().contains("stored PIN could not be read"));
+        assert_eq!(data.get_connection(), "Disconnected");
+        assert!(!rows::pairing(&connection).expect("read").is_cube_connected);
+        drop(locked);
+
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let device = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::clone(&store) as Arc<dyn SecretStore>,
+        );
+        device.open();
+        settle(&device);
         device.forget();
         settle(&device);
         let held = rows::pairing(&connection).expect("read");
@@ -1098,6 +1151,27 @@ mod tests {
         assert_eq!(empty.look_up(), SecretLookup::Missing);
         assert!(!rows::pairing(&connection).expect("read").is_cube_paired);
         assert_eq!(pin.lock().expect("lock").as_str(), "654321");
+        drop(device);
+
+        // Nor does pairing: a cube on the vendor PIN is left on it.
+        *pin.lock().expect("lock") = "000000".to_string();
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let locked = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::new(UnreadableStore),
+        );
+        locked.open();
+        locked.scan_pressed();
+        settle(&locked);
+        locked.pair("cube");
+        settle(&locked);
+        assert!(data.get_scan_status().contains("stored PIN could not be read"));
+        assert!(!rows::pairing(&connection).expect("read").is_cube_paired);
+        assert_eq!(pin.lock().expect("lock").as_str(), "000000");
 
         std::fs::remove_file(&path).expect("the test database should be removable");
     }
