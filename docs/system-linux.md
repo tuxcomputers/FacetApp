@@ -512,10 +512,12 @@ token with it and puts a password dialog in front of whoever is at the screen.
 | Cube, as this box names it | `E8:DB:D8:CF:F9:0F`, address type **random** |
 | Cube name | `TimeFlip v2.0`, the same string the Mac sees |
 | As the app's own identifier | `FACE7000-0000-0000-0000-E8DBD8CFF90F`, derived from the address |
+| As btleplug names it | `hci0/dev_E8_DB_D8_CF_F9_0F`, the BlueZ object path under the adapter. It is the handle a pairing here would store in `device_uuid`; no pairing has been made on Linux yet, so no such row has been seen. Its adverts carry **no RSSI** |
 | Paired / Bonded / Trusted | **no / no / no**, and that is correct here |
 
 Adapter and BlueZ measured 2026-09-07; the cube rows re-confirmed 2026-09-20 with `bluetoothctl info`
-against the cube in range.
+against the cube in range. The btleplug row measured 2026-09-28 on the laptop by `cargo run -p facet-adapters --example
+radio-check`, which connected, read battery and Device Information, and had the vendor PIN refused as expected.
 
 **The address is random rather than public, so durability could not be assumed — but it has now been
 measured.** `E8:DB:D8:CF:F9:0F` was the same before and after a factory reset
