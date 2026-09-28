@@ -10,7 +10,7 @@ They need no AI, no Claude, and nothing installed beyond what building the app a
 
 **Status, 2026-09-27: ten checks are back.** `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11` and `12` pass on both
 machines, 293 checks, with each machine's latest run in `last-run-mac.md` and `last-run-linux.md`;
-`13-device-tab` passes its 37 on both, run on its own (on Linux on 2026-09-28, with the radio) and not yet in a stamped full run. **The device range passed on the Mac on 2026-09-28**: `50`, `51`, `53`, `54`, `63`, `65`, `67` and `68`. `52-device-reset`, `66-device-rename` and `99-quit` came with the reset and the rename later that day and have not run yet. **`11-google-reconnect` needs a person**: it opens the browser for a Google sign-in and
+`13-device-tab` passes its 37 on both, run on its own (on Linux on 2026-09-28, with the radio) and not yet in a stamped full run. **The device range passed on the Mac on 2026-09-28**: `50`, `51`, `53`, `54`, `63`, `65`, `67` and `68`. `52`, `66` and `99` passed on both machines that day. **The time-tracking range, `55`, `57`, `61`, `62` and `64`, came with `feature/timeTracking` on 2026-09-29**; `57`, `61` and `64` have passed on the laptop run on their own, and `55` and `62` need hands for their turns. **`11-google-reconnect` needs a person**: it opens the browser for a Google sign-in and
 waits four minutes for it, so a full run wants somebody near the screen. The rest of the 32 numbered checks
 are still missing, because a check for a feature the Rust app does not have yet cannot pass. [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists all 32 with
 what each proved, and each goes back as its feature lands.
@@ -238,16 +238,16 @@ correctly, so it passes and the line says which case it met.
 | `52-device-reset` | the factory reset: asked, called off, then sent, proved on the vendor PIN, and forgotten, and the wiped cube paired onto a new PIN |
 | `53-device-reconnect` | a quit closing the link, a paired app reaching its own cube at launch with the window shut, Forget, and a launch with nothing paired |
 | `54-device-battery` | the charge read as the link comes up, followed from then on, and shown on the tab, and the battery warning row |
-| `55-device-face` | the face the cube is on, in the menu bar and on the Faces tab (**asks you to turn the cube**) |
+| `55-device-face` | the login's clock and face, history filed into `device_event` and growing in place, the Faces tab following the cube, and a turn opening a new segment (**asks you to turn the cube**) |
 | `56-manual-mode` | a paired app that cannot find its cube: what a click refuses, and what taking manual mode stops (**asks you to switch Bluetooth off and on**) |
-| `57-cube-pause` | the status item's right half: one click stops and starts the cube, two lock and unlock it (**ends by asking you to turn a paused cube**) |
+| `57-cube-pause` | the menu's Pause, Resume, Lock and Unlock on the cube, each read back, the pause before the lock, and the quit leaving it paused and locked |
 | `58-wrong-pin` | a cube that refuses this app's PIN: the offer, Retry, and taking manual mode (**asks you to answer a dialog twice**) |
 | `59-double-tap` | the four registers: stepped, sent, read back off the cube, then written down, and dead while the gesture is off |
 | `60-device-backlog` | a cube out of range: what the app shows, what it refuses to write, and what the cube backfills when it returns (**asks you to switch Bluetooth off and on, and to turn the cube in between**) |
-| `61-lock-without-pause` | locking the cube from the status item with `pause_on_lock` off |
-| `62-forced-pause` | the app stopping the cube itself: a face with no category, and a category that has spent its `daily_limit` (**asks you to turn the cube four times**) |
+| `61-lock-without-pause` | locking the cube from the menu with `pause_on_lock` off |
+| `62-forced-pause` | the app stopping the cube itself: a face with no category, lifted once the face is given one, and a category that has spent its `daily_limit` (**asks you to turn the cube twice**) |
 | `63-led-settings` | the cube LED: brightness and blink period stepped, sent to the cube, then written down |
-| `64-face-colours` | the cube lit in its faces colours: twelve on connecting, and one when a category is recoloured |
+| `64-face-colours` | the cube lit in its faces' colours: twelve on connecting, and a face relit when its category is recoloured |
 | `65-auto-pause` | the cube auto-pause delay: stepped, sent as `0x05`, read back with `0x10`, then written down, and the cube stopping itself on it (**asks you to turn the cube, then to leave it alone for a minute**) |
 | `66-device-rename` | the cube renamed from the Device tab: `0x15` to the hardware, the row written only after it, and the cube still found afterwards |
 | `67-pause-on-lock` | the pause-on-lock row: written to the table and sent nowhere |

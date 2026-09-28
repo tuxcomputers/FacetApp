@@ -353,7 +353,9 @@ ask_about_the_device() {
         "machine's keyring (the login Keychain on the Mac). A cube on a PIN another machine" \
         "set cannot be paired here: take its batteries out first to put it back on 000000." \
         "" \
-        "68-device-link-lost asks you to switch Bluetooth off and back on." \
+        "Some scripts need your hands: 51 asks for the cube to rest on Break, 55 for turns onto" \
+        "Meeting and back, 62 for a turn onto a face with no category and back, and" \
+        "68-device-link-lost for Bluetooth off and back on. Each waits, and carries on by itself." \
         "" \
         "Then:" \
         "1. Flip the cube onto any face -- a sleeping cube does not advertise, so it cannot be found." \
