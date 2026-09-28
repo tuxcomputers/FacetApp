@@ -2,7 +2,7 @@
 # The cube lit in its faces' colours: all twelve with 0x11 once a login has asked its own questions, and the faces a
 # category wears relit when it is recoloured. There is no read-back, so the app's own row per face is the evidence.
 #
-# **Starts from the cube running on Break**, and leaves Break red as seeded.
+# **Starts from the cube running on Break**, and leaves Break red and face 8 locked, as seeded.
 #
 # **Converted from the Swift suite 2026-09-29**, against `feature/timeTracking`. The wording is the Rust app's.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -10,7 +10,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=12
+EXPECTED_CHECKS=16
 start "the cube's face colours"
 
 require_a_paired_cube "there is no cube to light"
@@ -51,7 +51,14 @@ check "and nothing more is sent after them" "12" \
 
 # ---------------------------------------------------------------------------- a recolour
 
+# Break is on face 8, which is locked as seeded, and a category on a locked face keeps its colour; the face is unlocked
+# from the Faces tab for the recolour and locked again after it.
 open_settings
+select_tab Faces
+since=$(mark)
+press timing-face-lock
+expect_log "the Faces tab unlocks the face the cube rests on" "$since" "Button clicked: face 8 lock -> unlocked"
+check "and the table holds it" "0" "$(sql "SELECT locked FROM face WHERE face_id = 8;")"
 select_tab Categories
 since=$(mark)
 press "category-colour-$BREAK"
@@ -68,5 +75,10 @@ sleep 0.5
 press colour-option-Red
 check "Break goes back to Red" "$RED" "$(sql "SELECT colour_id FROM category WHERE category_id = $BREAK;")"
 expect_log "and its face is relit red" "$since" "The cube took face 8 Break #ff0000 as rgb16 ffff,0000,0000 (Break was recoloured)%" 15
+select_tab Faces
+since=$(mark)
+press timing-face-lock
+expect_log "the face is locked again" "$since" "Button clicked: face 8 lock -> locked"
+check "and the table holds it" "1" "$(sql "SELECT locked FROM face WHERE face_id = 8;")"
 close_settings
 finish
