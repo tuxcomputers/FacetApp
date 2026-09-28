@@ -5,39 +5,42 @@ Written by `Tests/Scripted/run.sh` at the end of every run, and committed.
 run, and a stamp that does not describe a real run is worse than no stamp at all.
 
     branch:   feature/deviceTab
-    commit:   32d3fa2998a514d7ce8872fe19ec2c1ad762aea4
+    commit:   371484f007184b40df308df988c93417dc8b15a1
     tree:     clean
     database: rebuilt from the DDL
-    started:  2026-09-28 19:44:55
-    finished: 2026-09-28 19:53:54
+    started:  2026-09-28 21:04:13
+    finished: 2026-09-28 21:14:37
     outcome:  passed
-    scripts:  18 of 18 run, 0 with failures
+    scripts:  21 of 21 run, 0 with failures
     short:    0 ran fewer checks than they declare
-    checks:   497 in total
-              497 passed
+    checks:   560 in total
+              560 passed
               0 failed
 
 | script | expected | passed | failed | time |
 |---|---|---|---|---|
-| 00-setup | 1 | 1 | 0 | 0m 01s (0m 53s) |
+| 00-setup | 1 | 1 | 0 | 0m 00s (0m 38s) |
 | 03-settings-window | 35 | 35 | 0 | 0m 22s |
-| 04-categories | 98 | 98 | 0 | 1m 41s |
+| 04-categories | 98 | 98 | 0 | 1m 40s |
 | 05-faces-timing | 29 | 29 | 0 | 0m 27s |
 | 06-time-entries | 12 | 12 | 0 | 0m 18s |
 | 08-app-settings | 44 | 44 | 0 | 0m 31s |
 | 09-report | 25 | 25 | 0 | 0m 16s |
-| 11-google-reconnect | 20 | 20 | 0 | 0m 04s (0m 22s) |
-| 12-daily-limit | 29 | 29 | 0 | 1m 19s |
-| 13-device-tab | 37 | 37 | 0 | 0m 20s |
-| 50-device-scan | 20 | 20 | 0 | 0m 37s |
-| 51-device-connect | 43 | 43 | 0 | 0m 19s |
-| 53-device-reconnect | 33 | 33 | 0 | 0m 36s |
-| 54-device-battery | 12 | 12 | 0 | 0m 11s |
+| 11-google-reconnect | 20 | 20 | 0 | 0m 03s (0m 17s) |
+| 12-daily-limit | 29 | 29 | 0 | 1m 18s |
+| 13-device-tab | 39 | 39 | 0 | 0m 22s |
+| 50-device-scan | 20 | 20 | 0 | 0m 38s |
+| 51-device-connect | 43 | 43 | 0 | 0m 18s |
+| 52-device-reset | 31 | 31 | 0 | 0m 26s |
+| 53-device-reconnect | 33 | 33 | 0 | 0m 34s |
+| 54-device-battery | 13 | 13 | 0 | 0m 13s |
 | 63-led-settings | 24 | 24 | 0 | 0m 06s |
 | 65-auto-pause | 16 | 16 | 0 | 0m 04s |
+| 66-device-rename | 22 | 22 | 0 | 0m 23s |
 | 67-pause-on-lock | 7 | 7 | 0 | 0m 04s |
-| 68-device-link-lost | 12 | 12 | 0 | 0m 11s (0m 16s) |
-| **total** | **497** | **497** | **0** | **7m 27s (1m 31s)** |
+| 68-device-link-lost | 12 | 12 | 0 | 0m 10s (0m 59s) |
+| 99-quit | 7 | 7 | 0 | 0m 14s |
+| **total** | **560** | **560** | **0** | **8m 27s (1m 54s)** |
 
 A bracketed figure is time the script spent waiting for a person, already taken out of the time beside it.
 
