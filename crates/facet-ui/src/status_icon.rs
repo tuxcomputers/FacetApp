@@ -169,12 +169,12 @@ fn pause(x: i32, y: i32) -> bool {
 /// come out lopsided. Only the half above the body is kept, which is what turns a ring into a shackle.
 fn lock(x: i32, y: i32) -> bool {
     let body_top = 15;
-    let body = x >= MARGIN + 2 && x < CELL - MARGIN - 2 && y >= body_top && y < CELL - MARGIN - 1;
+    let body = (MARGIN + 2..CELL - MARGIN - 2).contains(&x) && (body_top..CELL - MARGIN - 1).contains(&y);
 
     let dx = x - CELL / 2;
     let dy = y - body_top;
     let squared = dx * dx + dy * dy;
-    let shackle = y < body_top && squared <= 8 * 8 && squared >= 5 * 5;
+    let shackle = y < body_top && (5 * 5..=8 * 8).contains(&squared);
 
     body || shackle
 }
