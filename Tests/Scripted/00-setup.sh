@@ -19,6 +19,8 @@
 #
 #   1. **`debug` logging is on**, in the trace directory `lib.sh` reads.
 #   2. **The app is not running**, so the next script gets a cold start with that setting read at launch.
+#   3. **Whether a TimeFlip may be used has been asked**, once, and the answer written for `device_required`. A no is
+#      not a setup failure: it stops the run at `50-device-scan`, after every script that needs no cube.
 #
 # **This writes straight to the tables**, which every other script in this folder is forbidden from doing.
 # It is right here for the same reason it is wrong there: the app is not running while the row goes in, so
@@ -67,6 +69,12 @@ fi
 # none. Written while the app is shut, like the row above. `seed-private.sh` says why the values live outside
 # the repository.
 apply_private_seeds
+
+if ask_about_the_device; then
+    step "a TimeFlip is available for the device scripts"
+else
+    step "no TimeFlip for this run, so it stops at 50-device-scan"
+fi
 
 # ---------------------------------------------------------------------------- the one verdict
 
