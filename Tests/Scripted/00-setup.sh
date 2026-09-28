@@ -19,7 +19,10 @@
 #
 #   1. **`debug` logging is on**, in the trace directory `lib.sh` reads.
 #   2. **The app is not running**, so the next script gets a cold start with that setting read at launch.
-#   3. **Whether a TimeFlip may be used has been asked**, once, and the answer written for `device_required`. A no is
+#   3. **A Google account is connected, with its sign-in in the secret store.** When either half is missing the
+#      app is opened on the App tab and a sign-in is asked for, since only a person can give one. It is captured
+#      and reseeded from then on, so this is asked once per machine rather than once per run.
+#   4. **Whether a TimeFlip may be used has been asked**, once, and the answer written for `device_required`. A no is
 #      not a setup failure: it stops the run at `50-device-scan`, after every script that needs no cube.
 #
 # **This writes straight to the tables**, which every other script in this folder is forbidden from doing.
@@ -69,6 +72,38 @@ fi
 # none. Written while the app is shut, like the row above. `seed-private.sh` says why the values live outside
 # the repository.
 apply_private_seeds
+
+email=$(setting google_account email)
+if [ -z "$email" ]; then
+    google_trouble="No Google account is connected, and this run needs one."
+elif [ "$(token_stored)" != "yes" ]; then
+    google_trouble="The settings hold a Google account ($email) but its sign-in is not in the secret store."
+else
+    google_trouble=""
+fi
+if [ -n "$google_trouble" ]; then
+    ensure_app_running
+    open_settings
+    select_tab App
+    if action_required \
+        "$google_trouble" \
+        "03-settings-window and 11-google-reconnect both fail without a working one, so the" \
+        "run cannot clear CI as it stands." \
+        "" \
+        "The Settings window is open on the App tab. Press Sign in with Google (Disconnect" \
+        "first if it offers that), consent in the browser, and come back here." \
+        "" \
+        "Answer n to carry on without one and let 03 and 11 fail."; then
+        email=$(setting google_account email)
+    fi
+    close_settings
+    quit_app
+    if [ -z "$email" ] || [ "$(token_stored)" != "yes" ]; then
+        trouble "no working Google account is connected, so 03 and 11 have nothing to work with"
+    else
+        step "signed in to Google as $email"
+    fi
+fi
 
 if ask_about_the_device; then
     step "a TimeFlip is available for the device scripts"

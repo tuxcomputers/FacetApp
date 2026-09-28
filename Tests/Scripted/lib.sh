@@ -317,6 +317,21 @@ device_required() {
     [ -n "$run" ] && [ "$answered" = "$run" ] && [ "$remembered" = "yes" ]
 }
 
+# Whether the secret store holds the Google refresh token, as yes or no. **Never prints the token**: the lookup's
+# output is counted, not shown. A probe whose failure is the answer, so its status is the result rather than
+# something to report.
+token_stored() {
+    local bytes
+    case "$PLATFORM" in
+        mac)
+            security find-generic-password -s au.com.tux.facet.google-refresh -a refresh-token >/dev/null 2>&1 \
+                && echo yes || echo no ;;
+        linux)
+            bytes=$(secret-tool lookup service au.com.tux.facet.google-refresh username refresh-token 2>/dev/null | wc -c)
+            [ "${bytes:-0}" -gt 0 ] && echo yes || echo no ;;
+    esac
+}
+
 # Asks, once, and writes the answer against this run's id. **Only `00-setup` calls this**, so that reading the answer
 # with `device_required` can never turn into asking for it part way through a run nobody is watching.
 #
