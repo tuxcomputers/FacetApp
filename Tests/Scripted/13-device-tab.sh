@@ -60,8 +60,9 @@ check "and the inner fold is back as it was built" "0" "$(on_tab device-led-brig
 
 check_contains "the Name row says there is no device" "$(element device-name)" "Not paired"
 # The Name row will not open for the same reason: renaming is a command that has to reach a cube. The live case is
-# `66-device-rename`.
-check_contains "and says why it will not open" "$(element device-name)" "no name to change"
+# `66-device-rename`. Why it will not open is in its accessible description, which the Mac tree does not show, so
+# the words are the crate tests' and this checks the row being dead.
+check_contains "and the row is dead" "$(element device-name)" "disabled"
 press device-name
 sleep 0.5
 check "so pressing the name opens no field" "0" "$(on_tab device-name-field)"
