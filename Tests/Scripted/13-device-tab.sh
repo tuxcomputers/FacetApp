@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=39
+EXPECTED_CHECKS=38
 start "the Device tab's two sections, and the folds that need no cube"
 
 open_settings
@@ -60,9 +60,8 @@ check "and the inner fold is back as it was built" "0" "$(on_tab device-led-brig
 
 check_contains "the Name row says there is no device" "$(element device-name)" "Not paired"
 # The Name row will not open for the same reason: renaming is a command that has to reach a cube. The live case is
-# `66-device-rename`. Why it will not open is in its accessible description, which the Mac tree does not show, so
-# the words are the crate tests' and this checks the row being dead.
-check_contains "and the row is dead" "$(element device-name)" "disabled"
+# `66-device-rename`. Neither tree shows it as dead (the Mac hides its description, and AT-SPI does not mark it
+# disabled), so pressing it is the check, and the reason's words are the crate tests'.
 press device-name
 sleep 0.5
 check "so pressing the name opens no field" "0" "$(on_tab device-name-field)"
