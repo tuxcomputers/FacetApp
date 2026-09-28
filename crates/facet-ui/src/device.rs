@@ -26,6 +26,7 @@ use facet_core::device::command::{self, CubeStatus};
 use facet_core::device::name::{self, NameDecision, NameProblem};
 use facet_core::device::rows::{self, DeviceInfo, DeviceSetting};
 use facet_core::device::session::{Fetched, ResetOutcome};
+use facet_core::device::system_state::{self, CubeHardwareState, CubeSyncState};
 use facet_core::device::trace::TracedRadio;
 use facet_core::device::{colour, face, history, info, login, scan, session, uuids};
 use facet_core::port::{Advert, Link, Radio, RadioState, SecretLookup, SecretStore};
@@ -97,6 +98,14 @@ enum Outcome {
     Battery(u8),
     /// The face the cube says is up, sent while the link is up. Not a finished job.
     Face(u8),
+    /// A system state value the cube sent while the link is up. Not a finished job.
+    SystemState(Vec<u8>),
+    /// The settings sync after a login ended: the status the cube read back when auto-pause was sent, and its system
+    /// state.
+    Synced {
+        status: Option<CubeStatus>,
+        system_state: Option<Vec<u8>>,
+    },
     HistoryFetched {
         reason: String,
         result: Result<Fetched, String>,
@@ -147,6 +156,11 @@ pub struct Device {
     /// read because the lock is in no table: it is the cube's, and every pause or lock exchange reads it again.
     cube_status: Cell<Option<CubeStatus>>,
     on_cube_not_found: RefCell<Vec<Box<dyn Fn()>>>,
+    /// When all twelve colours last went because the cube asked, so a cube that keeps asking is answered at most
+    /// every 30 seconds.
+    colours_asked_at: Cell<Option<std::time::Instant>>,
+    /// Whether the cube's wish for task parameters has been said on this link; it is said once.
+    has_said_task_parameters: Cell<bool>,
     is_history_fetching: Cell<bool>,
     /// Why another fetch was asked for while one ran; it runs once that one ends.
     is_another_fetch_wanted: RefCell<Option<String>>,
@@ -203,6 +217,8 @@ impl Device {
             cube_face: Cell::new(None),
             cube_status: Cell::new(None),
             on_cube_not_found: RefCell::new(Vec::new()),
+            colours_asked_at: Cell::new(None),
+            has_said_task_parameters: Cell::new(false),
             is_history_fetching: Cell::new(false),
             is_another_fetch_wanted: RefCell::new(None),
             history_timer: slint::Timer::default(),
@@ -434,6 +450,7 @@ impl Device {
                 Outcome::Heard(advert) => self.finish(Outcome::Heard(advert)),
                 Outcome::Battery(percent) => self.finish(Outcome::Battery(percent)),
                 Outcome::Face(face) => self.finish(Outcome::Face(face)),
+                Outcome::SystemState(bytes) => self.finish(Outcome::SystemState(bytes)),
                 outcome => {
                     self.outstanding.set(self.outstanding.get().saturating_sub(1));
                     self.finish(outcome);
@@ -524,6 +541,16 @@ impl Device {
                 self.check_battery_warning();
             }
             Outcome::Face(face) => self.face_arrived(face),
+            Outcome::SystemState(bytes) => self.system_state_arrived(&bytes),
+            Outcome::Synced { status, system_state } => {
+                if let Some(status) = status {
+                    self.cube_status.set(Some(status));
+                }
+                if let Some(bytes) = system_state {
+                    self.system_state_arrived(&bytes);
+                }
+                self.notify_history_changed();
+            }
             Outcome::HistoryFetched { reason, result } => self.history_fetched(&reason, result),
             Outcome::Battery(reading) => self.charge_arrived(reading),
             Outcome::ResetEnded { label, outcome } => self.reset_ended(&label, outcome),
@@ -763,6 +790,132 @@ impl Device {
         // After the login's own questions, never before: all twelve faces in their categories' colours.
         let all: Vec<i64> = (1..=12).collect();
         self.send_face_colours(&all, "the cube connected");
+        self.has_said_task_parameters.set(false);
+        self.sync_settings(true);
+    }
+
+    /// Sends the table's device settings to the connected cube, read from the table now: LED brightness and blink
+    /// interval always, having no read-back, and auto-pause when the cube's last `0x10` answer differs from the table.
+    /// With `ask_state`, the system state is read after.
+    fn sync_settings(&self, ask_state: bool) {
+        let Some(connection) = self.connect() else { return };
+        let Some(settings) = self.report(rows::settings(&connection)) else { return };
+        let cube_minutes = self.cube_status.get().map(|status| i64::from(status.auto_pause_minutes));
+        let held = Arc::clone(&self.link);
+        self.run(move |lines| {
+            let result = with_link(&held, |link| {
+                lines.record(Tag::Command, || {
+                    format!("Telling the cube LED brightness {}%", settings.led_brightness_percent)
+                });
+                link.write(uuids::COMMAND, &command::set_led_brightness(settings.led_brightness_percent))?;
+                lines.record(Tag::Command, || format!("Telling the cube blink period {}s", settings.led_blink_seconds));
+                link.write(uuids::COMMAND, &command::set_led_blink(settings.led_blink_seconds))?;
+                let mut status = None;
+                if cube_minutes != Some(settings.auto_pause_minutes) {
+                    lines.record(Tag::Command, || {
+                        format!(
+                            "Telling the cube auto-pause {}m (the cube says its auto-pause is {} and the table says {}m)",
+                            settings.auto_pause_minutes,
+                            cube_minutes.map_or("unknown".to_string(), |minutes| format!("{minutes}m")),
+                            settings.auto_pause_minutes
+                        )
+                    });
+                    link.write(uuids::COMMAND, &command::set_auto_pause(settings.auto_pause_minutes))?;
+                    status = Some(session::status(link, lines)?);
+                }
+                let system_state = if ask_state {
+                    lines.record(Tag::Device, || "Asking the cube what it needs".to_string());
+                    Some(link.read(uuids::SYSTEM_STATE)?)
+                } else {
+                    None
+                };
+                Ok((status, system_state))
+            });
+            match result {
+                Ok((status, system_state)) => Outcome::Synced { status, system_state },
+                Err(error) => {
+                    lines.record(Tag::Command, || format!("The settings did not all reach the cube: {}", plain(&error)));
+                    Outcome::Synced { status: None, system_state: None }
+                }
+            }
+        });
+    }
+
+    /// Sets the connected cube's clock to now again, on a background thread.
+    fn resend_clock(&self) {
+        let held = Arc::clone(&self.link);
+        self.run(move |lines| {
+            if let Err(error) = with_link(&held, |link| {
+                set_the_clock(link, lines);
+                Ok(())
+            }) {
+                lines
+                    .record(Tag::Command, || format!("The clock could not be sent again: {}", plain(&error)));
+            }
+            Outcome::Released
+        });
+    }
+
+    /// Answers what the cube says it needs, and says what it reports about its hardware when that is not all well.
+    fn system_state_arrived(&self, bytes: &[u8]) {
+        let Some((sync, hardware)) = system_state::parse(bytes) else {
+            self.log.record(Tag::Device, || {
+                format!("The system state could not be read ({})", command::hex(bytes))
+            });
+            return;
+        };
+        if hardware != CubeHardwareState::Ok {
+            self.log
+                .record_failure(Tag::Device, || format!("The cube reports a hardware fault: {hardware:?}"));
+        }
+        let all: Vec<i64> = (1..=12).collect();
+        match sync {
+            CubeSyncState::Ok => self.log.record(Tag::Device, || "The cube needs nothing sent".to_string()),
+            CubeSyncState::FactoryReset => {
+                self.log.record(Tag::Device, || {
+                    "The cube says it was put back to the factory, so everything is sent again".to_string()
+                });
+                self.resend_clock();
+                self.send_face_colours(&all, "the cube says it was put back to the factory");
+                self.sync_settings(false);
+                self.fetch_history("the cube says it was put back to the factory");
+            }
+            CubeSyncState::TimeRequired => {
+                self.log.record(Tag::Device, || "The cube wants the time".to_string());
+                self.resend_clock();
+            }
+            CubeSyncState::FaceColoursRequired => {
+                let is_recent =
+                    self.colours_asked_at.get().is_some_and(|at| at.elapsed() < Duration::from_secs(30));
+                if is_recent {
+                    self.log.record(Tag::Device, || {
+                        "The cube wants its face colours again, and they went less than 30s ago".to_string()
+                    });
+                } else {
+                    self.colours_asked_at.set(Some(std::time::Instant::now()));
+                    self.log.record(Tag::Device, || "The cube wants its face colours".to_string());
+                    self.send_face_colours(&all, "the cube asked for its face colours");
+                }
+            }
+            CubeSyncState::LedBrightnessRequired
+            | CubeSyncState::BlinkIntervalRequired
+            | CubeSyncState::AutoPauseRequired => {
+                self.log.record(Tag::Device, || format!("The cube wants its settings: {sync:?}"));
+                self.cube_status.set(None);
+                self.sync_settings(false);
+            }
+            CubeSyncState::TaskParametersRequired => {
+                if !self.has_said_task_parameters.replace(true) {
+                    self.log.record(Tag::Device, || {
+                        "The cube wants its task parameters, which this app has never set, so it goes on asking"
+                            .to_string()
+                    });
+                }
+            }
+            CubeSyncState::Unknown => self.log.record(Tag::Device, || {
+                format!("The cube reports a state this app does not know ({})", command::hex(bytes))
+            }),
+        }
     }
 
     /// Lights each of `faces` on the connected cube in its category's colour, read from the table now, on a background
@@ -1608,6 +1761,25 @@ fn follow_faces(link: &mut dyn Link, lines: &Lines) {
     }
 }
 
+/// Subscribes to the cube's system state and forwards each value it sends to the UI thread.
+fn follow_system_state(link: &mut dyn Link, lines: &Lines) {
+    match link.subscribe(uuids::SYSTEM_STATE) {
+        Ok(states) => {
+            let forward = lines.clone();
+            std::thread::spawn(move || {
+                for bytes in states {
+                    if forward.0.send(Outcome::SystemState(bytes)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        Err(reason) => {
+            lines.record(Tag::Device, || format!("The system state cannot be followed: {}", plain(&reason)))
+        }
+    }
+}
+
 /// Subscribes to the cube's battery level and forwards each charge it sends to the UI thread, until the link's
 /// notifications end or the window has gone. A subscription the cube refuses is said and nothing more.
 fn follow_battery(link: &mut dyn Link, lines: &Lines) {
@@ -1662,6 +1834,7 @@ fn settle(
     follow_battery(&mut *link, lines);
     follow_history(&mut *link, feed, lines);
     follow_faces(&mut *link, lines);
+    follow_system_state(&mut *link, lines);
     let face = session::face(&mut *link, lines);
     let status = session::status(&mut *link, lines);
     match held.lock() {

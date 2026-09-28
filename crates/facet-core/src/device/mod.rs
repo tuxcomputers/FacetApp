@@ -12,6 +12,7 @@ pub mod name;
 pub mod rows;
 pub mod scan;
 pub mod session;
+pub mod system_state;
 pub mod trace;
 pub mod uuids;
 
