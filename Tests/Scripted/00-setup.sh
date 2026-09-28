@@ -24,6 +24,7 @@
 #      and reseeded from then on, so this is asked once per machine rather than once per run.
 #   4. **Whether a TimeFlip may be used has been asked**, once, and the answer written for `device_required`. A no is
 #      not a setup failure: it stops the run at `50-device-scan`, after every script that needs no cube.
+#   5. **The cube is on Break**, when one may be used: asked for when the trace last saw it on any other face.
 #
 # **This writes straight to the tables**, which every other script in this folder is forbidden from doing.
 # It is right here for the same reason it is wrong there: the app is not running while the row goes in, so
@@ -107,6 +108,20 @@ fi
 
 if ask_about_the_device; then
     step "a TimeFlip is available for the device scripts"
+    # **The face the cube was last seen on, from the trace**, which the rebuild leaves alone: nothing is paired yet, so
+    # the app cannot be asked, and the cube has not moved since the last run let it go. Anything but Break is asked
+    # about here, so the device range starts from a face with a category; 51 confirms it once the cube is paired.
+    last_face=$(dsql "SELECT message FROM debug_log WHERE tag = 'face' AND message LIKE 'Face % is up' ORDER BY debug_log_id DESC LIMIT 1;")
+    if [ "$last_face" = "Face 8 is up" ]; then
+        step "the cube was last seen resting on Break, which is where the device scripts start"
+    else
+        wait_for_dev "put the cube on the Break face" \
+            "The last face the app saw the cube on was ${last_face:-not recorded}." \
+            "" \
+            "Put the cube down on face 8, Break, and leave it there. The device scripts start from it," \
+            "and the app pauses a cube counting on a face with no category." \
+            "51-device-connect checks it again once the cube is paired."
+    fi
 else
     step "no TimeFlip for this run, so it stops at 50-device-scan"
 fi
