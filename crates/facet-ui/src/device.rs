@@ -23,6 +23,7 @@ use facet_core::database;
 use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::device::command::{self, CubeStatus};
 use facet_core::device::rows::{self, DeviceInfo, DeviceSetting};
+use facet_core::device::trace::TracedRadio;
 use facet_core::device::{info, login, scan, session, uuids};
 use facet_core::port::{Advert, Link, Radio, RadioState, SecretLookup, SecretStore};
 use rusqlite::Connection;
@@ -35,44 +36,55 @@ use crate::{DeviceData, FoundDevice, SettingsWindow};
 /// How often a held link is asked whether it is still up.
 const LIVENESS_EVERY: Duration = Duration::from_secs(5);
 
-/// Log lines a background job produced, recorded on the UI thread afterwards.
-#[derive(Default)]
-struct Lines(Mutex<Vec<(Tag, String, bool)>>);
+/// Where a background job logs: each line goes to the UI thread as it happens, through the same channel as the
+/// outcomes, so the trace keeps the order things happened in.
+#[derive(Clone)]
+struct Lines(Sender<Outcome>);
 
 impl Record for Lines {
     fn record(&self, tag: Tag, message: impl FnOnce() -> String) {
-        if let Ok(mut lines) = self.0.lock() {
-            lines.push((tag, message(), false));
+        let message = message();
+        if let Err(error) = self.0.send(Outcome::Log(tag, message, false)) {
+            eprintln!("facet: a device log line had nowhere to go: {:?}", describe_lost(&error.0));
         }
     }
 
     fn record_failure(&self, tag: Tag, message: impl FnOnce() -> String) {
         let message = message();
-        match self.0.lock() {
-            Ok(mut lines) => lines.push((tag, message, true)),
-            Err(_) => eprintln!("facet: [{}] {message}", tag.word()),
+        if let Err(error) = self.0.send(Outcome::Log(tag, message, true)) {
+            eprintln!("facet: a device failure had nowhere to go: {:?}", describe_lost(&error.0));
         }
     }
 }
 
-impl Lines {
-    fn take(&self) -> Logged {
-        self.0.lock().map(|mut lines| std::mem::take(&mut *lines)).unwrap_or_default()
+/// What a log line that could not be delivered said, for stderr.
+fn describe_lost(outcome: &Outcome) -> String {
+    match outcome {
+        Outcome::Log(tag, message, _) => format!("[{}] {message}", tag.word()),
+        _ => "an outcome".to_string(),
     }
 }
 
-/// Log lines a job produced, with whether each is a failure.
-type Logged = Vec<(Tag, String, bool)>;
-
 /// What a background job came back with.
 enum Outcome {
+    /// A log line, recorded on the UI thread in the order it was made.
+    Log(Tag, String, bool),
     RadioState(RadioState),
     Heard(Advert),
     ScanEnded(Result<(), String>),
     Paired(Box<Paired>),
-    PairingFailed { label: String, message: String },
-    ReconnectFailed { message: String },
-    Sent { setting: DeviceSetting, value: i64, result: Result<(), String> },
+    PairingFailed {
+        label: String,
+        message: String,
+    },
+    ReconnectFailed {
+        message: String,
+    },
+    Sent {
+        setting: DeviceSetting,
+        value: i64,
+        result: Result<(), String>,
+    },
     LinkLost,
     Released,
 }
@@ -103,8 +115,8 @@ pub struct Device {
     is_scanning: Cell<bool>,
     is_reaching_for_cube: Cell<bool>,
     status: RefCell<String>,
-    sender: Sender<(Outcome, Logged)>,
-    receiver: Receiver<(Outcome, Logged)>,
+    sender: Sender<Outcome>,
+    receiver: Receiver<Outcome>,
     pump: slint::Timer,
     outstanding: Cell<usize>,
     liveness: slint::Timer,
@@ -124,6 +136,9 @@ impl Device {
         pins: Arc<dyn SecretStore>,
     ) -> Rc<Device> {
         let (sender, receiver) = channel();
+        // Every connection the radio makes is traced, into the same channel the jobs log through.
+        let radio =
+            radio.map(|radio| Arc::new(TracedRadio::new(radio, Lines(sender.clone()))) as Arc<dyn Radio>);
         let device = Rc::new(Device {
             ui: ui.as_weak(),
             database,
@@ -296,13 +311,12 @@ impl Device {
 
     /// Runs `work` on a background thread with a [`Lines`] to log into, and acts on its outcome on the UI thread.
     fn run(&self, work: impl FnOnce(&Lines) -> Outcome + Send + 'static) {
-        let sender = self.sender.clone();
+        let lines = Lines(self.sender.clone());
         self.outstanding.set(self.outstanding.get() + 1);
         std::thread::spawn(move || {
-            let lines = Lines::default();
             let outcome = work(&lines);
             // A closed channel means the window has gone, and the outcome has nobody to go to.
-            if sender.send((outcome, lines.take())).is_err() {
+            if lines.0.send(outcome).is_err() {
                 eprintln!("facet: a device outcome arrived after the Settings window had gone");
             }
         });
@@ -321,19 +335,22 @@ impl Device {
     }
 
     fn drain(&self) {
-        while let Ok((outcome, lines)) = self.receiver.try_recv() {
-            for (tag, message, failure) in lines {
-                if failure {
-                    self.log.record_failure(tag, || message);
-                } else {
-                    self.log.record(tag, || message);
+        while let Ok(outcome) = self.receiver.try_recv() {
+            match outcome {
+                Outcome::Log(tag, message, failure) => {
+                    if failure {
+                        self.log.record_failure(tag, || message);
+                    } else {
+                        self.log.record(tag, || message);
+                    }
+                }
+                // A scan reports every device it hears before it ends, and only its end is a finished job.
+                Outcome::Heard(advert) => self.finish(Outcome::Heard(advert)),
+                outcome => {
+                    self.outstanding.set(self.outstanding.get().saturating_sub(1));
+                    self.finish(outcome);
                 }
             }
-            // A scan reports every device it hears before it ends, and only its end is a finished job.
-            if !matches!(outcome, Outcome::Heard(_)) {
-                self.outstanding.set(self.outstanding.get().saturating_sub(1));
-            }
-            self.finish(outcome);
         }
         if self.outstanding.get() == 0 {
             self.pump.stop();
@@ -403,7 +420,7 @@ impl Device {
                     self.report(rows::record_connection_lost(&connection, &*self.log));
                 }
             }
-            Outcome::Released => {}
+            Outcome::Released | Outcome::Log(..) => {}
         }
         self.draw();
     }
@@ -437,7 +454,7 @@ impl Device {
         self.run(move |lines| {
             lines.record(Tag::Radio, || "Scanning, unfiltered".to_string());
             let result = radio.scan(Duration::from_secs(scan::SCAN_SECONDS), &stop, &mut |advert| {
-                if sender.send((Outcome::Heard(advert.clone()), Vec::new())).is_err() {
+                if sender.send(Outcome::Heard(advert.clone())).is_err() {
                     stop.store(true, Ordering::Relaxed);
                 }
             });
@@ -877,6 +894,16 @@ mod tests {
         }
         fn has_characteristic(&self, _uuid: u128) -> bool {
             true
+        }
+        fn characteristics(&self) -> Vec<u128> {
+            vec![uuids::PASSWORD, uuids::COMMAND_RESULT, uuids::COMMAND]
+        }
+        fn subscribe(&mut self, _uuid: u128) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, String> {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            if sender.send(vec![86]).is_err() {
+                return Err("closed".into());
+            }
+            Ok(receiver)
         }
         fn read(&mut self, uuid: u128) -> Result<Vec<u8>, String> {
             Ok(match uuid {

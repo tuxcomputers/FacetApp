@@ -8,6 +8,7 @@ pub mod login;
 pub mod rows;
 pub mod scan;
 pub mod session;
+pub mod trace;
 pub mod uuids;
 
 #[cfg(test)]

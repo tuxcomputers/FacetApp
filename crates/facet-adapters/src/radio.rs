@@ -211,6 +211,35 @@ impl Link for BtleplugLink {
         self.characteristics.contains_key(&uuid)
     }
 
+    fn characteristics(&self) -> Vec<u128> {
+        let mut uuids: Vec<u128> = self.characteristics.keys().copied().collect();
+        uuids.sort_unstable();
+        uuids
+    }
+
+    fn subscribe(&mut self, uuid: u128) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, String> {
+        use futures::StreamExt;
+        let characteristic = self.characteristic(uuid)?.clone();
+        let peripheral = self.peripheral.clone();
+        let mut stream = self.runtime.block_on(async {
+            tokio::time::timeout(EXCHANGE_TIMEOUT, peripheral.subscribe(&characteristic))
+                .await
+                .map_err(|_| "the subscription timed out".to_string())?
+                .map_err(|error| format!("the subscription failed: {error}"))?;
+            peripheral.notifications().await.map_err(|error| format!("no notifications: {error}"))
+        })?;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.runtime.spawn(async move {
+            while let Some(notification) = stream.next().await {
+                // A closed channel means nobody is listening any more, so the forwarding stops.
+                if notification.uuid.as_u128() == uuid && sender.send(notification.value).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(receiver)
+    }
+
     fn read(&mut self, uuid: u128) -> Result<Vec<u8>, String> {
         let characteristic = self.characteristic(uuid)?.clone();
         self.runtime.block_on(async {

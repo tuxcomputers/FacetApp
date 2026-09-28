@@ -44,6 +44,10 @@ pub enum Tag {
     Pair,
     Command,
     Device,
+    /// A write, subscription or read request sent over Bluetooth.
+    BleTx,
+    /// An acknowledgement, answer or notification that came back over Bluetooth.
+    BleRx,
 }
 
 impl Tag {
@@ -69,6 +73,8 @@ impl Tag {
         Tag::Pair,
         Tag::Command,
         Tag::Device,
+        Tag::BleTx,
+        Tag::BleRx,
     ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
@@ -94,6 +100,8 @@ impl Tag {
             Tag::Pair => "pair",
             Tag::Command => "command",
             Tag::Device => "device",
+            Tag::BleTx => "ble-tx",
+            Tag::BleRx => "ble-rx",
         }
     }
 

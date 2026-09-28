@@ -1429,6 +1429,7 @@ dependencies = [
  "btleplug",
  "dirs 7.0.0",
  "facet-core",
+ "futures",
  "keyring",
  "rfd",
  "tokio",

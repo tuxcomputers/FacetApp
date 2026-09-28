@@ -17,4 +17,5 @@ ureq.workspace = true
 # the tower does not have it yet, and CI would need it added. Linux gets the radio in the change that installs it.
 [target.'cfg(target_os = "macos")'.dependencies]
 btleplug.workspace = true
+futures.workspace = true
 tokio.workspace = true

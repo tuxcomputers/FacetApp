@@ -78,6 +78,18 @@ impl Link for FakeLink {
         true
     }
 
+    fn characteristics(&self) -> Vec<u128> {
+        vec![uuids::PASSWORD, uuids::COMMAND_RESULT, uuids::COMMAND, uuids::BATTERY_LEVEL]
+    }
+
+    fn subscribe(&mut self, _uuid: u128) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, String> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        if sender.send(vec![87]).is_err() {
+            return Err("the notification channel closed at once".into());
+        }
+        Ok(receiver)
+    }
+
     fn read(&mut self, uuid: u128) -> Result<Vec<u8>, String> {
         match uuid {
             uuids::COMMAND_RESULT => Ok(self.result.clone()),

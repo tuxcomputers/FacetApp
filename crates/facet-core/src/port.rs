@@ -131,6 +131,13 @@ pub trait Link: Send {
     /// Whether the device has characteristic `uuid`.
     fn has_characteristic(&self, uuid: u128) -> bool;
 
+    /// Every characteristic the device has, by UUID.
+    fn characteristics(&self) -> Vec<u128>;
+
+    /// Asks the device to notify changes to `uuid`. Each value it sends arrives on the returned channel, which
+    /// closes when the link does.
+    fn subscribe(&mut self, uuid: u128) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, String>;
+
     fn read(&mut self, uuid: u128) -> Result<Vec<u8>, String>;
 
     /// Writes `bytes` to `uuid` with response, returning once the device has acknowledged the write. An
