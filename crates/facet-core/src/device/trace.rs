@@ -21,6 +21,15 @@ pub fn describe(bytes: &[u8]) -> String {
     if printable { format!("{hex} ({})", plain(&String::from_utf8_lossy(bytes))) } else { hex }
 }
 
+/// What was read from `uuid`, as [`describe`] shows it, except a one-byte battery level, which is shown as hex
+/// followed by the percentage it is.
+pub fn describe_read(uuid: u128, bytes: &[u8]) -> String {
+    match bytes {
+        [percent] if uuid == uuids::BATTERY_LEVEL => format!("{percent:02X} ({percent}%)"),
+        _ => describe(bytes),
+    }
+}
+
 /// A [`Radio`] whose connections are traced into `log`.
 pub struct TracedRadio<R> {
     inner: Arc<dyn Radio>,
@@ -107,7 +116,7 @@ impl<R: Record + Send> Link for TracedLink<R> {
         self.log.record(Tag::BleTx, || format!("{name}: read requested"));
         let result = self.inner.read(uuid);
         self.log.record(Tag::BleRx, || match &result {
-            Ok(bytes) => format!("{name}: {}", describe(bytes)),
+            Ok(bytes) => format!("{name}: {}", describe_read(uuid, bytes)),
             Err(reason) => format!("{name}: failed, {}", plain(reason)),
         });
         result
@@ -144,5 +153,12 @@ mod tests {
         assert_eq!(describe(b"000000"), "30 30 30 30 30 30 (000000)");
         assert_eq!(describe(b"it's"), "69 74 27 73 (its)");
         assert_eq!(describe(&[]), "");
+    }
+
+    #[test]
+    fn a_battery_level_reads_as_a_percentage() {
+        assert_eq!(describe_read(uuids::BATTERY_LEVEL, &[0x64]), "64 (100%)");
+        assert_eq!(describe_read(uuids::BATTERY_LEVEL, &[0x07]), "07 (7%)");
+        assert_eq!(describe_read(uuids::FIRMWARE_REVISION, &[0x64]), "64 (d)");
     }
 }
