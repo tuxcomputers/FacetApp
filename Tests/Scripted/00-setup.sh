@@ -24,7 +24,8 @@
 #      and reseeded from then on, so this is asked once per machine rather than once per run.
 #   4. **Whether a TimeFlip may be used has been asked**, once, and the answer written for `device_required`. A no is
 #      not a setup failure: it stops the run at `50-device-scan`, after every script that needs no cube.
-#   5. **The cube is on Break**, when one may be used: asked for when the trace last saw it on any other face.
+#   5. **The cube is resting on Break and has been reset**, when one may be used: paired so its face can be read, asked
+#      to be put on Break only when it is not there, then factory reset and forgotten, so 50 starts from a factory cube.
 #
 # **This writes straight to the tables**, which every other script in this folder is forbidden from doing.
 # It is right here for the same reason it is wrong there: the app is not running while the row goes in, so
@@ -106,22 +107,57 @@ if [ -n "$google_trouble" ]; then
     fi
 fi
 
+# **Paired, checked for its face, wiped, and forgotten, in that order**, as the Swift setup did. Reading the face needs a
+# link, and a link needs a pairing, so the cube is paired here and given up again by a factory reset, which hands the
+# rest of the run a factory cube: `51-device-connect` pairs it for real. `52-device-reset` checks every step of a reset;
+# this only needs one to happen. Everything that goes wrong is `trouble`, answered for once at the bottom.
+setup_the_cube() {
+    if ! require_bluetooth; then
+        trouble "Bluetooth is off, so the cube cannot be set up"
+        return 1
+    fi
+    ensure_app_running
+    open_settings
+    select_tab Device
+    local since verdict
+    since=$(mark)
+    pair_a_cube
+    case $? in
+        0) ;;
+        *) trouble "the cube could not be paired to set it up: $PAIR_REASON"; close_settings; quit_app; return 1 ;;
+    esac
+
+    # **The face the cube is resting on, read on this link**, and asked about only when it is not Break: a face with no
+    # category has the app pause the cube as soon as it counts there, so every script from 50 would inherit it stopped.
+    # The login reads the face, so a cube already on Break satisfies this before anything is shown.
+    if ! ask_and_detect \
+        "SELECT message FROM debug_log WHERE debug_log_id = (SELECT MAX(debug_log_id) FROM debug_log WHERE tag = 'face' AND message LIKE 'Face % is up') AND debug_log_id > $since AND message = 'Face 8 is up';" \
+        "Put the cube down on the Break face, and leave it there" \
+        "That is face 8, the one lit red. Every device script starts from wherever the cube is now," \
+        "and a face with no category stops the cube by itself."
+    then
+        trouble "the cube was never put on the Break face, so the device scripts would start from an unknown one"
+    else
+        step "the cube is resting on Break, which is where the device range starts"
+    fi
+
+    since=$(mark)
+    press device-reset
+    sleep 0.5
+    press_title "Reset Device"
+    step "resetting the cube, which takes up to two minutes..."
+    verdict=$(wait_for "$since" "Reset: %" 140)
+    case "$verdict" in
+        "Reset: confirmed") step "the cube is back on the factory PIN and forgotten, which is where 50 starts" ;;
+        *) trouble "the cube was not reset (${verdict:-no verdict in 140s}), so 51 would pair a cube on this app's PIN" ;;
+    esac
+    close_settings
+    quit_app
+}
+
 if ask_about_the_device; then
     step "a TimeFlip is available for the device scripts"
-    # **The face the cube was last seen on, from the trace**, which the rebuild leaves alone: nothing is paired yet, so
-    # the app cannot be asked, and the cube has not moved since the last run let it go. Anything but Break is asked
-    # about here, so the device range starts from a face with a category; 51 confirms it once the cube is paired.
-    last_face=$(dsql "SELECT message FROM debug_log WHERE tag = 'face' AND message LIKE 'Face % is up' ORDER BY debug_log_id DESC LIMIT 1;")
-    if [ "$last_face" = "Face 8 is up" ]; then
-        step "the cube was last seen resting on Break, which is where the device scripts start"
-    else
-        wait_for_dev "put the cube on the Break face" \
-            "The last face the app saw the cube on was ${last_face:-not recorded}." \
-            "" \
-            "Put the cube down on face 8, Break, and leave it there. The device scripts start from it," \
-            "and the app pauses a cube counting on a face with no category." \
-            "51-device-connect checks it again once the cube is paired."
-    fi
+    setup_the_cube
 else
     step "no TimeFlip for this run, so it stops at 50-device-scan"
 fi

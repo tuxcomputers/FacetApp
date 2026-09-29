@@ -345,17 +345,19 @@ ask_about_the_device() {
         "The device scripts pair with the cube, connect to it, rename it and change its" \
         "auto-pause, LED brightness and blink interval, putting each one back afterwards." \
         "" \
-        "THE CUBE IS FACTORY RESET TWICE: by 52-device-reset, which pairs it again, and by" \
-        "99-quit at the end, which leaves it on the factory PIN 000000. Face colours, task" \
-        "settings, its name and its PIN go back to factory defaults, and that cannot be undone." \
+        "THE CUBE IS FACTORY RESET THREE TIMES: by this setup, once it has read which face the" \
+        "cube is on; by 52-device-reset, which pairs it again; and by 99-quit at the end, which" \
+        "leaves it on the factory PIN 000000. Face colours, task settings, its name and its PIN" \
+        "go back to factory defaults, and that cannot be undone." \
         "" \
         "A cube on the factory PIN 000000 is moved onto six random digits, kept in this" \
         "machine's keyring (the login Keychain on the Mac). A cube on a PIN another machine" \
         "set cannot be paired here: take its batteries out first to put it back on 000000." \
         "" \
-        "Some scripts need your hands: 51 asks for the cube to rest on Break, 55 for turns onto" \
-        "Meeting and back, 62 for a turn onto a face with no category and back, and" \
-        "68-device-link-lost for Bluetooth off and back on. Each waits, and carries on by itself." \
+        "Some steps need your hands: this setup asks for the cube to rest on Break if it is not" \
+        "there already, 55 asks for turns onto Meeting and back, 62 for a turn onto a face with" \
+        "no category and back, and 68-device-link-lost for Bluetooth off and back on." \
+        "Each one waits, and carries on by itself once it sees the change." \
         "" \
         "Then:" \
         "1. Flip the cube onto any face -- a sleeping cube does not advertise, so it cannot be found." \
