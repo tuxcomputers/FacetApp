@@ -353,6 +353,10 @@ impl Faces {
         let colour = category.and_then(|c| colour(c.colour_hex.as_deref()));
         data.set_has_timing_colour(colour.is_some());
         data.set_timing_colour(colour.unwrap_or_default());
+        data.set_timing_white_lines(category.is_some_and(|c| c.uses_white_lines));
+        let icon = category.and_then(|c| c.icon_name.as_deref()).and_then(|name| self.icon(name));
+        data.set_has_timing_icon(icon.is_some());
+        data.set_timing_icon(icon.unwrap_or_default());
         data.set_elapsed(
             timing::format_duration(reading.as_ref().map_or(0, |reading| reading.seconds), true).into(),
         );

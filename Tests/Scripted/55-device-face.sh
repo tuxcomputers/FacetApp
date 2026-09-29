@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=29
+EXPECTED_CHECKS=32
 start "the cube's face, followed, and its history filed"
 
 require_a_paired_cube "there is no face to follow"
@@ -55,9 +55,12 @@ select_tab Faces
 check_contains "the tab names the face the cube is on" "$(element_eventually timing-device-face "Face 8")" "Face 8"
 check_contains "and the category that face holds" "$(element timing-category-name)" "Break"
 check_contains "Break's face is locked, so the button offers to unlock it" "$(element timing-face-lock)" "Unlock face"
-first=$(element timing-elapsed)
+check_contains "the square is the cube, lit for Break" "$(element timing-cube)" "face 8, lit for Break"
+check_contains "with Break's icon on its centre face" "$(element timing-centre-icon)" "Break"
+check_contains "and a glyph beside the figure says it is running" "$(element timing-face-glyph)" "Cube running"
+first=$(element timing-face-elapsed)
 sleep 3
-if [ "$(element timing-elapsed)" != "$first" ]; then
+if [ "$(element timing-face-elapsed)" != "$first" ]; then
     pass "the figure moves between fetches"
 else
     fail "the figure stood still for 3s: $first"

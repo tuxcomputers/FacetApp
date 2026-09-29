@@ -4,10 +4,12 @@
 // Everything shown comes from `FacesData`, which Rust fills from the database; every click is a callback on
 // it. This file holds no state of its own beyond what is being typed into the name field.
 //
-// The left column is a square sized from the column width. Idle, it is empty. Timing, it holds the
+// The left column is a square sized from the column width. Idle, it is empty. Timing by hand, it holds the
 // play/pause glyph in the category's colour and today's total under it, with the category's name below the
 // square. The glyph shows what is happening, not what clicking does: play while time is being recorded,
-// pause while it is stopped.
+// pause while it is stopped. Following a cube that says which face is up, the square holds the cube lit in that
+// face's category colour with the category's icon on its centre face, white and unlit for a face with no category,
+// and today's total goes under the name beside a glyph saying whether the cube is running.
 
 import { Palette, Button, LineEdit } from "std-widgets.slint";
 import { Metrics } from "metrics.slint";
@@ -34,6 +36,10 @@ export global FacesData {
     in property <string> timing-category;
     in property <color> timing-colour;
     in property <bool> has-timing-colour: false;
+    // Whether the cube's inner lines and centre icon are drawn white rather than black on the category's colour.
+    in property <bool> timing-white-lines: false;
+    in property <image> timing-icon;
+    in property <bool> has-timing-icon: false;
     in property <string> elapsed: "0:00:00";
     // Whether pressing the glyph does anything: false when idle or when a resume is refused.
     in property <bool> glyph-enabled: false;
@@ -59,6 +65,34 @@ export global FacesData {
     callback create-cancelled();
 }
 
+// Play while `running`, pause otherwise, `side` square in `colour`.
+component PlayPauseShape inherits Rectangle {
+    in property <bool> running;
+    in property <color> colour;
+    in property <length> side;
+
+    width: root.side;
+    height: root.side;
+
+    if root.running: Path {
+        width: root.side;
+        height: root.side;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M 20 8 L 88 50 L 20 92 Z";
+        fill: root.colour;
+    }
+
+    if !root.running: HorizontalLayout {
+        spacing: root.side * 0.22;
+        padding-left: root.side * 0.16;
+        padding-right: root.side * 0.16;
+        Rectangle { background: root.colour; border-radius: root.side * 0.04; }
+        Rectangle { background: root.colour; border-radius: root.side * 0.04; }
+    }
+}
+
+// The manual clock's glyph, which pauses and resumes it.
 component PlayPauseGlyph inherits Rectangle {
     in property <bool> running;
     in property <bool> enabled;
@@ -77,24 +111,84 @@ component PlayPauseGlyph inherits Rectangle {
 
     callback pressed();
 
-    if root.running: Path {
-        width: root.side;
-        height: root.side;
-        viewbox-width: 100;
-        viewbox-height: 100;
-        commands: "M 20 8 L 88 50 L 20 92 Z";
-        fill: root.colour;
-    }
-
-    if !root.running: HorizontalLayout {
-        spacing: root.side * 0.22;
-        padding-left: root.side * 0.16;
-        padding-right: root.side * 0.16;
-        Rectangle { background: root.colour; border-radius: root.side * 0.04; }
-        Rectangle { background: root.colour; border-radius: root.side * 0.04; }
-    }
+    PlayPauseShape { running: root.running; colour: root.colour; side: root.side; }
 
     TouchArea { clicked => { root.pressed(); } }
+}
+
+// The cube seen from above, `side` square: the body in `body`, the inner lines and the centre face's `icon` in `ink`,
+// and the outline black. The paths are `ic_facet.svg`'s mark, in its own 65 unit box.
+component CubePicture inherits Rectangle {
+    in property <length> side;
+    in property <color> body;
+    in property <color> ink;
+    in property <image> icon;
+    in property <bool> has-icon;
+    in property <string> label;
+
+    width: root.side;
+    height: root.side;
+
+    accessible-role: image;
+    accessible-id: "timing-cube";
+    accessible-label: root.label;
+
+    property <string> outline: "M 32.5 5.5 L 48.37 10.657 L 58.179 24.157 V 40.843 L 48.37 54.343 L 32.5 59.5 L 16.63 54.343 L 6.821 40.843 V 24.157 L 16.63 10.657 Z";
+
+    Path {
+        width: root.side;
+        height: root.side;
+        viewbox-width: 65;
+        viewbox-height: 65;
+        commands: root.outline;
+        fill: root.body;
+    }
+    Path {
+        width: root.side;
+        height: root.side;
+        viewbox-width: 65;
+        viewbox-height: 65;
+        commands: "M 48.37 27.343 L 42.308 46 H 22.692 L 16.63 27.343 L 32.5 15.813 Z M 32.5 15.813 V 5.5 M 48.37 27.343 L 58.179 24.157 M 42.308 46 L 48.37 54.343 M 22.692 46 L 16.63 54.343 M 16.63 27.343 L 6.821 24.157";
+        stroke: root.ink;
+        stroke-width: root.side * 1.5 / 65;
+    }
+    Path {
+        width: root.side;
+        height: root.side;
+        viewbox-width: 65;
+        viewbox-height: 65;
+        commands: root.outline;
+        stroke: black;
+        stroke-width: root.side * 1.5 / 65;
+    }
+    // The largest square inside the centre pentagon is 0.29 of the mark's width, and the mark is 51.358 of the 65.
+    if root.has-icon: Image {
+        x: (root.side - self.width) / 2;
+        y: root.side * 32.1 / 65 - self.height / 2;
+        width: root.side * 0.29 * 51.358 / 65;
+        height: self.width;
+        source: root.icon;
+        colorize: root.ink;
+        accessible-role: image;
+        accessible-id: "timing-centre-icon";
+        accessible-label: FacesData.timing-category;
+    }
+}
+
+// Whether the cube is running, beside today's figure under the name. A readout: pausing the cube is the menu bar's.
+component CubeStateGlyph inherits Rectangle {
+    in property <bool> running;
+    in property <color> colour;
+    in property <length> side;
+
+    width: root.side;
+    height: root.side;
+
+    accessible-role: image;
+    accessible-id: "timing-face-glyph";
+    accessible-label: root.running ? "Cube running" : "Cube paused";
+
+    PlayPauseShape { running: root.running; colour: root.colour; side: root.side; }
 }
 
 // One category as a row of the pick list. The whole row is the control.
@@ -197,6 +291,7 @@ export component FacesPane inherits Rectangle {
     property <length> right-width: (root.content-width - root.gutter) / 3;
     property <length> left-width: root.right-width * 2;
     property <color> glyph-colour: FacesData.has-timing-colour ? FacesData.timing-colour : Palette.foreground;
+    property <bool> shows-cube: FacesData.is-following-cube && FacesData.device-face > 0;
 
     HorizontalLayout {
         padding: Metrics.tab-padding;
@@ -223,7 +318,18 @@ export component FacesPane inherits Rectangle {
             Rectangle {
                 height: root.left-width;
 
-                if FacesData.has-category: VerticalLayout {
+                if root.shows-cube: CubePicture {
+                    side: root.left-width;
+                    body: FacesData.has-timing-colour ? FacesData.timing-colour : white;
+                    ink: FacesData.timing-white-lines ? white : black;
+                    icon: FacesData.timing-icon;
+                    has-icon: FacesData.has-category && FacesData.has-timing-icon;
+                    label: FacesData.has-category
+                        ? "The cube, face " + FacesData.device-face + ", lit for " + FacesData.timing-category
+                        : "The cube, face " + FacesData.device-face + ", unlit";
+                }
+
+                if !root.shows-cube && FacesData.has-category: VerticalLayout {
                     alignment: center;
                     spacing: root.left-width * 0.29 * 0.12;
 
@@ -283,6 +389,29 @@ export component FacesPane inherits Rectangle {
                 accessible-role: AccessibleRole.text;
                 accessible-id: "timing-category-name";
                 accessible-label: FacesData.timing-category;
+            }
+
+            // Today's total, under the name while the square is the cube.
+            if root.shows-cube && FacesData.has-category: HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                CubeStateGlyph {
+                    running: FacesData.running;
+                    colour: root.glyph-colour;
+                    side: 16px;
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    text: FacesData.elapsed;
+                    vertical-alignment: center;
+                    font-size: 16px;
+                    font-weight: 500;
+                    color: Palette.foreground;
+                    opacity: 0.6;
+                    accessible-role: AccessibleRole.text;
+                    accessible-id: "timing-face-elapsed";
+                    accessible-label: FacesData.elapsed;
+                }
             }
         }
 
