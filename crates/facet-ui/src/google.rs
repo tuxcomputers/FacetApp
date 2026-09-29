@@ -16,6 +16,7 @@ use std::time::Duration;
 use facet_core::database;
 use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::google::{self, CredentialState, Credentials, GoogleSignInState, Pkce, Tokens};
+use facet_core::google_events;
 use facet_core::google_flow::{self, CalendarFailure, SignInFailure, TokenFailure};
 use facet_core::port::{Http, LoopbackListener, Opener, SecretLookup, SecretStore};
 use rusqlite::Connection;
@@ -40,6 +41,13 @@ enum Outcome {
     Deleted {
         name: String,
         result: Result<(), Failure>,
+    },
+    /// A calendar sync pass ended: each entry it reached and how it fared, or why none was sent.
+    Synced {
+        reason: String,
+        calendar_name: String,
+        waiting: usize,
+        result: Result<Vec<(i64, google_events::Delivery)>, String>,
     },
 }
 
@@ -106,6 +114,9 @@ impl Remote {
     }
 }
 
+/// How long a sweep that stopped on a failure holds off the next, so a lost network is not asked again every second.
+const SWEEP_BACKOFF: Duration = Duration::from_secs(60);
+
 /// The Google section, attached to one Settings window.
 pub struct Google {
     ui: slint::Weak<SettingsWindow>,
@@ -123,6 +134,13 @@ pub struct Google {
     credential: RefCell<Option<CredentialState>>,
     is_signing_in: Cell<bool>,
     is_calendar_busy: Cell<bool>,
+    is_calendar_sweeping: Cell<bool>,
+    /// Why another sweep was asked for while one ran; it runs once that one ends.
+    is_another_sweep_wanted: RefCell<Option<String>>,
+    /// Whether entries left waiting with nowhere to go have been said once since the last pass that sent any.
+    has_reported_waiting: Cell<bool>,
+    /// When a pass last stopped on a failure; sweeps within [`SWEEP_BACKOFF`] of it are not started.
+    sweep_failed_at: Cell<Option<std::time::Instant>>,
     /// Background jobs whose outcome has not been acted on yet. The pump runs while any are.
     outstanding: Cell<usize>,
     sender: Sender<Outcome>,
@@ -158,6 +176,10 @@ impl Google {
             credential: RefCell::new(None),
             is_signing_in: Cell::new(false),
             is_calendar_busy: Cell::new(false),
+            is_calendar_sweeping: Cell::new(false),
+            is_another_sweep_wanted: RefCell::new(None),
+            has_reported_waiting: Cell::new(false),
+            sweep_failed_at: Cell::new(None),
             outstanding: Cell::new(0),
             sender,
             receiver,
@@ -255,6 +277,152 @@ impl Google {
         }
         if self.outstanding.get() == 0 {
             self.pump.stop();
+        }
+    }
+
+    /// Sends the time entries not yet in the calendar to it, up to [`google_events::BATCH`] a pass, on a background
+    /// thread: each is inserted, read back and compared, and ticked in `time_entry` only when what Google kept
+    /// matches. A sweep asked for while one runs is run once it ends, however many are asked for. Entries waiting with
+    /// no calendar or no sign-in to send them with are said once, and wait for a later sweep. Call whenever time may
+    /// have been recorded.
+    pub fn sync_calendar(&self, reason: &str) {
+        if self.is_calendar_sweeping.get() {
+            self.is_another_sweep_wanted.borrow_mut().get_or_insert_with(|| reason.to_string());
+            return;
+        }
+        if self.sweep_failed_at.get().is_some_and(|at| at.elapsed() < SWEEP_BACKOFF) {
+            return;
+        }
+        let Some(connection) = self.connect() else { return };
+        let Some(pending) = self.report(google_events::pending(&connection, google_events::BATCH)) else {
+            return;
+        };
+        if pending.is_empty() {
+            return;
+        }
+        let Some(account) = self.report(google_flow::account(&connection)) else { return };
+        let Some(calendar_id) = account.calendar_id.clone() else {
+            self.say_waiting(pending.len(), "no calendar is connected");
+            return;
+        };
+        let calendar_name = account.calendar_name.clone().unwrap_or_else(|| "the calendar".to_string());
+        self.is_calendar_sweeping.set(true);
+        let reason = reason.to_string();
+        let waiting = pending.len();
+        self.run(move |remote| {
+            let result = match remote.access_token() {
+                Ok(token) => {
+                    let mut results = Vec::new();
+                    for entry in &pending {
+                        let delivery = google_events::deliver(&*remote.http, &token, &calendar_id, entry);
+                        let stop = matches!(delivery, google_events::Delivery::Failed(_));
+                        results.push((entry.time_entry_id, delivery));
+                        if stop {
+                            break;
+                        }
+                    }
+                    Ok(results)
+                }
+                Err(failure) => Err(failure.describe()),
+            };
+            Outcome::Synced { reason, calendar_name, waiting, result }
+        });
+    }
+
+    fn say_waiting(&self, waiting: usize, why: &str) {
+        if !self.has_reported_waiting.replace(true) {
+            self.log.record(Tag::Sync, || {
+                format!(
+                    "{waiting} {} waiting to sync, but {}",
+                    if waiting == 1 { "entry" } else { "entries" },
+                    plain(why)
+                )
+            });
+        }
+    }
+
+    fn synced(
+        &self,
+        reason: &str,
+        calendar_name: &str,
+        waiting: usize,
+        result: Result<Vec<(i64, google_events::Delivery)>, String>,
+    ) {
+        self.is_calendar_sweeping.set(false);
+        let results = match result {
+            Ok(results) => results,
+            Err(why) => {
+                self.sweep_failed_at.set(Some(std::time::Instant::now()));
+                self.say_waiting(waiting, &why);
+                return;
+            }
+        };
+        self.has_reported_waiting.set(false);
+        self.log
+            .record(Tag::Sync, || format!("Calendar sync started ({}), {waiting} waiting", plain(reason)));
+        let Some(connection) = self.connect() else { return };
+        let mut sent = 0;
+        let mut left = 0;
+        let mut stopped = false;
+        for (time_entry_id, delivery) in results {
+            match delivery {
+                google_events::Delivery::Delivered { already } => {
+                    if already {
+                        self.log.record(Tag::Sync, || {
+                            format!("Calendar event facet{time_entry_id} was already there")
+                        });
+                    }
+                    if self.report(google_events::mark_synced(&connection, time_entry_id)) == Some(true) {
+                        sent += 1;
+                    } else {
+                        self.log.record_failure(Tag::Sync, || {
+                            format!("time_entry {time_entry_id} has its event but the table refused the tick")
+                        });
+                        stopped = true;
+                    }
+                }
+                google_events::Delivery::Mismatched(difference) => {
+                    left += 1;
+                    self.log.record(Tag::Sync, || {
+                        format!(
+                            "Calendar event facet{time_entry_id} does not match time_entry {time_entry_id}: {}",
+                            difference.describe()
+                        )
+                    });
+                }
+                google_events::Delivery::NotThere => {
+                    left += 1;
+                    self.log.record(Tag::Sync, || {
+                        format!("Calendar event facet{time_entry_id} was not there to read back")
+                    });
+                }
+                google_events::Delivery::Failed(why) => {
+                    stopped = true;
+                    self.log.record(Tag::Sync, || {
+                        format!("Calendar event for time_entry {time_entry_id} failed: {}", plain(&why))
+                    });
+                }
+            }
+        }
+        if stopped {
+            self.sweep_failed_at.set(Some(std::time::Instant::now()));
+            self.log.record(Tag::Sync, || format!("Calendar sync stopped after {sent} of {waiting}"));
+        } else {
+            self.log.record(Tag::Sync, || {
+                format!(
+                    "Calendar sync finished, {sent} event{} into {}{}",
+                    if sent == 1 { "" } else { "s" },
+                    plain(calendar_name),
+                    if left > 0 { format!(", {left} left for later") } else { String::new() }
+                )
+            });
+        }
+        let is_more_waiting = !stopped && sent > 0 && waiting == google_events::BATCH;
+        let again = self.is_another_sweep_wanted.borrow_mut().take();
+        if is_more_waiting {
+            self.sync_calendar("more entries are waiting");
+        } else if let Some(again) = again {
+            self.sync_calendar(&again);
         }
     }
 
@@ -381,6 +549,9 @@ impl Google {
                 }),
             },
             Outcome::Confirmed(result) => self.confirmed(result),
+            Outcome::Synced { reason, calendar_name, waiting, result } => {
+                self.synced(&reason, &calendar_name, waiting, result)
+            }
             Outcome::Created(result) => {
                 self.is_calendar_busy.set(false);
                 match result {
@@ -393,6 +564,7 @@ impl Google {
                                 if stored { "" } else { " REFUSED" }
                             )
                         });
+                        self.sync_calendar("a calendar was made");
                     }
                     Err(failure) => self.calendar_failed("Facet could not make its calendar", &failure),
                 }
@@ -489,6 +661,7 @@ impl Google {
                         if stored { "" } else { " REFUSED" }
                     )
                 });
+                self.sync_calendar("the calendar was confirmed");
             }
             Err(failure) if failure.is_gone() => self.forget_calendar(),
             Err(failure) => self.log.record(Tag::Google, || {

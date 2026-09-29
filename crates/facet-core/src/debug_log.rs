@@ -56,6 +56,8 @@ pub enum Tag {
     Colour,
     /// The app pausing the cube itself: a face with no category.
     Forced,
+    /// Time entries sent to the Google calendar.
+    Sync,
 }
 
 impl Tag {
@@ -87,6 +89,7 @@ impl Tag {
         Tag::History,
         Tag::Colour,
         Tag::Forced,
+        Tag::Sync,
     ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
@@ -118,6 +121,7 @@ impl Tag {
             Tag::History => "history",
             Tag::Colour => "colour",
             Tag::Forced => "forced",
+            Tag::Sync => "sync",
         }
     }
 

@@ -197,6 +197,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
     });
+    // Recorded time goes to the Google calendar: whatever is waiting at launch, and whatever a history fetch or the
+    // app's own clock has just recorded.
+    google.sync_calendar("the app started");
+    let fetched_google = Rc::downgrade(&google);
+    device.set_on_history_changed(move || {
+        if let Some(google) = fetched_google.upgrade() {
+            google.sync_calendar("the cube history was filed");
+        }
+    });
+    let timed_google = Rc::downgrade(&google);
+    faces.set_on_timing_changed(move || {
+        if let Some(google) = timed_google.upgrade() {
+            google.sync_calendar("the clock changed");
+        }
+    });
     // Finds the paired cube again, when there is one; a launch with nothing paired does nothing here.
     device.reconnect();
     // A time entry recorded while the Report is on screen changes its figures.

@@ -15,6 +15,7 @@ pub mod debug_log;
 pub mod device;
 pub mod face;
 pub mod google;
+pub mod google_events;
 pub mod google_flow;
 pub mod port;
 pub mod reference;
