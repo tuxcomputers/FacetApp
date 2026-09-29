@@ -1075,9 +1075,10 @@ impl Device {
         self.cube_face.get().filter(|_| self.is_cube_connected())
     }
 
-    /// Whether a paired launch is still reaching for its cube, with no link held yet.
+    /// Whether a paired launch is still reaching for its cube, with no link held yet. False while looking for the cube
+    /// again after a link dropped, which is the cube being unreachable rather than a launch connecting.
     pub fn is_connecting(&self) -> bool {
-        self.is_reaching_for_cube.get() && !self.is_cube_connected()
+        self.is_reaching_for_cube.get() && !self.is_cube_connected() && self.reach_again_after.get().is_none()
     }
 
     /// Whether the low battery warning is on, and whether its blink is on the lit half.
