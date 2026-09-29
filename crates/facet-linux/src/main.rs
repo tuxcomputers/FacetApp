@@ -28,7 +28,7 @@ use facet_adapters::loopback::StdLoopbackListener;
 use facet_adapters::radio::BtleplugRadio;
 use facet_adapters::secrets::KeyringSecretStore;
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
+use facet_core::debug_log::{DebugLog, Record, Tag, Trace, plain};
 use facet_core::google::Credentials;
 use facet_core::port::{Opener, Radio};
 use facet_core::setting;
@@ -147,6 +147,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // relights the cube.
     let face_device = std::rc::Rc::downgrade(&device);
     faces.set_cube_face_source(move || face_device.upgrade().and_then(|device| device.cube_face()));
+    let flags_device = std::rc::Rc::downgrade(&device);
+    faces.set_cube_flags_source(move || match flags_device.upgrade() {
+        Some(device) => {
+            let (is_battery_low, is_blink_on) = device.battery_warning();
+            facet_ui::faces::CubeFlags {
+                is_connecting: device.is_connecting(),
+                is_locked: device.is_cube_locked() == Some(true),
+                is_battery_low,
+                is_blink_on,
+            }
+        }
+        None => facet_ui::faces::CubeFlags::default(),
+    });
     let assigned_device = std::rc::Rc::downgrade(&device);
     faces.set_on_face_assigned(move |face, reason| {
         if let Some(device) = assigned_device.upgrade() {
@@ -275,9 +288,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // makes, which is every toggle from here or the tab, every click on the tab and every tick while the
     // figure moves, and once now so the first thing on the panel is the database's answer rather than the
     // tray's starting guess. Weak, because `faces` holds this closure and would otherwise hold itself.
-    let follow = follow_the_clock(Rc::downgrade(&faces), Rc::downgrade(&device), tray, Rc::clone(&log));
+    let follow =
+        Rc::new(follow_the_clock(Rc::downgrade(&faces), Rc::downgrade(&device), tray, Rc::clone(&log)));
     follow();
-    faces.set_on_timing_changed(follow);
+    let timed_follow = Rc::clone(&follow);
+    faces.set_on_timing_changed(move || timed_follow());
+    // The low battery blink flashes the name, so each half of it draws the line again.
+    let blink_follow = Rc::clone(&follow);
+    device.set_on_blink(move || blink_follow());
 
     let ui_weak = ui.as_weak();
     let pump_log = std::rc::Rc::clone(&log);
@@ -402,6 +420,8 @@ fn follow_the_clock(
     log: Rc<Trace>,
 ) -> impl Fn() + 'static {
     let has_reported_stopping = Cell::new(false);
+    let last_line: std::cell::RefCell<Option<facet_core::status_line::StatusLine>> =
+        std::cell::RefCell::new(None);
     move || {
         // No tray means start_the_tray has already said why, and there is nothing to follow into.
         let Some(tray) = tray.as_ref() else { return };
@@ -429,6 +449,21 @@ fn follow_the_clock(
                 "The tray service has stopped, so the status item no longer follows the clock".to_string()
             }),
             None => {}
+        }
+        let previous = last_line.borrow().clone();
+        if previous.as_ref() != Some(&timing.line) {
+            if tray.update(|tray| tray.show_line(&timing.line.text(), &timing.line.spoken)).is_none() {
+                return;
+            }
+            if previous.as_ref().map(|line| line.colour_description())
+                != Some(timing.line.colour_description())
+            {
+                log.record(Tag::Status, || format!("Menu bar: {}", timing.line.colour_description()));
+            }
+            if previous.as_ref().map(|line| &line.name) != Some(&timing.line.name) {
+                log.record(Tag::Status, || format!("Menu bar reads {}", plain(&timing.line.name)));
+            }
+            *last_line.borrow_mut() = Some(timing.line.clone());
         }
     }
 }

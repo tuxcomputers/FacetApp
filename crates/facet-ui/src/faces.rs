@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use facet_core::category::{self, Category};
 use facet_core::database;
 use facet_core::debug_log::{Record, Tag, Trace, plain};
+use facet_core::status_line::{self, StatusLine};
 use facet_core::{face, segment, setting, timing};
 use rusqlite::Connection;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -22,8 +23,19 @@ use crate::create::Creator;
 use crate::notice::Notice;
 use crate::{FaceCategory, FacesData, SettingsWindow, icons};
 
+/// What the Device controller says about the cube, for the menu bar line: read when the line is built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CubeFlags {
+    /// A paired launch still reaching its cube.
+    pub is_connecting: bool,
+    pub is_locked: bool,
+    pub is_battery_low: bool,
+    /// The lit half of the low battery blink.
+    pub is_blink_on: bool,
+}
+
 /// What the menu bar shows for the app's own clock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuBarTiming {
     /// Whether the icon draws the pause glyph: anything other than running, idle included.
     pub is_paused: bool,
@@ -31,10 +43,14 @@ pub struct MenuBarTiming {
     pub is_clickable: bool,
     /// The menu item's title: `Resume` while paused, otherwise `Pause`.
     pub pause_title: &'static str,
+    /// The line beside the icon.
+    pub line: StatusLine,
 }
 
 /// Asks which face the connected cube says is up.
 type CubeFaceSource = Box<dyn Fn() -> Option<u8>>;
+/// Asks the Device controller for the cube's flags.
+type CubeFlagsSource = Box<dyn Fn() -> CubeFlags>;
 /// Told which cube face took a category, and why.
 type FaceAssigned = Box<dyn Fn(i64, String)>;
 
@@ -50,6 +66,7 @@ pub struct Faces {
     on_timing_changed: RefCell<Vec<Box<dyn Fn()>>>,
     /// Asks the Device controller which face the connected cube says is up. `None` with no cube connected.
     cube_face: RefCell<Option<CubeFaceSource>>,
+    cube_flags: RefCell<Option<CubeFlagsSource>>,
     /// Told when a cube face takes a category, with the face and why, so the cube can be relit.
     on_face_assigned: RefCell<Vec<FaceAssigned>>,
     this: RefCell<Weak<Faces>>,
@@ -77,6 +94,7 @@ impl Faces {
             tick: slint::Timer::default(),
             on_timing_changed: RefCell::new(Vec::new()),
             cube_face: RefCell::new(None),
+            cube_flags: RefCell::new(None),
             on_face_assigned: RefCell::new(Vec::new()),
             this: RefCell::new(Weak::new()),
         });
@@ -144,6 +162,15 @@ impl Faces {
         *self.cube_face.borrow_mut() = Some(Box::new(source));
     }
 
+    /// Gives the menu bar line a way to ask the Device controller about the cube.
+    pub fn set_cube_flags_source(&self, source: impl Fn() -> CubeFlags + 'static) {
+        *self.cube_flags.borrow_mut() = Some(Box::new(source));
+    }
+
+    fn flags(&self) -> CubeFlags {
+        self.cube_flags.borrow().as_ref().map(|source| source()).unwrap_or_default()
+    }
+
     /// Adds something to run when a cube face takes a category, with the face and why.
     pub fn set_on_face_assigned(&self, assigned: impl Fn(i64, String) + 'static) {
         self.on_face_assigned.borrow_mut().push(Box::new(assigned));
@@ -175,22 +202,51 @@ impl Faces {
     /// running, and clickable while the cube is connected.
     pub fn menu_bar_timing(&self) -> Option<MenuBarTiming> {
         let connection = self.connect()?;
+        let shows_seconds = self.report(setting::shows_seconds(&connection))?;
+        let is_connected = self.report(setting::is_cube_connected(&connection))?;
+        let flags = self.flags();
+        let facts = |timed: Option<status_line::Timed>, is_following_cube: bool| status_line::StatusFacts {
+            timed,
+            is_following_cube,
+            is_cube_connected: is_connected,
+            is_connecting: flags.is_connecting,
+            is_cube_locked: flags.is_locked,
+            is_battery_low: flags.is_battery_low,
+            is_blink_on: flags.is_blink_on,
+        };
         if !self.is_manual_mode(&connection)? {
             let reading = self.report(timing::read_cube(&connection, now()))?;
             let is_paused = reading.as_ref().is_none_or(|reading| reading.is_paused);
-            let is_connected = self.report(setting::is_cube_connected(&connection))?;
+            let timed = reading.as_ref().and_then(|reading| {
+                reading.category.as_ref().map(|category| status_line::Timed {
+                    category: category.name.clone(),
+                    figure: timing::format_duration(reading.seconds, shows_seconds),
+                    is_paused: reading.is_paused,
+                    is_limit_reached: reading.is_limit_reached,
+                })
+            });
             return Some(MenuBarTiming {
                 is_paused,
-                is_clickable: is_connected,
+                is_clickable: is_connected
+                    && !flags.is_locked
+                    && !(is_paused && reading.as_ref().is_some_and(|reading| reading.is_limit_reached)),
                 pause_title: if is_paused { "Resume" } else { "Pause" },
+                line: status_line::line(&facts(timed, true)),
             });
         }
         let reading = self.report(timing::read(&connection, now()))?;
         let is_paused = reading.timing_state != timing::TimingState::Running;
+        let timed = reading.category.as_ref().map(|category| status_line::Timed {
+            category: category.name.clone(),
+            figure: timing::format_duration(reading.seconds, shows_seconds),
+            is_paused,
+            is_limit_reached: reading.is_limit_reached,
+        });
         Some(MenuBarTiming {
             is_paused,
             is_clickable: timing::is_clickable(reading.timing_state, reading.is_limit_reached),
             pause_title: if reading.timing_state == timing::TimingState::Paused { "Resume" } else { "Pause" },
+            line: status_line::line(&facts(timed, false)),
         })
     }
 
@@ -547,9 +603,10 @@ mod tests {
         faces.set_on_timing_changed(move || counted.set(counted.get() + 1));
         faces.refresh();
         assert_eq!(
-            faces.menu_bar_timing(),
-            Some(MenuBarTiming { is_paused: true, is_clickable: false, pause_title: "Pause" })
+            faces.menu_bar_timing().map(|timing| (timing.is_paused, timing.is_clickable, timing.pause_title)),
+            Some((true, false, "Pause"))
         );
+        assert_eq!(faces.menu_bar_timing().map(|timing| timing.line.text()), Some("Facet".to_string()));
         let data = ui.global::<FacesData>();
         let names: Vec<String> = (0..data.get_categories().row_count())
             .filter_map(|i| data.get_categories().row_data(i))
@@ -570,8 +627,8 @@ mod tests {
         assert!(data.get_glyph_enabled());
 
         assert_eq!(
-            faces.menu_bar_timing(),
-            Some(MenuBarTiming { is_paused: false, is_clickable: true, pause_title: "Pause" })
+            faces.menu_bar_timing().map(|timing| (timing.is_paused, timing.is_clickable, timing.pause_title)),
+            Some((false, true, "Pause"))
         );
 
         let before = changes.get();
@@ -580,8 +637,8 @@ mod tests {
         assert!(data.get_has_category());
         assert!(changes.get() > before, "a toggle should tell the timing-changed callback");
         assert_eq!(
-            faces.menu_bar_timing(),
-            Some(MenuBarTiming { is_paused: true, is_clickable: true, pause_title: "Resume" })
+            faces.menu_bar_timing().map(|timing| (timing.is_paused, timing.is_clickable, timing.pause_title)),
+            Some((true, true, "Resume"))
         );
 
         faces.save("  Deep   work ");

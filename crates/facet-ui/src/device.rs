@@ -165,6 +165,7 @@ pub struct Device {
     /// read because the lock is in no table: it is the cube's, and every pause or lock exchange reads it again.
     cube_status: Cell<Option<CubeStatus>>,
     on_cube_not_found: RefCell<Vec<Box<dyn Fn()>>>,
+    on_blink: RefCell<Vec<Box<dyn Fn()>>>,
     /// When all twelve colours last went because the cube asked, so a cube that keeps asking is answered at most
     /// every 30 seconds.
     colours_asked_at: Cell<Option<std::time::Instant>>,
@@ -232,6 +233,7 @@ impl Device {
             cube_face: Cell::new(None),
             cube_status: Cell::new(None),
             on_cube_not_found: RefCell::new(Vec::new()),
+            on_blink: RefCell::new(Vec::new()),
             colours_asked_at: Cell::new(None),
             has_said_task_parameters: Cell::new(false),
             settings_sent_at: Cell::new(None),
@@ -1022,6 +1024,27 @@ impl Device {
         self.cube_face.get().filter(|_| self.is_cube_connected())
     }
 
+    /// Whether a paired launch is still reaching for its cube, with no link held yet.
+    pub fn is_connecting(&self) -> bool {
+        self.is_reaching_for_cube.get() && !self.is_cube_connected()
+    }
+
+    /// Whether the low battery warning is on, and whether its blink is on the lit half.
+    pub fn battery_warning(&self) -> (bool, bool) {
+        (self.is_battery_low.get(), self.is_blink_on.get())
+    }
+
+    /// Registers `callback` to run on each half of the low battery blink, and when the warning goes on or off.
+    pub fn set_on_blink(&self, callback: impl Fn() + 'static) {
+        self.on_blink.borrow_mut().push(Box::new(callback));
+    }
+
+    fn notify_blink(&self) {
+        for callback in self.on_blink.borrow().iter() {
+            callback();
+        }
+    }
+
     /// Whether a link to the cube is held now.
     pub fn is_cube_connected(&self) -> bool {
         self.link.try_lock().map_or(true, |slot| slot.is_some()) && !self.is_factory_reset_running.get()
@@ -1681,12 +1704,14 @@ impl Device {
                             ui.global::<DeviceData>()
                                 .set_battery_alert(device.is_battery_low.get() && device.is_blink_on.get());
                         }
+                        device.notify_blink();
                     }
                 });
             } else {
                 self.blink.stop();
                 self.is_blink_on.set(false);
             }
+            self.notify_blink();
         }
         self.draw();
     }

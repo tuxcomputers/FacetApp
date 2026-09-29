@@ -10,7 +10,7 @@
 
 mod opener;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use facet_adapters::loopback::StdLoopbackListener;
 use facet_adapters::radio::BtleplugRadio;
 use facet_adapters::secrets::KeyringSecretStore;
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
+use facet_core::debug_log::{DebugLog, Record, Tag, Trace, plain};
 use facet_core::google::Credentials;
 use facet_core::port::{Opener, Radio};
 use facet_core::setting;
@@ -139,6 +139,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // relights the cube.
     let face_device = Rc::downgrade(&device);
     faces.set_cube_face_source(move || face_device.upgrade().and_then(|device| device.cube_face()));
+    let flags_device = Rc::downgrade(&device);
+    faces.set_cube_flags_source(move || match flags_device.upgrade() {
+        Some(device) => {
+            let (is_battery_low, is_blink_on) = device.battery_warning();
+            facet_ui::faces::CubeFlags {
+                is_connecting: device.is_connecting(),
+                is_locked: device.is_cube_locked() == Some(true),
+                is_battery_low,
+                is_blink_on,
+            }
+        }
+        None => facet_ui::faces::CubeFlags::default(),
+    });
     let assigned_device = Rc::downgrade(&device);
     faces.set_on_face_assigned(move |face, reason| {
         if let Some(device) = assigned_device.upgrade() {
@@ -340,6 +353,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let follow_pause_item = pause_item.clone();
     let follow_lock_item = lock_item.clone();
     let follow_device = Rc::downgrade(&device);
+    // The line beside the icon, as last drawn, so a tick that changes nothing draws nothing.
+    let follow_line: Rc<RefCell<Option<facet_core::status_line::StatusLine>>> = Rc::new(RefCell::new(None));
     // A change to the icon, the item's title or whether it is enabled writes one row, in the wording the
     // Linux tray writes, which the scripted checks read. The item's current text and enabled state are read
     // from the item itself.
@@ -354,6 +369,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             follow_lock_item.set_enabled(is_connected);
         }
         let next = status_icon::Showing { paused: timing.is_paused, locked: is_locked };
+        let previous = follow_line.borrow().clone();
+        if previous.as_ref() != Some(&timing.line) {
+            show_status_line(&follow_tray, &timing.line, &follow_log);
+            if previous.as_ref().map(|line| line.colour_description())
+                != Some(timing.line.colour_description())
+            {
+                follow_log.record(Tag::Status, || format!("Menu bar: {}", timing.line.colour_description()));
+            }
+            if previous.as_ref().map(|line| &line.name) != Some(&timing.line.name) {
+                follow_log.record(Tag::Status, || format!("Menu bar reads {}", plain(&timing.line.name)));
+            }
+            *follow_line.borrow_mut() = Some(timing.line.clone());
+        }
         let is_item_changed = follow_pause_item.text() != timing.pause_title
             || follow_pause_item.is_enabled() != timing.is_clickable;
         let is_icon_changed = next != follow_showing.get();
@@ -373,8 +401,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         });
     };
+    let follow = Rc::new(follow);
     follow();
-    faces.set_on_timing_changed(follow);
+    let timed_follow = Rc::clone(&follow);
+    faces.set_on_timing_changed(move || timed_follow());
+    // The low battery blink flashes the name, so each half of it draws the line again.
+    let blink_follow = Rc::clone(&follow);
+    device.set_on_blink(move || blink_follow());
 
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
@@ -540,6 +573,57 @@ fn show_in_dock(_wanted: bool, _log: &impl Record) {}
 /// The identifier is `status-item` because that is what `scripts/status-item-click.py` already looks
 /// for: the locator model converts rather than being reinvented.
 #[cfg(target_os = "macos")]
+/// Shows `line` beside the status item's icon: the name in its colour, a space, and the figure in its own, and
+/// gives the item `line`'s spoken words for a screen reader.
+#[cfg(target_os = "macos")]
+fn show_status_line(tray: &TrayIcon, line: &facet_core::status_line::StatusLine, log: &impl Record) {
+    use objc2::MainThreadMarker;
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSAccessibility, NSColor, NSForegroundColorAttributeName};
+    use objc2_foundation::{NSMutableAttributedString, NSRange, NSString};
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        log.record_failure(Tag::Status, || {
+            "Not on the main thread, so the menu bar line was not drawn".to_string()
+        });
+        return;
+    };
+    let Some(button) = tray.ns_status_item().and_then(|item| item.button(mtm)) else {
+        log.record_failure(Tag::Status, || {
+            "The status item has no button, so its line was not drawn".to_string()
+        });
+        return;
+    };
+    let text = format!(" {}", line.text());
+    let string = NSMutableAttributedString::from_nsstring(&NSString::from_str(&text));
+    let colour = |hex: &str| -> Option<Retained<NSColor>> {
+        let channel =
+            |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok().map(|byte| f64::from(byte) / 255.0);
+        Some(NSColor::colorWithSRGBRed_green_blue_alpha(channel(1)?, channel(3)?, channel(5)?, 1.0))
+    };
+    // Ranges are in UTF-16 units, which is what NSString counts.
+    let name_start = 1;
+    let name_length = line.name.encode_utf16().count();
+    let mut ranges = vec![(NSRange::new(name_start, name_length), line.name_colour)];
+    if let Some(figure) = &line.figure {
+        ranges.push((
+            NSRange::new(name_start + name_length + 1, figure.encode_utf16().count()),
+            line.figure_colour,
+        ));
+    }
+    for (range, status_colour) in ranges {
+        if let Some(colour) = status_colour.hex().and_then(colour) {
+            // SAFETY: the attribute name is AppKit's constant, and the value is an NSColor, which is what it takes.
+            unsafe { string.addAttribute_value_range(NSForegroundColorAttributeName, &colour, range) };
+        }
+    }
+    button.setAttributedTitle(&string);
+    button.setAccessibilityLabel(Some(&NSString::from_str(&line.spoken)));
+}
+
+#[cfg(not(target_os = "macos"))]
+fn show_status_line(_tray: &TrayIcon, _line: &facet_core::status_line::StatusLine, _log: &impl Record) {}
+
 fn name_the_status_item(tray: &TrayIcon, log: &impl Record) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSAccessibility;

@@ -66,6 +66,9 @@ pub struct FacetTray {
     is_pause_clickable: bool,
     /// Whether Lock does anything: only while a cube is connected.
     is_lock_clickable: bool,
+    /// The line beside the icon, and what a screen reader is told, pushed in with the clock.
+    line: String,
+    spoken: String,
     to_ui: Sender<FromTray>,
 }
 
@@ -78,6 +81,8 @@ impl FacetTray {
             pause_title: "Pause",
             is_pause_clickable: false,
             is_lock_clickable: false,
+            line: "Facet".to_string(),
+            spoken: "Facet".to_string(),
             to_ui,
         }
     }
@@ -108,6 +113,15 @@ impl FacetTray {
         changed
     }
 
+    /// Shows `line` beside the icon, where the host shows a title, with `spoken` as the tooltip. Returns whether it
+    /// changed.
+    pub fn show_line(&mut self, line: &str, spoken: &str) -> bool {
+        let changed = self.line != line || self.spoken != spoken;
+        self.line = line.to_string();
+        self.spoken = spoken.to_string();
+        changed
+    }
+
     /// Posts to the UI thread, and says so if the channel has gone.
     ///
     /// **A closed channel means the event loop has ended**, which happens on the way out and is not a
@@ -130,7 +144,7 @@ impl Tray for FacetTray {
 
     /// **Shown beside the icon on desktops that do that**, which macOS and MATE can and Windows never can.
     fn title(&self) -> String {
-        "Facet".into()
+        self.line.clone()
     }
 
     fn category(&self) -> Category {
@@ -154,7 +168,7 @@ impl Tray for FacetTray {
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
             title: "Facet".into(),
-            description: String::new(),
+            description: self.spoken.clone(),
             icon_name: String::new(),
             icon_pixmap: Vec::new(),
         }

@@ -58,6 +58,8 @@ pub enum Tag {
     Forced,
     /// Time entries sent to the Google calendar.
     Sync,
+    /// What the menu bar line says and its colours.
+    Status,
 }
 
 impl Tag {
@@ -90,6 +92,7 @@ impl Tag {
         Tag::Colour,
         Tag::Forced,
         Tag::Sync,
+        Tag::Status,
     ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
@@ -122,6 +125,7 @@ impl Tag {
             Tag::Colour => "colour",
             Tag::Forced => "forced",
             Tag::Sync => "sync",
+            Tag::Status => "status",
         }
     }
 

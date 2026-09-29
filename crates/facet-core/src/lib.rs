@@ -22,6 +22,7 @@ pub mod reference;
 pub mod report;
 pub mod segment;
 pub mod setting;
+pub mod status_line;
 pub mod time_entry;
 pub mod timing;
 pub mod trace_file;
