@@ -549,6 +549,7 @@ impl Device {
                     format!("The paired cube was not reconnected: {}", plain(&message))
                 });
                 self.set_status(message);
+                self.notify_history_changed();
                 if self.reach_again_after.get().is_some() {
                     self.schedule_reach_again();
                 } else {
@@ -1266,7 +1267,8 @@ impl Device {
         });
     }
 
-    /// Registers `callback` to run whenever a history fetch has written to `device_event`, and when the link goes.
+    /// Registers `callback` to run whenever a history fetch has written to `device_event`, when the link goes, and when
+    /// a look for the paired cube ends without it.
     pub fn set_on_history_changed(&self, callback: impl Fn() + 'static) {
         self.on_history_changed.borrow_mut().push(Box::new(callback));
     }
@@ -2256,7 +2258,7 @@ mod tests {
         }
         let connection = database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
         let ui = SettingsWindow::new().expect("the window should build");
-        let notice = Notice::attach(&ui);
+        let notice = Notice::attach(&ui, Rc::new(Trace::none()));
         let data = ui.global::<DeviceData>();
 
         let without = Device::attach(

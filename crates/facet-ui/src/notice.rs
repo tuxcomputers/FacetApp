@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use facet_core::debug_log::{Record, Tag, Trace, plain};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{NoticeData, SettingsWindow};
@@ -16,12 +17,21 @@ type Answer = Box<dyn FnOnce(usize)>;
 pub struct Notice {
     ui: slint::Weak<SettingsWindow>,
     answer: RefCell<Option<Answer>>,
+    /// The choices of the notice showing, so the trace can name the one pressed.
+    choices: RefCell<Vec<String>>,
+    log: Rc<Trace>,
 }
 
 impl Notice {
-    /// Wires the notice's buttons on `ui`. Call once, at launch.
-    pub fn attach(ui: &SettingsWindow) -> Rc<Notice> {
-        let notice = Rc::new(Notice { ui: ui.as_weak(), answer: RefCell::new(None) });
+    /// Wires the notice's buttons on `ui`. Call once, at launch. Each notice shown and each button pressed is written
+    /// to `log`.
+    pub fn attach(ui: &SettingsWindow, log: Rc<Trace>) -> Rc<Notice> {
+        let notice = Rc::new(Notice {
+            ui: ui.as_weak(),
+            answer: RefCell::new(None),
+            choices: RefCell::new(Vec::new()),
+            log,
+        });
         let weak = Rc::downgrade(&notice);
         ui.global::<NoticeData>().on_chosen(move |index| {
             if let Some(notice) = weak.upgrade() {
@@ -35,6 +45,10 @@ impl Notice {
     /// pressed. A notice already up is replaced, and its answer is dropped uncalled.
     pub fn ask(&self, title: &str, message: &str, choices: &[&str], answer: impl FnOnce(usize) + 'static) {
         *self.answer.borrow_mut() = Some(Box::new(answer));
+        self.log.record(Tag::Settings, || {
+            format!("Notice shown: {}, offering {}", plain(title), plain(&choices.join(", ")))
+        });
+        *self.choices.borrow_mut() = choices.iter().map(|&choice| choice.to_string()).collect();
         self.show(title, message, choices);
     }
 
@@ -51,6 +65,12 @@ impl Notice {
     /// Presses button `index` of the notice showing, as a click on it does.
     pub fn choose(&self, index: i32) {
         let answer = self.answer.borrow_mut().take();
+        let pressed = usize::try_from(index).ok().and_then(|index| self.choices.borrow().get(index).cloned());
+        self.log.record(Tag::Settings, || match &pressed {
+            Some(choice) => format!("Notice answered: {}", plain(choice)),
+            None => format!("Notice answered with button {index}, which it does not have"),
+        });
+        self.choices.borrow_mut().clear();
         self.show("", "", &[]);
         if let (Some(answer), Ok(index)) = (answer, usize::try_from(index)) {
             answer(index);

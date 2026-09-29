@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = SettingsWindow::new()?;
 
     // One notice for the whole window, shared by every tab that raises one.
-    let notice = Notice::attach(&ui);
+    let notice = Notice::attach(&ui, Rc::clone(&log));
 
     // `false` for has_given_up_on_cube: a paired cube is followed until the reconnect fails to find it and the
     // owner chooses to time by hand.

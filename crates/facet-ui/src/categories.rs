@@ -653,7 +653,7 @@ mod tests {
         }
         database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
         let ui = SettingsWindow::new().expect("the window should build");
-        let notice = Notice::attach(&ui);
+        let notice = Notice::attach(&ui, Rc::new(Trace::none()));
         let tab = Categories::attach(&ui, path.clone(), Rc::new(Trace::none()), Rc::clone(&notice));
         let changes = Rc::new(std::cell::Cell::new(0));
         let counted = Rc::clone(&changes);

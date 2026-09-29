@@ -478,7 +478,7 @@ mod tests {
         }
         let connection = database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
         let ui = SettingsWindow::new().expect("the window should build");
-        let notice = Notice::attach(&ui);
+        let notice = Notice::attach(&ui, Rc::new(Trace::none()));
         let trace_file =
             std::env::temp_dir().join(format!("facet-ui-app-trace-{}.sqlite", std::process::id()));
         if trace_file.exists() {

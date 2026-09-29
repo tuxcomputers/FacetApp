@@ -948,7 +948,7 @@ mod tests {
         }
         let connection = database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
         let ui = SettingsWindow::new().expect("the window should build");
-        let notice = Notice::attach(&ui);
+        let notice = Notice::attach(&ui, Rc::new(Trace::none()));
         let redirect = Arc::new(Mutex::new(None));
         let store = Arc::new(FakeStore(Mutex::new(None)));
         let attach = |credentials: Option<Credentials>| {
@@ -1049,7 +1049,7 @@ mod tests {
             &ui,
             path.clone(),
             Rc::new(Trace::none()),
-            Notice::attach(&ui),
+            Notice::attach(&ui, Rc::new(Trace::none())),
             Rc::new(FakeBrowser(Arc::clone(&redirect))),
             Arc::new(StuckStore),
             Arc::new(FakeGoogle),

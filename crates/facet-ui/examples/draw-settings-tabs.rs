@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fixed_now: Option<i64> = std::env::var("FACET_NOW").ok().map(|value| value.parse()).transpose()?;
     let tabs = std::env::var_os("FACET_DATABASE").map(|path| {
         let path: std::path::PathBuf = path.into();
-        let notice = facet_ui::notice::Notice::attach(&ui);
+        let notice = facet_ui::notice::Notice::attach(&ui, Rc::new(facet_core::debug_log::Trace::none()));
         let faces = facet_ui::faces::Faces::attach(
             &ui,
             path.clone(),
