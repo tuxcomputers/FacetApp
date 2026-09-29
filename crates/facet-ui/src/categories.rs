@@ -4,7 +4,8 @@
 //! and the table is read back afterwards; a write the table refuses puts the row back as the table holds it
 //! and says so in a notice. Creating a category here does not start timing it.
 //!
-//! This build has no radio, so a change that would relight the cube's faces is logged instead.
+//! A recolour or a retire that changes what cube faces wear is passed to whatever [`Categories::set_on_faces_recoloured`]
+//! registered, which relights the cube.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -12,6 +13,7 @@ use std::rc::{Rc, Weak};
 
 use facet_core::category::{self, Category, ReinstateDecision, RenameDecision};
 use facet_core::debug_log::{Record, Tag, Trace, plain};
+use facet_core::device::colour;
 use facet_core::{database, face, reference, time_entry};
 use rusqlite::Connection;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -23,6 +25,9 @@ use crate::{
 };
 
 /// The Categories tab, attached to one Settings window.
+/// Told which cube faces changed colour, and why.
+type FacesRecoloured = Box<dyn Fn(Vec<i64>, String)>;
+
 pub struct Categories {
     ui: slint::Weak<SettingsWindow>,
     database: PathBuf,
@@ -30,6 +35,8 @@ pub struct Categories {
     notice: Rc<Notice>,
     creator: Rc<Creator>,
     on_changed: RefCell<Option<Box<dyn Fn()>>>,
+    /// Told the cube faces whose colour changed, and why, so the cube can be relit.
+    on_faces_recoloured: RefCell<Vec<FacesRecoloured>>,
     this: RefCell<Weak<Categories>>,
 }
 
@@ -48,6 +55,7 @@ impl Categories {
             log,
             notice,
             on_changed: RefCell::new(None),
+            on_faces_recoloured: RefCell::new(Vec::new()),
             this: RefCell::new(Weak::new()),
         });
         *categories.this.borrow_mut() = Rc::downgrade(&categories);
@@ -85,6 +93,17 @@ impl Categories {
     /// icon, colour or limit, a retire or a reinstate. Replaces any earlier callback.
     pub fn set_on_changed(&self, changed: impl Fn() + 'static) {
         *self.on_changed.borrow_mut() = Some(Box::new(changed));
+    }
+
+    /// Adds something to run when cube faces change colour: a category on them recoloured, or retired off them.
+    pub fn set_on_faces_recoloured(&self, recoloured: impl Fn(Vec<i64>, String) + 'static) {
+        self.on_faces_recoloured.borrow_mut().push(Box::new(recoloured));
+    }
+
+    fn faces_recoloured(&self, faces: Vec<i64>, reason: String) {
+        for recoloured in self.on_faces_recoloured.borrow().iter() {
+            recoloured(faces.clone(), reason.clone());
+        }
     }
 
     /// Re-reads both lists and the icon and colour choices. Call when the window opens and when the
@@ -188,10 +207,10 @@ impl Categories {
                 self.log.record(Tag::Click, || {
                     format!("Category {name} retired, cleared from face(s) {cleared:?}")
                 });
+                let cleared: Vec<i64> =
+                    cleared.iter().copied().filter(|face| (1..=12).contains(face)).collect();
                 if !cleared.is_empty() {
-                    self.log.record(Tag::Settings, || {
-                        format!("No cube connected, so {name} was retired lights nothing")
-                    });
+                    self.faces_recoloured(cleared, format!("{name} was retired"));
                 }
             }
             _ => {
@@ -431,9 +450,11 @@ impl Categories {
             format!("Category {name} colour -> colour_id {colour_id}{}", if stored { "" } else { " REFUSED" })
         });
         if stored {
-            self.log.record(Tag::Settings, || {
-                format!("No cube connected, so {name} was recoloured lights nothing")
-            });
+            if let Some(faces) = self.report(colour::faces_holding(&connection, id))
+                && !faces.is_empty()
+            {
+                self.faces_recoloured(faces, format!("{name} was recoloured"));
+            }
         } else {
             self.refused(&current.name, "the colour");
         }

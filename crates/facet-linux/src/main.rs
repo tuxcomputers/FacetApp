@@ -67,12 +67,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // One notice for the whole window, shared by every tab that raises one.
     let notice = Notice::attach(&ui);
 
-    // `true` for has_given_up_on_cube: this build has no radio, so it never waits for a cube.
+    // `false` for has_given_up_on_cube: a paired cube is followed until the reconnect fails to find it and the
+    // owner chooses to time by hand.
     let faces = Faces::attach(
         &ui,
         data_directory().join("appdata.sqlite"),
         std::rc::Rc::clone(&log),
-        true,
+        false,
         std::rc::Rc::clone(&notice),
     );
 
@@ -142,6 +143,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         radio,
         Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
     );
+    // The Faces tab asks the cube which face is up, and a face given a category, or a category recoloured or retired,
+    // relights the cube.
+    let face_device = std::rc::Rc::downgrade(&device);
+    faces.set_cube_face_source(move || face_device.upgrade().and_then(|device| device.cube_face()));
+    let assigned_device = std::rc::Rc::downgrade(&device);
+    faces.set_on_face_assigned(move |face, reason| {
+        if let Some(device) = assigned_device.upgrade() {
+            device.send_face_colours(&[face], &reason);
+            device.enforce_cube_rules();
+        }
+    });
+    // Every re-read of the timing picture, a tick while the figure moves among them, checks whether the cube is to be
+    // stopped: a face with no category, or a category that has just spent its daily limit.
+    let rules_device = std::rc::Rc::downgrade(&device);
+    faces.set_on_timing_changed(move || {
+        if let Some(device) = rules_device.upgrade() {
+            device.enforce_cube_rules();
+        }
+    });
+    let recoloured_device = std::rc::Rc::downgrade(&device);
+    categories.set_on_faces_recoloured(move |faces, reason| {
+        if let Some(device) = recoloured_device.upgrade() {
+            device.send_face_colours(&faces, &reason);
+        }
+    });
+    // What the cube files moves the timing picture, and so the tray.
+    let history_faces = std::rc::Rc::downgrade(&faces);
+    device.set_on_history_changed(move || {
+        if let Some(faces) = history_faces.upgrade() {
+            faces.refresh_timing();
+        }
+    });
+    // A paired cube the launch cannot find is offered again or given up on, in the Settings window, which is shown
+    // for it.
+    let lost_faces = std::rc::Rc::downgrade(&faces);
+    let lost_device = std::rc::Rc::downgrade(&device);
+    let lost_notice = std::rc::Rc::clone(&notice);
+    let lost_ui = ui.as_weak();
+    let lost_log = std::rc::Rc::clone(&log);
+    device.set_on_cube_not_found(move || {
+        if let Some(ui) = lost_ui.upgrade() {
+            ui.invoke_open_on_device();
+            show_settings(&ui, "Device", &*lost_log);
+        }
+        let faces = lost_faces.clone();
+        let device = lost_device.clone();
+        lost_notice.ask(
+            "The TimeFlip was not found",
+            "Facet could not find the paired TimeFlip. Flip it to wake it and look again, or time by hand for the rest \
+             of this launch.",
+            &["Rescan", "Time by Hand"],
+            move |choice| {
+                if choice == 0 {
+                    if let Some(device) = device.upgrade() {
+                        device.reconnect();
+                    }
+                } else if let Some(faces) = faces.upgrade() {
+                    faces.give_up_on_cube();
+                }
+            },
+        );
+    });
     // Finds the paired cube again, when there is one; a launch with nothing paired does nothing here.
     device.reconnect();
     // A time entry recorded while the Report is on screen changes its figures.
@@ -197,7 +260,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // makes, which is every toggle from here or the tab, every click on the tab and every tick while the
     // figure moves, and once now so the first thing on the panel is the database's answer rather than the
     // tray's starting guess. Weak, because `faces` holds this closure and would otherwise hold itself.
-    let follow = follow_the_clock(Rc::downgrade(&faces), tray, Rc::clone(&log));
+    let follow = follow_the_clock(Rc::downgrade(&faces), Rc::downgrade(&device), tray, Rc::clone(&log));
     follow();
     faces.set_on_timing_changed(follow);
 
@@ -251,17 +314,18 @@ fn drain(
             // left click stays an accelerator for the first menu item rather than a mechanism of its own.
             FromTray::Activated => {
                 log.record(Tag::Tray, || "Status item left clicked".to_string());
-                tabs.faces.toggle_pause();
+                toggle_pause(&tabs.faces, &tabs.device);
             }
             FromTray::SecondaryActivated => {
                 log.record(Tag::Tray, || "Status item middle clicked".to_string());
             }
             FromTray::PausePressed => {
                 log.record(Tag::Tray, || "Status item Pause pressed".to_string());
-                tabs.faces.toggle_pause();
+                toggle_pause(&tabs.faces, &tabs.device);
             }
-            FromTray::LockChanged(showing) => {
-                log.record(Tag::Tray, || format!("Status item now shows locked={}", showing.locked));
+            FromTray::LockPressed => {
+                log.record(Tag::Tray, || "Status item Lock pressed".to_string());
+                tabs.device.toggle_cube_lock();
             }
             FromTray::OpenSettings => {
                 if let Some(ui) = ui_weak.upgrade() {
@@ -307,8 +371,18 @@ fn drain(
 /// **A tray that has stopped is reported once, not once a tick.** It means the service ended with the app
 /// still running, so the panel shows a clock that is no longer being followed, and a row per second would
 /// bury the one that matters.
+/// Pauses or resumes whatever is being followed: the cube while one is, and the app's own clock otherwise.
+fn toggle_pause(faces: &Faces, device: &Device) {
+    if faces.is_following_cube() {
+        device.toggle_cube_pause();
+    } else {
+        faces.toggle_pause();
+    }
+}
+
 fn follow_the_clock(
     faces: std::rc::Weak<Faces>,
+    device: std::rc::Weak<Device>,
     tray: Option<Handle<FacetTray>>,
     log: Rc<Trace>,
 ) -> impl Fn() + 'static {
@@ -317,8 +391,18 @@ fn follow_the_clock(
         // No tray means start_the_tray has already said why, and there is nothing to follow into.
         let Some(tray) = tray.as_ref() else { return };
         let Some(timing) = faces.upgrade().and_then(|faces| faces.menu_bar_timing()) else { return };
-        match tray.update(|tray| tray.follow_clock(timing.is_paused, timing.pause_title, timing.is_clickable))
-        {
+        let device = device.upgrade();
+        let is_locked = device.as_ref().is_some_and(|device| device.is_cube_locked() == Some(true));
+        let is_connected = device.as_ref().is_some_and(|device| device.is_cube_connected());
+        match tray.update(|tray| {
+            tray.follow_clock(
+                timing.is_paused,
+                timing.pause_title,
+                timing.is_clickable,
+                is_locked,
+                is_connected,
+            )
+        }) {
             Some(true) => log.record(Tag::Tray, || {
                 format!(
                     "Status item follows the clock, paused={} item={} enabled={}",

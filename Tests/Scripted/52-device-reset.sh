@@ -46,9 +46,7 @@ check "and the notice has gone" "no" "$(alert_is_open && echo yes || echo no)"
 # ---------------------------------------------------------------------------- confirmed
 
 since=$(mark)
-press device-reset
-sleep 0.5
-press_title "Reset Device"
+confirm_the_reset || red "  Reset Device asked nothing, so the reset below will not be sent"
 expect_log "the reset command is sent" "$since" "Sending ff" 20
 expect_log "as 0xFF on the command characteristic" "$since" "command withResponse: FF"
 expect_log "the cube acknowledges it" "$since" "command: write acknowledged" 20

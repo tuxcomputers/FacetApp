@@ -24,6 +24,8 @@
 #      and reseeded from then on, so this is asked once per machine rather than once per run.
 #   4. **Whether a TimeFlip may be used has been asked**, once, and the answer written for `device_required`. A no is
 #      not a setup failure: it stops the run at `50-device-scan`, after every script that needs no cube.
+#   5. **The cube is resting on Break and has been reset**, when one may be used: paired so its face can be read, asked
+#      to be put on Break only when it is not there, then factory reset and forgotten, so 50 starts from a factory cube.
 #
 # **This writes straight to the tables**, which every other script in this folder is forbidden from doing.
 # It is right here for the same reason it is wrong there: the app is not running while the row goes in, so
@@ -105,8 +107,65 @@ if [ -n "$google_trouble" ]; then
     fi
 fi
 
+# **Paired, checked for its face, wiped, and forgotten, in that order**, as the Swift setup did. Reading the face needs a
+# link, and a link needs a pairing, so the cube is paired here and given up again by a factory reset, which hands the
+# rest of the run a factory cube: `51-device-connect` pairs it for real. `52-device-reset` checks every step of a reset;
+# this only needs one to happen. Everything that goes wrong is `trouble`, answered for once at the bottom.
+setup_the_cube() {
+    if ! require_bluetooth; then
+        trouble "Bluetooth is off, so the cube cannot be set up"
+        return 1
+    fi
+    ensure_app_running
+    open_settings
+    select_tab Device
+    local since verdict
+    since=$(mark)
+    pair_a_cube
+    case $? in
+        0) ;;
+        *) trouble "the cube could not be paired to set it up: $PAIR_REASON"; close_settings; quit_app; return 1 ;;
+    esac
+
+    # **The face the cube is resting on, read on this link**, and asked about only when it is not Break: a face with no
+    # category has the app pause the cube as soon as it counts there, so every script from 50 would inherit it stopped.
+    # The login reads the face, so a cube already on Break satisfies this before anything is shown.
+    if ! ask_and_detect \
+        "SELECT message FROM debug_log WHERE debug_log_id = (SELECT MAX(debug_log_id) FROM debug_log WHERE tag = 'face' AND message LIKE 'Face % is up') AND debug_log_id > $since AND message = 'Face 8 is up';" \
+        "Put the cube down on the Break face, and leave it there" \
+        "That is face 8, the one lit red. Every device script starts from wherever the cube is now," \
+        "and a face with no category stops the cube by itself."
+    then
+        trouble "the cube was never put on the Break face, so the device scripts would start from an unknown one"
+    else
+        step "the cube is resting on Break, which is where the device range starts"
+    fi
+
+    since=$(mark)
+    if ! confirm_the_reset; then
+        trouble "Reset Device asked nothing, so the cube was not reset"
+    fi
+    step "resetting the cube, which takes up to two minutes..."
+    verdict=$(wait_for "$since" "Reset: %" 140)
+    case "$verdict" in
+        "Reset: confirmed") step "the cube is back on the factory PIN and forgotten, which is where 50 starts" ;;
+        *) trouble "the cube was not reset (${verdict:-no verdict in 140s}), so 51 would pair a cube on this app's PIN" ;;
+    esac
+    close_settings
+    quit_app
+
+    # **The pairing filed the cube's history, and the run starts from none.** The login fetched it, leaving the segment
+    # the cube was on open in device_event, which every script below would inherit as something being timed. The app
+    # is shut, so the rows are cleared straight from the table, as the rebuild left it.
+    sql "DELETE FROM time_entry; DELETE FROM device_event;"
+    if [ "$(sql "SELECT (SELECT COUNT(*) FROM device_event) + (SELECT COUNT(*) FROM time_entry);")" != "0" ]; then
+        trouble "the history the setup pairing filed would not clear, so the scripts below would inherit it"
+    fi
+}
+
 if ask_about_the_device; then
     step "a TimeFlip is available for the device scripts"
+    setup_the_cube
 else
     step "no TimeFlip for this run, so it stops at 50-device-scan"
 fi

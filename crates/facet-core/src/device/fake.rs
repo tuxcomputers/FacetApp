@@ -18,6 +18,17 @@ struct State {
     wipe_after: usize,
     /// Connections left before a pending wipe finishes; `None` when none is pending.
     wiping: Option<usize>,
+    /// The cube's clock, as `0x07` reports it and `0x08` sets it.
+    clock: u64,
+    /// The face that is up.
+    face: u8,
+    is_locked: bool,
+    is_paused: bool,
+    double_tap: [u8; 4],
+    /// The cube's history, as frames of 17 bytes, oldest first.
+    history: Vec<[u8; 17]>,
+    /// Where each connection's history notifications go.
+    history_feeds: Vec<std::sync::mpsc::Sender<Vec<u8>>>,
 }
 
 #[derive(Clone)]
@@ -25,7 +36,14 @@ pub struct FakeCube(Arc<Mutex<State>>);
 
 impl FakeCube {
     pub fn new(pin: &str) -> FakeCube {
-        FakeCube(Arc::new(Mutex::new(State { pin: pin.to_string(), ..State::default() })))
+        FakeCube(Arc::new(Mutex::new(State {
+            pin: pin.to_string(),
+            clock: 1_789_886_547,
+            face: 2,
+            is_paused: true,
+            double_tap: [90, 20, 50, 50],
+            ..State::default()
+        })))
     }
 
     pub fn pin(&self) -> String {
@@ -39,6 +57,20 @@ impl FakeCube {
     /// Makes a `0xFF` finish only after `connections` further connections have found the old PIN.
     pub fn wipe_after(&self, connections: usize) {
         self.0.lock().expect("lock").wipe_after = connections;
+    }
+
+    /// Adds an event to the cube's history.
+    pub fn file(&self, frame: &super::history::Frame) {
+        let mut bytes = [0u8; 17];
+        bytes[0..4].copy_from_slice(&frame.event_number.to_be_bytes());
+        bytes[4] = frame.face + if frame.is_paused { 128 } else { 0 };
+        bytes[5..13].copy_from_slice(&frame.start_epoch.to_be_bytes());
+        bytes[13..17].copy_from_slice(&frame.duration_seconds.to_be_bytes());
+        let mut state = self.0.lock().expect("lock");
+        match state.history.iter_mut().find(|held| held[0..4] == bytes[0..4]) {
+            Some(held) => *held = bytes,
+            None => state.history.push(bytes),
+        }
     }
 
     /// The writes to the command characteristic that change something.
@@ -79,7 +111,12 @@ impl Radio for FakeCube {
             None => {}
         }
         drop(state);
-        Ok(Box::new(FakeLink { cube: self.clone(), logged_in: false, result: Vec::new() }))
+        Ok(Box::new(FakeLink {
+            cube: self.clone(),
+            logged_in: false,
+            result: Vec::new(),
+            history_answer: Vec::new(),
+        }))
     }
 }
 
@@ -87,6 +124,7 @@ struct FakeLink {
     cube: FakeCube,
     logged_in: bool,
     result: Vec<u8>,
+    history_answer: Vec<u8>,
 }
 
 impl Link for FakeLink {
@@ -102,8 +140,12 @@ impl Link for FakeLink {
         vec![uuids::PASSWORD, uuids::COMMAND_RESULT, uuids::COMMAND, uuids::BATTERY_LEVEL]
     }
 
-    fn subscribe(&mut self, _uuid: u128) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, String> {
+    fn subscribe(&mut self, uuid: u128) -> Result<std::sync::mpsc::Receiver<Vec<u8>>, String> {
         let (sender, receiver) = std::sync::mpsc::channel();
+        if uuid == uuids::HISTORY {
+            self.cube.0.lock().expect("lock").history_feeds.push(sender);
+            return Ok(receiver);
+        }
         if sender.send(vec![87]).is_err() {
             return Err("the notification channel closed at once".into());
         }
@@ -116,6 +158,8 @@ impl Link for FakeLink {
             uuids::BATTERY_LEVEL => Ok(vec![87]),
             uuids::FIRMWARE_REVISION => Ok(b"FW_v3.64".to_vec()),
             uuids::MANUFACTURER_NAME => Ok(b"DI_LABS".to_vec()),
+            uuids::FACES => Ok(vec![self.cube.0.lock().expect("lock").face]),
+            uuids::HISTORY => Ok(self.history_answer.clone()),
             _ => Ok(Vec::new()),
         }
     }
@@ -127,12 +171,59 @@ impl Link for FakeLink {
                 self.logged_in = bytes == state.pin.as_bytes();
                 self.result = vec![if self.logged_in { 0x02 } else { 0x01 }];
             }
+            uuids::HISTORY if self.logged_in => match bytes {
+                [0x01, 0xFF, 0xFF, 0xFF, 0xFF] => {
+                    self.history_answer = state.history.last().map_or(vec![0; 17], |frame| frame.to_vec());
+                }
+                [0x02, rest @ ..] if rest.len() == 4 => {
+                    let from = u32::from_be_bytes(rest.try_into().expect("four bytes"));
+                    let frames: Vec<Vec<u8>> = state
+                        .history
+                        .iter()
+                        .filter(|frame| u32::from_be_bytes(frame[0..4].try_into().expect("four")) >= from)
+                        .map(|frame| frame.to_vec())
+                        .chain(std::iter::once(vec![0; 20]))
+                        .collect();
+                    for feed in &state.history_feeds {
+                        for frame in &frames {
+                            let _unheard = feed.send(frame.clone());
+                        }
+                    }
+                }
+                _ => {}
+            },
             uuids::COMMAND if !self.logged_in => {}
             uuids::COMMAND => match bytes.first() {
-                Some(0x10) => self.result = vec![0x02, 0x01, 0x00, 0x05],
+                Some(0x10) => {
+                    let byte = |on: bool| if on { 0x01 } else { 0x02 };
+                    self.result =
+                        vec![byte(state.is_locked), byte(state.is_paused || state.is_locked), 0x00, 0x05];
+                }
+                Some(0x04) | Some(0x06) if bytes.len() == 2 => {
+                    let on = bytes[1] == 0x01;
+                    if bytes[0] == 0x04 {
+                        state.is_locked = on;
+                    } else {
+                        state.is_paused = on;
+                    }
+                    state.commands.push(bytes.to_vec());
+                }
                 Some(0x07) => {
                     self.result = vec![0x07];
-                    self.result.extend_from_slice(&1_789_886_547u64.to_be_bytes());
+                    self.result.extend_from_slice(&state.clock.to_be_bytes());
+                }
+                Some(0x17) => {
+                    let [threshold, limit, latency, window] = state.double_tap;
+                    self.result = vec![0x17, 0x3A, threshold, 0x3B, limit, 0x3C, latency, 0x3D, window];
+                }
+                Some(0x16) if bytes.len() == 9 => {
+                    state.double_tap = [bytes[2], bytes[4], bytes[6], bytes[8]];
+                    state.commands.push(bytes.to_vec());
+                }
+                Some(0x08) if bytes.len() == 9 => {
+                    state.clock = u64::from_be_bytes(bytes[1..9].try_into().expect("eight bytes"));
+                    state.commands.push(bytes.to_vec());
+                    self.result = vec![0x02];
                 }
                 Some(0x30) => {
                     state.pin = String::from_utf8_lossy(&bytes[1..]).into_owned();

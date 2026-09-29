@@ -137,6 +137,47 @@ pub fn read(connection: &Connection, now: i64) -> Result<Reading, rusqlite::Erro
     })
 }
 
+/// What the cube is doing, read from its open segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CubeReading {
+    /// The face the open segment is on, 1 to 12.
+    pub face: i64,
+    /// The category that face holds. `None` when it holds nothing.
+    pub category: Option<Category>,
+    /// Whether the open segment is a pause.
+    pub is_paused: bool,
+    /// The category's total for the current day, including the open segment. 0 with no category.
+    pub seconds: i64,
+    pub is_counting: bool,
+    pub is_limit_reached: bool,
+}
+
+/// The cube's picture at `now`, from the open segment on a cube face. `None` when no cube segment is open: nothing
+/// has been fetched yet, or the newest segment is the app's own.
+pub fn read_cube(connection: &Connection, now: i64) -> Result<Option<CubeReading>, rusqlite::Error> {
+    let Some(open) = segment::open_segment(connection)?.filter(|open| !face::is_app_face(open.face)) else {
+        return Ok(None);
+    };
+    let category = match face::category_id(connection, open.face)? {
+        Some(id) => category::by_id(connection, id)?,
+        None => None,
+    };
+    let (seconds, is_counting) = match &category {
+        Some(category) => (day_seconds(connection, category.id, now)?, is_counting(connection, category.id)?),
+        None => (0, false),
+    };
+    Ok(Some(CubeReading {
+        face: open.face,
+        is_paused: open.is_paused,
+        is_limit_reached: category
+            .as_ref()
+            .is_some_and(|category| is_limit_reached(seconds, category.daily_limit_minutes)),
+        seconds,
+        is_counting,
+        category,
+    }))
+}
+
 /// What [`start_timing`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartOutcome {

@@ -179,6 +179,11 @@ connected at once; the connect went out at `21:24:58.617`, the scan reported its
 failed at `59.217` with `le-connection-abort-by-local`. The same press had worked on an earlier run, so it is a race,
 and CoreBluetooth on the Mac never loses it.
 
+**Measured again 2026-09-29, at launch**: the reconnect's scan stops itself on hearing the paired cube and returns
+only once BlueZ has acknowledged the stop, and the connect straight after it was still aborted the same way. So the
+adapter itself (`crates/facet-adapters/src/radio.rs`) tries a connection aborted that way up to three times, 700ms
+apart, on top of the wait below.
+
 **Wait for the scan to have ended before connecting.** `Device::pair` in `crates/facet-ui/src/device.rs` waits, up
 to five seconds, for the stopped scan's own call to return. The reconnect at launch already scans and then connects
 in sequence, so it never met this.

@@ -15,6 +15,9 @@ use tokio::runtime::Runtime;
 
 /// How long a single read or write may take.
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How many times a connection BlueZ aborted locally is tried, and how long it waits between them.
+const CONNECT_ATTEMPTS: u32 = 3;
+const CONNECT_RETRY_AFTER: Duration = Duration::from_millis(700);
 /// How often a scan asks what has been heard.
 const SCAN_POLL: Duration = Duration::from_millis(250);
 
@@ -171,10 +174,25 @@ impl Radio for BtleplugRadio {
                 .peripheral(&id)
                 .await
                 .map_err(|error| format!("{handle} is not known to Bluetooth: {error}"))?;
-            tokio::time::timeout(timeout, peripheral.connect())
-                .await
-                .map_err(|_| "the connection timed out".to_string())?
-                .map_err(|error| format!("the connection failed: {error}"))?;
+            // **BlueZ aborts a connection made while its discovery is still winding down**
+            // (`le-connection-abort-by-local`, measured on the laptop 2026-09-28 and 2026-09-29, the second time with
+            // the scan's own stop already returned). So an abort of that kind is tried again, after a pause.
+            let mut attempt = 0;
+            loop {
+                attempt += 1;
+                let result = tokio::time::timeout(timeout, peripheral.connect())
+                    .await
+                    .map_err(|_| "the connection timed out".to_string())?;
+                match result {
+                    Ok(()) => break,
+                    Err(error)
+                        if attempt < CONNECT_ATTEMPTS && error.to_string().contains("abort-by-local") =>
+                    {
+                        tokio::time::sleep(CONNECT_RETRY_AFTER).await;
+                    }
+                    Err(error) => return Err(format!("the connection failed: {error}")),
+                }
+            }
             tokio::time::timeout(timeout, peripheral.discover_services())
                 .await
                 .map_err(|_| "discovering its services timed out".to_string())?

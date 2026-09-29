@@ -20,9 +20,7 @@ require_a_paired_cube "there is no cube to leave on the factory settings"
 open_settings
 select_tab Device
 since=$(mark)
-press device-reset
-sleep 0.5
-press_title "Reset Device"
+confirm_the_reset || red "  Reset Device asked nothing, so the cube is not being reset"
 step "waiting for the cube to come back on the factory PIN (up to two minutes)..."
 announce "the cube is reset"
 outcome=$(wait_for "$since" "Reset: %" 140)

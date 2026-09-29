@@ -25,7 +25,7 @@ press device-pause-on-lock
 expect_log "unticking it is written to the table" "$since" "App setting pause_on_lock.enabled -> flag(false)"
 check "and the table holds it" "0" "$(setting pause_on_lock enabled)"
 check "nothing is sent to the cube for it" "0" \
-    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-tx';")"
+    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-tx' AND message LIKE 'command withResponse:%';")"
 
 since=$(mark)
 press device-pause-on-lock

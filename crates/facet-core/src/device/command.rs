@@ -6,8 +6,18 @@
 
 /// Ask for the cube's clock. Answered by `[0x07]` then a big-endian u64 of seconds.
 pub const READ_TIME: u8 = 0x07;
+/// The most the clock read back may differ from the time sent before the set is called refused.
+pub const CLOCK_TOLERANCE_SECONDS: u64 = 5;
 /// Ask for lock, pause and auto-pause. Answered by four bare bytes with no echoed command byte.
 pub const READ_STATUS: u8 = 0x10;
+/// Lock the cube on its face (with [`ON`]) or unlock it (with [`OFF`]). Confirmed by `0x10`.
+pub const LOCK: u8 = 0x04;
+/// Pause the cube (with [`ON`]) or resume it (with [`OFF`]). Confirmed by `0x10`.
+pub const PAUSE: u8 = 0x06;
+/// The second byte of `0x04` and `0x06` that turns the mode on.
+pub const ON: u8 = 0x01;
+/// The second byte of `0x04` and `0x06` that turns the mode off.
+pub const OFF: u8 = 0x02;
 /// Erase everything the cube keeps in flash and put it back on the vendor PIN. Acknowledged at once; the wipe
 /// finishes several seconds later and the link stays up through it (firmware finding 6).
 pub const FACTORY_RESET: u8 = 0xFF;
@@ -21,11 +31,42 @@ pub const LED_BLINK_SECONDS_RANGE: (i64, i64) = (5, 60);
 /// The battery warning control's range, in percent.
 pub const BATTERY_WARNING_RANGE: (i64, i64) = (1, 20);
 
+/// `0x08`: set the cube's clock to `seconds` since 1970, UTC, as a big-endian u64. Read back with `0x07`.
+pub fn set_clock(seconds: u64) -> Vec<u8> {
+    let mut bytes = vec![0x08];
+    bytes.extend_from_slice(&seconds.to_be_bytes());
+    bytes
+}
+
 /// `0x05`: auto-pause after `minutes`, clamped to [`AUTO_PAUSE_MINUTES_RANGE`], as a big-endian u16.
 pub fn set_auto_pause(minutes: i64) -> Vec<u8> {
     let minutes = minutes.clamp(AUTO_PAUSE_MINUTES_RANGE.0, AUTO_PAUSE_MINUTES_RANGE.1) as u16;
     let [high, low] = minutes.to_be_bytes();
     vec![0x05, high, low]
+}
+
+/// Ask for the accelerometer's double-tap registers. Answered by `17 3A TH 3B LI 3C LT 3D WD`, which echoes its own
+/// command byte.
+pub const READ_DOUBLE_TAP: u8 = 0x17;
+
+/// The double-tap registers the app sends: the cube's own factory threshold, limit and latency (measured, finding 11)
+/// with the window at 0, which leaves a second knock no time to arrive in. No command turns the gesture off.
+pub const DOUBLE_TAP_OFF: [u8; 4] = [90, 20, 50, 0];
+
+/// `0x16`: the double-tap registers `[threshold, limit, latency, window]`, each after its register address.
+pub fn set_double_tap(registers: [u8; 4]) -> Vec<u8> {
+    let [threshold, limit, latency, window] = registers;
+    vec![0x16, 0x3A, threshold, 0x3B, limit, 0x3C, latency, 0x3D, window]
+}
+
+/// Reads a `0x17` answer as `[threshold, limit, latency, window]`. `None` for an answer that is not a `0x17` one.
+pub fn double_tap(answer: &[u8]) -> Option<[u8; 4]> {
+    match answer {
+        [0x17, 0x3A, threshold, 0x3B, limit, 0x3C, latency, 0x3D, window, ..] => {
+            Some([*threshold, *limit, *latency, *window])
+        }
+        _ => None,
+    }
 }
 
 /// `0x15`: the cube's name, as its length and then its ASCII. `None` for a name that is empty, not ASCII, or longer
@@ -98,6 +139,13 @@ pub fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_double_tap_registers_go_and_come_back_with_their_addresses() {
+        assert_eq!(set_double_tap(DOUBLE_TAP_OFF), vec![0x16, 0x3A, 90, 0x3B, 20, 0x3C, 50, 0x3D, 0]);
+        assert_eq!(double_tap(&[0x17, 0x3A, 90, 0x3B, 20, 0x3C, 50, 0x3D, 0, 0, 0]), Some([90, 20, 50, 0]));
+        assert_eq!(double_tap(&[0x02, 0x02, 0, 5]), None);
+    }
 
     #[test]
     fn a_name_goes_as_its_length_then_its_ascii() {

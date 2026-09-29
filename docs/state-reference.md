@@ -69,7 +69,7 @@ wanted to work without the cube.
 | `isScanWanted` | true / false | `BluetoothRadio.wantsToScan` |
 | `isReachingForCube` | true / false | `BluetoothRadio.isReaching` |
 | `isAwaitingAnswer` | true / false | `DeviceReconnector.isAwaitingAnswer` |
-| `hasGivenUpOnCube` | true / false | `DeviceReconnector.hasGivenUpOnCube`, per launch and one-way |
+| `hasGivenUpOnCube` | true / false | `DeviceReconnector.hasGivenUpOnCube`, per launch and one-way; in Rust `Faces.has_given_up_on_cube`, set by Time by Hand on the not-found notice |
 | `hasReadTheCube` | true / false | `CubeFirstReading`, per launch and one-way |
 | `isConnecting` | true / false | `CubeFirstReading.isConnecting(isManualMode:)` |
 | `isDisconnectingDeliberately` | true / false | `BluetoothRadio.isDisconnectingDeliberately`, and the argument of `BlueZCubeRadio.dropTheLink` |
@@ -114,8 +114,8 @@ state, and had a quit report a command refused that the cube had taken.
 | Name | Truth |
 | --- | --- |
 | `isCommandInFlight` | `DeviceLogin.isBusy` |
-| `isHistoryFetching` | `HistoryIngestor.isRefreshing` |
-| `isForcedPauseSending` | `ForcedPauseWatch.isSending` |
+| `isHistoryFetching` | `HistoryIngestor.isRefreshing`; in Rust `Device.is_history_fetching`, with `is_another_fetch_wanted` holding the one re-run |
+| `isForcedPauseSending` | `ForcedPauseWatch.isSending`; in Rust `Device.is_forced_pause_sending`, held until the fetch that files the decision lands |
 | `isCalendarSweeping` | `CalendarSync.isSweeping` |
 | `isAnotherSweepWanted` | `CalendarSync.wantsAnotherPass` |
 | `isReadingBack` | `DeviceLogin.isReadingBack` |
@@ -131,9 +131,9 @@ state, and had a quit report a command refused that the cube had taken.
 
 | Name | Values | Truth |
 | --- | --- | --- |
-| `cubeLockState` | `unknown` / `locked` / `unlocked` | `BluetoothRadio.cubeStatus?.isLocked` |
+| `cubeLockState` | `unknown` / `locked` / `unlocked` | `BluetoothRadio.cubeStatus?.isLocked`; in Rust `Device.cube_status`, the last `0x10` answer, `None` for unknown |
 | `cubePauseState` | `unknown` / `paused` / `running` | `device_event.paused` on the open row, or `cubeStatus?.isPaused` live |
-| `cubeFace` | 1 to 12, or none | `device_event.device_face` on the open row; `BluetoothRadio.currentFace` live |
+| `cubeFace` | 1 to 12, or none | `device_event.device_face` on the open row; `BluetoothRadio.currentFace` live, in Rust `Device.cube_face` |
 | `batteryPercent` | 0 to 100, or none | `BluetoothRadio.batteryPercent`; in Rust `Device.battery`, through `device::info::charge_to_show` |
 | `batteryWarningPercent` | 1 to 20 | `setting.low_battery_level.percent` |
 | `isBatteryLow` | true / false | `LowBatteryWatch.isLow`, latched; in Rust `Device.is_battery_low`, decided by `device::info::is_battery_low` |
@@ -158,7 +158,7 @@ says, so a pause confirmed after a lock proves nothing and pause is confirmed fi
 | `isRepaintTicking` | true / false | `tick != nil` on both view controllers |
 | `isSegmentOpen` | true / false | `events.openSegment() != nil`, over `device_event.finalised = 0` |
 | `isAppFace` | true / false | `face > 12` |
-| `isHistoryTimerArmed` | true / false | `HistoryTimer.holder.timer != nil` |
+| `isHistoryTimerArmed` | true / false | `HistoryTimer.holder.timer != nil`; in Rust `Device.history_timer.running()`, armed while a link is held |
 | `hasSomethingToFollow` | true / false | an open segment or a connected cube |
 
 `timingState` already has the right name and is the model for the rest. It is also the one most often asked

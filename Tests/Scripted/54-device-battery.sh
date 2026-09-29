@@ -65,7 +65,7 @@ expect_log "a new warning level is written to the table" "$since" \
 check "and the table holds it" "$want" "$(setting low_battery_level percent)"
 check_contains "the field shows it" "$(element device-battery-warning)" "$want"
 check "nothing is sent to the cube for it" "0" \
-    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-tx';")"
+    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND tag = 'ble-tx' AND message LIKE 'command withResponse:%';")"
 
 since=$(mark)
 set_field device-battery-warning "$was"

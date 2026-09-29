@@ -37,13 +37,31 @@ from 2026-09-27. The sections after the laptop's have not been re-measured here 
 | Filesystem | ext4 on NVMe |
 | Time zone, locale | `Australia/Brisbane`, `en_AU.UTF-8` |
 | Rust | 1.98.1 through rustup, the same as the Mac |
-| Bluetooth | Controller `hci0`, `48:68:4A:4C:6B:B0`, present and listed by `bluetoothctl`. **The antenna is not fitted yet**, per the owner |
+| Bluetooth | Intel AX200 (`8087:0029`), controller `hci0`, `48:68:4A:4C:6B:B0`. Antennas fitted 2026-09-29. Reaches the cube; see the signal levels below |
 | `libdbus-1-dev` | 1.14.10-4ubuntu4.1, installed |
 
 `/etc/os-release`, `lscpu`, `free`, `cinnamon --version`, `xrandr`, `dpkg -l`, `timedatectl`. Measured 2026-09-27;
 the distribution, kernel, desktop, Bluetooth and `libdbus-1-dev` rows re-measured 2026-09-28, the box having moved
-from Mint 22.2 and Cinnamon 6.4.14 in between. **Whether the controller reaches the cube without the antenna has
-not been measured.**
+from Mint 22.2 and Cinnamon 6.4.14 in between.
+
+### The tower's Bluetooth, and the cube's signal level
+
+**Measured 2026-09-29, the evening the antennas were fitted.** Found soft blocked by rfkill, Bluetooth and Wi-Fi both,
+which is airplane mode; `rfkill unblock bluetooth` cleared Bluetooth and left Wi-Fi blocked, and `bluetoothctl power
+on` then worked where it had failed with `org.bluez.Error.Failed`. Readings are the cube's RSSI from `bluetoothctl info`
+after a 12 to 22 second LE scan (`bluetoothctl scan le`), and the Mac's from the scan in
+`cargo run -p facet-adapters --example radio-check`, which then logs in on the vendor PIN and changes nothing.
+
+| Time | Where the cube was | Tower | Devices the tower heard | Mac | Connected from the tower |
+|---|---|---|---|---|---|
+| 18:40 | where it had been | not heard | 4 | -63 dBm | no, not heard |
+| 18:46 | where it had been | -103, -102, -81 dBm, one scan not heard | 6 to 14 | | yes |
+| 18:51 | moved closer to the tower | -83, -76, -74, -74 dBm | 13 to 15 | -56 dBm | yes |
+
+**The tower hears far less than the Mac from the same room**: 4 to 15 devices in a scan against 61 on the Mac, and the
+cube 20 to 40 dB weaker. At -100 dBm it was heard in some scans and not others, and a connection still succeeded; at
+-74 to -83 dBm every scan heard it. Where the cube sat and how far from each machine was not measured, so these
+compare the machines only at the same moment.
 
 **What a fresh Mint needed, beyond its defaults**: rustup, and
 `sudo apt install libfontconfig-dev x11vnc libsecret-tools gh`. `build-essential`, `pkg-config`, `wmctrl` and
