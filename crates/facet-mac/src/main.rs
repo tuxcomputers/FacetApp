@@ -49,6 +49,20 @@ mod status_icon;
 const TRAY_POLL: Duration = Duration::from_millis(100);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // **One copy at a time, claimed before either database is opened**, so a second copy touches neither. Held until
+    // main returns; a second copy finds it held, says so on stderr and goes.
+    let directory = data_directory();
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
+    let _instance = match facet_core::instance::claim(&directory) {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            eprintln!("Facet is already running, so this copy quits.");
+            return Ok(());
+        }
+        Err(reason) => return Err(format!("The single instance lock could not be taken: {reason}").into()),
+    };
+
     // **Before the window**, so that a database that will not come up says so in a terminal rather than
     // from behind a status item nobody has clicked yet.
     //
@@ -56,22 +70,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // everything that records is on the UI thread; the day something off-thread needs to, it gets a
     // channel to this one rather than a second connection.
     let log = Rc::new(open_databases()?);
-
-    // **One copy at a time.** Held until main returns; a second copy finds it held, says so and goes.
-    let _instance = match facet_core::instance::claim(&data_directory()) {
-        Ok(Some(held)) => held,
-        Ok(None) => {
-            log.record(Tag::Launch, || "Facet is already running, so this copy quits".to_string());
-            eprintln!("Facet is already running.");
-            return Ok(());
-        }
-        Err(reason) => {
-            log.record_failure(Tag::Launch, || {
-                format!("The single instance lock could not be taken: {reason}")
-            });
-            return Err(reason.into());
-        }
-    };
 
     let ui = SettingsWindow::new()?;
 

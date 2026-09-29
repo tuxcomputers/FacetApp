@@ -10,8 +10,8 @@
 # **Converted from the Swift suite 2026-09-27**, against the Settings window as `feature/appTab` builds it:
 #
 # - **Six tabs, not five**: About is a tab of its own, and is checked like the rest.
-# - **The window has no Close button.** It is closed through the window manager (`close_settings`), and the
-#   app records `Settings closed` when it hides the window.
+# - **The window closes three ways**: the window manager's close (`close_settings`), the Close button at its foot,
+#   and Escape. The app records `Settings closed` when it hides the window, whichever it was.
 # - **The delete confirmation is an in-window notice**, read by `alert_buttons` and answered by `press_title`.
 # - **The calendar is renamed to the process name**, `facet-mac` or `facet-linux`, so the two machines' test
 #   calendars in one Google account can be told apart.
@@ -20,7 +20,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=35
+EXPECTED_CHECKS=39
 start "the Settings window, its tabs, and the calendar this run will fill"
 
 open_settings
@@ -84,6 +84,18 @@ check "it opens again" "yes" "$(settings_is_open && echo yes || echo no)"
 # because selecting the tab already on show fires nothing.
 opened=$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Settings opened on %' ORDER BY debug_log_id DESC LIMIT 1;")
 check_contains "it opens on Faces however it was left" "$opened" "Faces"
+
+# **The Close button, and Escape**, the window's own two ways out.
+since=$(mark)
+press settings-close
+expect_log "the Close button closes the window" "$since" "Settings closed" 5
+check "and it is gone" "no" "$(settings_is_open && echo yes || echo no)"
+open_settings
+since=$(mark)
+post_key escape
+expect_log "Escape closes it too" "$since" "Settings closed" 5
+check "and it is gone" "no" "$(settings_is_open && echo yes || echo no)"
+open_settings
 
 # ============================================================================ the run's calendar
 #

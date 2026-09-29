@@ -106,8 +106,9 @@ export component SettingsWindow inherits Window {
     public function open-on-about() { root.active-tab = 5; }
 
     // **Escape closes the window**, as it did in the Swift app. A key a field takes, such as Escape abandoning an
-    // edit, never reaches here.
-    FocusScope {
+    // edit, never reaches here. The window's focus starts here, so Escape works before anything has been clicked.
+    forward-focus: escape-scope;
+    escape-scope := FocusScope {
         key-pressed(event) => {
             if event.text == Key.Escape {
                 root.close-pressed();

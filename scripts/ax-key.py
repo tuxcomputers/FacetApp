@@ -32,7 +32,7 @@ from ApplicationServices import AXUIElementCreateApplication, AXUIElementSetAttr
 # because `36` in a test script is a number nobody can check without a table.
 KEYS = {
     "a": 0, "c": 8, "v": 9, "x": 7, "z": 6,
-    "return": 36, "tab": 48, "space": 49, "delete": 51,
+    "return": 36, "tab": 48, "space": 49, "delete": 51, "escape": 53,
 }
 
 # Each modifier is a flag **and a key**, and posting only the flag is what broke a later Return.
