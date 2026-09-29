@@ -42,6 +42,9 @@ use crate::{DeviceData, FoundDevice, SettingsWindow};
 const LIVENESS_EVERY: Duration = Duration::from_secs(5);
 /// The longest a pairing waits for a scan it stopped to end before connecting anyway.
 const SCAN_END_WAIT: Duration = Duration::from_secs(5);
+/// The first wait before looking for a cube that dropped out, doubled after each miss up to [`REACH_AGAIN_AT_MOST`].
+const REACH_AGAIN_FIRST: Duration = Duration::from_secs(2);
+const REACH_AGAIN_AT_MOST: Duration = Duration::from_secs(30);
 /// How long each half of the low-battery blink lasts.
 const BLINK_EVERY: Duration = Duration::from_millis(500);
 
@@ -166,6 +169,10 @@ pub struct Device {
     cube_status: Cell<Option<CubeStatus>>,
     on_cube_not_found: RefCell<Vec<Box<dyn Fn()>>>,
     on_blink: RefCell<Vec<Box<dyn Fn()>>>,
+    /// While the cube that dropped out is being looked for again: the wait before the next look. `None` otherwise,
+    /// and while it is `Some` a failed look tries again rather than offering Rescan.
+    reach_again_after: Cell<Option<Duration>>,
+    reach_again: slint::Timer,
     /// When all twelve colours last went because the cube asked, so a cube that keeps asking is answered at most
     /// every 30 seconds.
     colours_asked_at: Cell<Option<std::time::Instant>>,
@@ -234,6 +241,8 @@ impl Device {
             cube_status: Cell::new(None),
             on_cube_not_found: RefCell::new(Vec::new()),
             on_blink: RefCell::new(Vec::new()),
+            reach_again_after: Cell::new(None),
+            reach_again: slint::Timer::default(),
             colours_asked_at: Cell::new(None),
             has_said_task_parameters: Cell::new(false),
             settings_sent_at: Cell::new(None),
@@ -538,8 +547,12 @@ impl Device {
                     format!("The paired cube was not reconnected: {}", plain(&message))
                 });
                 self.set_status(message);
-                for callback in self.on_cube_not_found.borrow().iter() {
-                    callback();
+                if self.reach_again_after.get().is_some() {
+                    self.schedule_reach_again();
+                } else {
+                    for callback in self.on_cube_not_found.borrow().iter() {
+                        callback();
+                    }
                 }
             }
             Outcome::CubeCommanded { reason, status } => {
@@ -559,6 +572,8 @@ impl Device {
                     self.report(rows::record_connection_lost(&connection, &*self.log));
                 }
                 self.check_battery_warning();
+                self.reach_again_after.set(Some(REACH_AGAIN_FIRST));
+                self.schedule_reach_again();
             }
             Outcome::Face(face) => self.face_arrived(face),
             Outcome::SystemState(bytes) => self.system_state_arrived(&bytes),
@@ -685,6 +700,30 @@ impl Device {
     /// tries the handle last recorded first, and presents the stored PIN and then the vendor PIN to each, on
     /// connections of their own. The one that accepts is this app's cube. Does nothing when no cube is paired or
     /// there is no radio. Call once at launch.
+    /// Looks for the cube that dropped out again after the current wait, doubling the wait for the next miss. Stops
+    /// once the cube is reached, forgotten or reset.
+    fn schedule_reach_again(&self) {
+        let Some(after) = self.reach_again_after.get() else { return };
+        self.log.record(Tag::Pair, || {
+            format!("The cube went away; looking for it again in {}s", after.as_secs())
+        });
+        self.reach_again_after.set(Some((after * 2).min(REACH_AGAIN_AT_MOST)));
+        let weak = self.this.borrow().clone();
+        self.reach_again.start(slint::TimerMode::SingleShot, after, move || {
+            let Some(device) = weak.upgrade() else { return };
+            if device.reach_again_after.get().is_none() || device.is_cube_connected() {
+                return;
+            }
+            device.reconnect();
+        });
+    }
+
+    /// Stops looking for a cube that dropped out.
+    fn stop_reaching_again(&self) {
+        self.reach_again_after.set(None);
+        self.reach_again.stop();
+    }
+
     pub fn reconnect(&self) {
         let Some(radio) = self.radio.clone() else { return };
         let Some(connection) = self.connect() else { return };
@@ -765,6 +804,7 @@ impl Device {
 
     fn paired(&self, paired: Paired) {
         self.is_reaching_for_cube.set(false);
+        self.stop_reaching_again();
         self.heard.borrow_mut().clear();
         self.battery.set(paired.battery);
         self.cube_face.set(paired.face);
@@ -1373,6 +1413,7 @@ impl Device {
     /// Forgets the paired cube and drops the link. The PIN is kept, since it is what identifies this app's cube.
     fn forget(&self) {
         self.log.record(Tag::Click, || "Button clicked: Forget Device".to_string());
+        self.stop_reaching_again();
         self.link_gone();
         self.check_battery_warning();
         let held = Arc::clone(&self.link);
@@ -1394,6 +1435,7 @@ impl Device {
     /// Closes the link to the cube and records the quit. Blocks until the cube is disconnected; call once, as the
     /// app quits.
     pub fn quit(&self) {
+        self.stop_reaching_again();
         self.liveness.stop();
         self.history_timer.stop();
         let link = match self.link.lock() {
@@ -1461,6 +1503,7 @@ impl Device {
         };
         let label = pairing.name.clone().unwrap_or_else(|| "this TimeFlip".to_string());
         self.is_factory_reset_running.set(true);
+        self.stop_reaching_again();
         self.link_gone();
         self.set_status(format!("Resetting {label}..."));
         self.draw();
