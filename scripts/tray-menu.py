@@ -171,6 +171,11 @@ def main():
         help="send the item the Activate call a left click on the panel sends",
     )
     parser.add_argument(
+        "--twice",
+        action="store_true",
+        help="with --activate, send it twice back to back, the way a double click arrives",
+    )
+    parser.add_argument(
         "--label",
         action="store_true",
         help="print what the tray icon itself is showing, rather than its menu",
@@ -187,7 +192,9 @@ def main():
         name, item_path = facet_item(bus)
         item = dbus.Interface(bus.get_object(name, item_path), ITEM_IFACE)
         item.Activate(dbus.Int32(0), dbus.Int32(0))
-        print("activated the status item")
+        if arguments.twice:
+            item.Activate(dbus.Int32(0), dbus.Int32(0))
+        print("activated the status item" + (" twice" if arguments.twice else ""))
         return 0
 
     if arguments.label:

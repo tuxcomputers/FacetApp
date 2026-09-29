@@ -33,6 +33,7 @@ pub mod google;
 pub mod icons;
 pub mod notice;
 pub mod report;
+pub mod status_click;
 pub mod status_icon;
 pub mod timed;
 

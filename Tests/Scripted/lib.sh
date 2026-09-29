@@ -1259,7 +1259,13 @@ activate_status_item() {
     [ "$status" -ne 0 ] && red "  the status item left click failed (exit $status)${output:+: $output}"
     return $status
 }
-double_click_left()  { case "$PLATFORM" in mac) click_status_item --double ;; *) platform_click_right --double ;; esac; }
+double_click_left() {
+    local output status
+    output=$(platform_double_click_left)
+    status=$?
+    [ "$status" -ne 0 ] && red "  the status item double click failed (exit $status)${output:+: $output}"
+    return $status
+}
 double_click_right() { case "$PLATFORM" in mac) click_status_item --right --double ;; *) platform_click_right --double ;; esac; }
 
 # `menu_press <identifier>` -- choose an item of the status item's menu, by the identifier

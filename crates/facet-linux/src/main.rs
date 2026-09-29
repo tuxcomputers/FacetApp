@@ -369,6 +369,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app: std::rc::Rc::clone(&app),
         device: std::rc::Rc::clone(&device),
         quit: std::rc::Rc::clone(&quit),
+        left_click: Box::new(facet_ui::status_click::gesture(
+            std::rc::Rc::downgrade(&faces),
+            std::rc::Rc::downgrade(&device),
+            std::rc::Rc::clone(&log),
+            || DOUBLE_CLICK_INTERVAL,
+        )),
     };
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
@@ -411,7 +417,12 @@ struct Tabs {
     device: std::rc::Rc<Device>,
     /// Quits the app, saying why.
     quit: std::rc::Rc<dyn Fn(&str)>,
+    /// What a left click on the status item does.
+    left_click: Box<dyn Fn()>,
 }
+
+/// How soon a second left click must follow the first to be a double click: GTK's default `gtk-double-click-time`.
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 
 /// Takes everything the tray thread has posted and acts on it, on the UI thread.
 ///
@@ -425,11 +436,10 @@ fn drain(
 ) {
     while let Ok(message) = from_tray.try_recv() {
         match message {
-            // **The same call as the Faces tab's glyph, for both routes**, so the three cannot disagree, and
-            // left click stays an accelerator for the first menu item rather than a mechanism of its own.
+            // Left click is an accelerator for the menu's Pause, and a double click for its Lock.
             FromTray::Activated => {
                 log.record(Tag::Tray, || "Status item left clicked".to_string());
-                toggle_pause(&tabs.faces, &tabs.device);
+                (tabs.left_click)();
             }
             FromTray::SecondaryActivated => {
                 log.record(Tag::Tray, || "Status item middle clicked".to_string());

@@ -1,19 +1,20 @@
 #!/bin/bash
 # Pausing and locking the cube from the menu bar: Pause and Resume with 0x06, Lock with the pause first and then
-# 0x04, a pause refused while locked, Unlock resuming, and the quit leaving the cube paused and locked, from the menu and
+# 0x04, a pause refused while locked, Unlock resuming, a left click on the status item pausing and a double click
+# locking, and the quit leaving the cube paused and locked, from the menu and
 # on a SIGTERM, which is how a logout or a shutdown asks on Linux. Each command is
 # read back with 0x10, and each is followed by a history fetch that files what the cube did.
 #
 # **Starts from the cube running on Break**, and ends there: `relink_a_cube` frees the cube the quit locked.
 #
-# **Converted from the Swift suite 2026-09-29**, against `feature/timeTracking`. The Swift script also told one click
-# from two on the status item's right half; that gesture is not built, so the menu items are what is pressed.
+# **Converted from the Swift suite 2026-09-29**, against `feature/timeTracking`. The Swift script told one click from
+# two on the status item's right half; here the whole item is the left click, the halves having been left behind.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=27
+EXPECTED_CHECKS=35
 start "pausing and locking the cube from the menu bar"
 
 require_a_paired_cube "there is no cube to pause"
@@ -87,6 +88,31 @@ menu_press toggle-cube-lock
 expect_log "Unlock unlocks" "$since" "The cube is unlocked" 15
 expect_log "and resumes" "$since" "The cube is running" 15
 check "the open segment counts again" "0" "$(wait_open_paused 0)"
+
+# ---------------------------------------------------------------------------- the status item's clicks
+
+since=$(mark)
+activate_status_item
+expect_log "a left click pauses the cube, once the double click interval has passed" "$since" \
+    "Fetching history (the cube was paused from the menu bar)%" 15
+check "the open segment is a pause" "1" "$(wait_open_paused 1)"
+since=$(mark)
+activate_status_item
+expect_log "and another resumes it" "$since" "The cube is running" 15
+check "the open segment counts again" "0" "$(wait_open_paused 0)"
+
+since=$(mark)
+doubled=$since
+double_click_left
+expect_log "a double click is taken as one gesture" "$since" "Status item double clicked, so the cube lock is toggled" 10
+expect_log "and locks the cube" "$since" "The cube is locked" 15
+since=$(mark)
+double_click_left
+expect_log "a second double click unlocks it" "$since" "The cube is unlocked" 15
+expect_log "and it runs again" "$since" "The cube is running" 15
+sleep 1
+check "and neither double click also sent a single click's pause" "0" \
+    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $doubled AND message LIKE 'Fetching history (the cube was paused from the menu bar)%';")"
 
 # ---------------------------------------------------------------------------- the quit
 

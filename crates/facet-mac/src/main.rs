@@ -409,6 +409,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_app = Rc::clone(&app);
     let pump_device = Rc::clone(&device);
     let pump_quit = Rc::clone(&quit);
+    let left_click = facet_ui::status_click::gesture(
+        Rc::downgrade(&faces),
+        Rc::downgrade(&device),
+        Rc::clone(&log),
+        double_click_interval,
+    );
 
     // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
     // is after every toggle, every click on the Faces tab and every tick.
@@ -517,15 +523,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let TrayIconEvent::Click { button, button_state, .. } = event {
                 pump_log.record(Tag::Tray, || format!("Status item {button:?} {button_state:?}"));
 
-                // **Left click is Pause's accelerator**, which is what it already is on Linux and what
-                // the design rule in docs/rust-port.md asks for on every platform: the menu is the
-                // primary route and left click is a shortcut to its first item.
+                // **Left click is Pause's accelerator, and a double click Lock's**, which is what they are on
+                // Linux and what the design rule in docs/rust-port.md asks for on every platform: the menu is
+                // the primary route and a click is a shortcut to one of its items.
                 //
                 // **On the release, not the press.** macOS delivers both edges of a left click here, so
                 // acting on each would flip pause twice and land back where it started. Right click never
                 // arrives as a pair, the menu taking it, so this is not a general rule about clicks.
                 if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                    toggle_pause(&pump_faces, &pump_device);
+                    left_click();
                 }
             }
         }
@@ -640,6 +646,23 @@ fn show_in_dock(wanted: bool, log: &impl Record) {
 
 #[cfg(not(target_os = "macos"))]
 fn show_in_dock(_wanted: bool, _log: &impl Record) {}
+
+/// The double-click interval set in System Settings.
+#[cfg(target_os = "macos")]
+fn double_click_interval() -> Duration {
+    let seconds = objc2_app_kit::NSEvent::doubleClickInterval();
+    // AppKit answers a positive number of seconds; anything else is taken as half a second.
+    if seconds.is_finite() && seconds > 0.0 {
+        Duration::from_secs_f64(seconds)
+    } else {
+        Duration::from_millis(500)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn double_click_interval() -> Duration {
+    Duration::from_millis(500)
+}
 
 /// Runs `quit` when the Mac is about to log out, restart or shut down, and when AppKit is about to terminate the app,
 /// which is what the app menu's Quit and Command-Q do while a window is open. `quit` blocks until the cube is let go

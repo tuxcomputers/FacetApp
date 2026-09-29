@@ -579,6 +579,15 @@ platform_click_left() {
     esac
 }
 
+# **The double left click.** On Linux, two `Activate` calls back to back from one process, well inside the
+# app's 400ms.
+platform_double_click_left() {
+    case "$PLATFORM" in
+        mac)   python3 scripts/status-item-click.py --double 2>&1 ;;
+        linux) python3 scripts/tray-menu.py --activate --twice 2>&1 ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------- accessibility
 
 # **Slint reaches the accessibility bus only while an assistive technology is enabled**, measured
