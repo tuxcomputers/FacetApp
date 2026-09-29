@@ -204,8 +204,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             faces.refresh_timing();
         }
     });
+    // The one way out, whatever asks for it: the menu, the not-found notice, or a signal, which is how a logout or a
+    // shutdown asks. A second ask while the first is running does nothing.
+    let quit_faces = std::rc::Rc::downgrade(&faces);
+    let quit_device = std::rc::Rc::downgrade(&device);
+    let quit_log = std::rc::Rc::clone(&log);
+    let is_quitting = std::cell::Cell::new(false);
+    let quit: std::rc::Rc<dyn Fn(&str)> = std::rc::Rc::new(move |reason: &str| {
+        if is_quitting.replace(true) {
+            return;
+        }
+        quit_log.record(Tag::Quit, || format!("Quitting {reason}"));
+        if let Some(faces) = quit_faces.upgrade() {
+            faces.quit();
+        }
+        if let Some(device) = quit_device.upgrade() {
+            device.quit();
+        }
+        if let Err(error) = slint::quit_event_loop() {
+            quit_log.record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
+        }
+    });
     // A paired cube the launch cannot find is offered again or given up on, in the Settings window, which is shown
     // for it.
+    let lost_quit = std::rc::Rc::clone(&quit);
     let lost_faces = std::rc::Rc::downgrade(&faces);
     let lost_device = std::rc::Rc::downgrade(&device);
     let lost_notice = std::rc::Rc::clone(&notice);
@@ -218,6 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let faces = lost_faces.clone();
         let device = lost_device.clone();
+        let quit = std::rc::Rc::clone(&lost_quit);
         lost_notice.ask(
             "The TimeFlip was not found",
             "Facet could not find the paired TimeFlip. Flip it to wake it and look again, time by hand for the rest of \
@@ -234,17 +257,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         faces.give_up_on_cube();
                     }
                 }
-                _ => {
-                    if let Some(faces) = faces.upgrade() {
-                        faces.quit();
-                    }
-                    if let Some(device) = device.upgrade() {
-                        device.quit();
-                    }
-                    if let Err(error) = slint::quit_event_loop() {
-                        eprintln!("facet: the event loop refused to quit: {error}");
-                    }
-                }
+                _ => quit("on the not-found notice"),
             },
         );
     });
@@ -355,11 +368,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         report: std::rc::Rc::clone(&report),
         app: std::rc::Rc::clone(&app),
         device: std::rc::Rc::clone(&device),
+        quit: std::rc::Rc::clone(&quit),
     };
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
         drain(&from_tray, &ui_weak, &pump_log, &tabs);
     });
+
+    // A kill, a logout and a shutdown quit the way the menu does, so the cube is left paused and locked.
+    let signal_quit = std::rc::Rc::clone(&quit);
+    let signal_watch = slint::Timer::default();
+    match facet_adapters::termination::requests() {
+        Ok(requests) => {
+            signal_watch.start(slint::TimerMode::Repeated, Duration::from_millis(250), move || {
+                if let Ok(name) = requests.try_recv() {
+                    signal_quit(&format!("on {name}"));
+                }
+            })
+        }
+        Err(reason) => {
+            log.record_failure(Tag::Quit, || format!("A kill will not lock the cube: {}", plain(&reason)))
+        }
+    }
 
     log.record(Tag::Launch, || "Facet is in the tray. Right click the icon for the menu".to_string());
 
@@ -379,6 +409,8 @@ struct Tabs {
     report: std::rc::Rc<Report>,
     app: std::rc::Rc<App>,
     device: std::rc::Rc<Device>,
+    /// Quits the app, saying why.
+    quit: std::rc::Rc<dyn Fn(&str)>,
 }
 
 /// Takes everything the tray thread has posted and acts on it, on the UI thread.
@@ -432,14 +464,7 @@ fn drain(
                     tabs.device.open();
                 }
             }
-            FromTray::Quit => {
-                log.record(Tag::Quit, || "Quitting on the menu item".to_string());
-                tabs.faces.quit();
-                tabs.device.quit();
-                if let Err(error) = slint::quit_event_loop() {
-                    log.record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
-                }
-            }
+            FromTray::Quit => (tabs.quit)("on the menu item"),
         }
     }
 }

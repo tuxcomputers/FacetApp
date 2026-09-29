@@ -196,8 +196,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             faces.refresh_timing();
         }
     });
+    // The one way out, whatever asks for it: the menu, the not-found notice, a signal, or the Mac logging out. A
+    // second ask while the first is running does nothing.
+    let quit_faces = Rc::downgrade(&faces);
+    let quit_device = Rc::downgrade(&device);
+    let quit_log = Rc::clone(&log);
+    let is_quitting = Cell::new(false);
+    let quit: Rc<dyn Fn(&str)> = Rc::new(move |reason: &str| {
+        if is_quitting.replace(true) {
+            return;
+        }
+        quit_log.record(Tag::Quit, || format!("Quitting {reason}"));
+        if let Some(faces) = quit_faces.upgrade() {
+            faces.quit();
+        }
+        if let Some(device) = quit_device.upgrade() {
+            device.quit();
+        }
+        // Not a discarded Result: a quit that the loop refuses leaves the app running with nothing said about why.
+        if let Err(error) = slint::quit_event_loop() {
+            quit_log.record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
+        }
+    });
     // A paired cube the launch cannot find is offered again or given up on, in the Settings window, which is shown
     // for it.
+    let lost_quit = Rc::clone(&quit);
     let lost_faces = Rc::downgrade(&faces);
     let lost_device = Rc::downgrade(&device);
     let lost_notice = Rc::clone(&notice);
@@ -210,6 +233,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let faces = lost_faces.clone();
         let device = lost_device.clone();
+        let quit = Rc::clone(&lost_quit);
         lost_notice.ask(
             "The TimeFlip was not found",
             "Facet could not find the paired TimeFlip. Flip it to wake it and look again, time by hand for the rest of \
@@ -226,17 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         faces.give_up_on_cube();
                     }
                 }
-                _ => {
-                    if let Some(faces) = faces.upgrade() {
-                        faces.quit();
-                    }
-                    if let Some(device) = device.upgrade() {
-                        device.quit();
-                    }
-                    if let Err(error) = slint::quit_event_loop() {
-                        eprintln!("facet: the event loop refused to quit: {error}");
-                    }
-                }
+                _ => quit("on the not-found notice"),
             },
         );
     });
@@ -394,6 +408,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_report = Rc::clone(&report);
     let pump_app = Rc::clone(&app);
     let pump_device = Rc::clone(&device);
+    let pump_quit = Rc::clone(&quit);
 
     // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
     // is after every toggle, every click on the Faces tab and every tick.
@@ -489,18 +504,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pump_device.open();
                     }
                 }
-                "quit" => {
-                    pump_log.record(Tag::Quit, || "Quitting on the menu item".to_string());
-                    pump_faces.quit();
-                    pump_device.quit();
-                    // Not a discarded Result: a quit that the loop refuses leaves the app running with
-                    // nothing said about why, which is the shape CLAUDE.md has a section about. The Linux
-                    // composition root reports the same failure the same way.
-                    if let Err(error) = slint::quit_event_loop() {
-                        pump_log
-                            .record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
-                    }
-                }
+                "quit" => pump_quit("on the menu item"),
                 other => {
                     // Nothing fails silently: an id with no arm is a menu item somebody added and
                     // did not wire up, and it should say so rather than doing nothing.
@@ -533,6 +537,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settle.start(slint::TimerMode::SingleShot, Duration::from_millis(0), move || {
         show_in_dock(false, &settle_log);
     });
+
+    // A kill, and the Mac logging out, restarting or shutting down, quit the way the menu does, so the cube is left
+    // paused and locked.
+    let signal_quit = Rc::clone(&quit);
+    let signal_watch = slint::Timer::default();
+    match facet_adapters::termination::requests() {
+        Ok(requests) => {
+            signal_watch.start(slint::TimerMode::Repeated, Duration::from_millis(250), move || {
+                if let Ok(name) = requests.try_recv() {
+                    signal_quit(&format!("on {name}"));
+                }
+            })
+        }
+        Err(reason) => {
+            log.record_failure(Tag::Quit, || format!("A kill will not lock the cube: {}", plain(&reason)))
+        }
+    }
+    let _power_off = quit_on_power_off(Rc::clone(&quit), &log);
 
     log.record(Tag::Launch, || "Facet is in the menu bar. Right click the icon for the menu".to_string());
 
@@ -618,6 +640,41 @@ fn show_in_dock(wanted: bool, log: &impl Record) {
 
 #[cfg(not(target_os = "macos"))]
 fn show_in_dock(_wanted: bool, _log: &impl Record) {}
+
+/// Runs `quit` when the Mac is about to log out, restart or shut down, before it asks the app to terminate. The
+/// returned observer must be held for as long as that is wanted.
+#[cfg(target_os = "macos")]
+fn quit_on_power_off(
+    quit: Rc<dyn Fn(&str)>,
+    log: &impl Record,
+) -> Option<objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2::runtime::NSObjectProtocol>>> {
+    use objc2_app_kit::{NSWorkspace, NSWorkspaceWillPowerOffNotification};
+    use objc2_foundation::{NSNotification, NSOperationQueue};
+
+    let block = block2::RcBlock::new(move |_: std::ptr::NonNull<NSNotification>| {
+        quit("as the Mac logs out, restarts or shuts down");
+    });
+    let centre = NSWorkspace::sharedWorkspace().notificationCenter();
+    // SAFETY: the block is run on the main queue, which is the thread that made it, and the observer is never
+    // removed, so the block is neither run nor released on another thread while the app runs.
+    let observer = unsafe {
+        centre.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceWillPowerOffNotification),
+            None,
+            Some(&NSOperationQueue::mainQueue()),
+            &block,
+        )
+    };
+    log.record(Tag::Launch, || {
+        "Logging out, restarting or shutting down will quit through the quit sequence".to_string()
+    });
+    Some(observer)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn quit_on_power_off(_quit: Rc<dyn Fn(&str)>, _log: &impl Record) -> Option<()> {
+    None
+}
 
 /// Gives the status item's button an accessibility identifier, so a script can find it by name.
 ///

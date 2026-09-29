@@ -18,3 +18,4 @@ ureq.workspace = true
 btleplug.workspace = true
 futures.workspace = true
 tokio.workspace = true
+signal-hook.workspace = true

@@ -80,3 +80,5 @@ keyring = "4.2.0"
 sha2 = "0.11.0"
 # PKCE verifiers and OAuth state values.
 getrandom = "0.4.3"
+# SIGTERM, SIGHUP and SIGINT, so a logout or a kill quits through the same sequence as the menu.
+signal-hook = "0.3"

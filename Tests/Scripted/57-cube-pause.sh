@@ -1,6 +1,7 @@
 #!/bin/bash
 # Pausing and locking the cube from the menu bar: Pause and Resume with 0x06, Lock with the pause first and then
-# 0x04, a pause refused while locked, Unlock resuming, and the quit leaving the cube paused and locked. Each command is
+# 0x04, a pause refused while locked, Unlock resuming, and the quit leaving the cube paused and locked, from the menu and
+# on a SIGTERM, which is how a logout or a shutdown asks on Linux. Each command is
 # read back with 0x10, and each is followed by a history fetch that files what the cube did.
 #
 # **Starts from the cube running on Break**, and ends there: `relink_a_cube` frees the cube the quit locked.
@@ -12,7 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=23
+EXPECTED_CHECKS=27
 start "pausing and locking the cube from the menu bar"
 
 require_a_paired_cube "there is no cube to pause"
@@ -93,6 +94,29 @@ since=$(mark)
 quit_app
 expect_log "quitting leaves the cube paused and locked" "$since" "Quit: the cube is paused and locked" 15
 if relink_a_cube; then
+    pass "a relaunch reaches the cube and frees it again"
+else
+    fail "the relaunch did not reach and free the cube"
+fi
+
+# ---------------------------------------------------------------------------- a SIGTERM
+
+since=$(mark)
+pkill -TERM -x "$PROCESS_NAME"
+status=$?
+[ "$status" -ne 0 ] && red "  the SIGTERM could not be sent (pkill exit $status)"
+expect_log "a SIGTERM quits through the quit sequence" "$since" "Quitting on SIGTERM" 10
+expect_log "and leaves the cube paused and locked" "$since" "Quit: the cube is paused and locked" 15
+waited=0
+while is_running && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+done
+check "and the app is gone" "no" "$(is_running && echo yes || echo no)"
+sleep 1
+relaunched=$(mark)
+ensure_app_running
+if wait_for "$relaunched" "Reconnected to %" 90 >/dev/null && free_the_cube; then
     pass "a relaunch reaches the cube and frees it again"
 else
     fail "the relaunch did not reach and free the cube"

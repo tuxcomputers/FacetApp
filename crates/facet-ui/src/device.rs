@@ -47,6 +47,8 @@ const REACH_AGAIN_FIRST: Duration = Duration::from_secs(2);
 const REACH_AGAIN_AT_MOST: Duration = Duration::from_secs(30);
 /// How long each half of the low-battery blink lasts.
 const BLINK_EVERY: Duration = Duration::from_millis(500);
+/// How long a quit waits for the cube to be paused, locked and let go of before quitting without it.
+pub const QUIT_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Where a background job logs: each line goes to the UI thread as it happens, through the same channel as the
 /// outcomes, so the trace keeps the order things happened in.
@@ -1441,8 +1443,8 @@ impl Device {
         self.draw();
     }
 
-    /// Closes the link to the cube and records the quit. Blocks until the cube is disconnected; call once, as the
-    /// app quits.
+    /// Leaves the cube paused and locked, lets go of it and records the quit. Blocks until the cube is let go of or
+    /// [`QUIT_DEADLINE`] passes, whichever is first; call once, as the app quits.
     pub fn quit(&self) {
         self.stop_reaching_again();
         self.liveness.stop();
@@ -1463,17 +1465,47 @@ impl Device {
             .connect()
             .and_then(|connection| self.report(rows::settings(&connection)))
             .is_none_or(|settings| settings.pause_on_lock);
-        let is_locked =
-            lock_the_cube(&mut *link, pause_on_lock, &*self.log).is_ok_and(|status| status.is_locked);
-        self.log.record(Tag::Quit, || {
-            match (is_locked, pause_on_lock) {
-                (true, true) => "Quit: the cube is paused and locked",
-                (true, false) => "Quit: the cube is locked",
-                (false, _) => "Quit: the cube was not left locked",
+        let (lines_sender, lines) = channel();
+        let (done_sender, done) = channel();
+        let worker_lines = Lines(lines_sender);
+        std::thread::spawn(move || {
+            let is_locked =
+                lock_the_cube(&mut *link, pause_on_lock, &worker_lines).is_ok_and(|status| status.is_locked);
+            session::disconnect(&mut *link, &worker_lines);
+            if done_sender.send(is_locked).is_err() {
+                eprintln!("facet: the quit had stopped waiting for the cube before it was let go of");
             }
-            .to_string()
         });
-        session::disconnect(&mut *link, &*self.log);
+        let deadline = std::time::Instant::now() + QUIT_DEADLINE;
+        let is_locked = loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match lines.recv_timeout(left) {
+                Ok(Outcome::Log(tag, message, true)) => self.log.record_failure(tag, || message),
+                Ok(Outcome::Log(tag, message, false)) => self.log.record(tag, || message),
+                Ok(other) => self.log.record(Tag::Quit, || {
+                    format!("Quit: {} arrived while locking the cube, and was dropped", describe_lost(&other))
+                }),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => match done.try_recv() {
+                    Ok(is_locked) => break Some(is_locked),
+                    Err(error) => {
+                        self.log.record_failure(Tag::Quit, || {
+                            format!("Quit: locking the cube ended without an answer: {error}")
+                        });
+                        break Some(false);
+                    }
+                },
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break None,
+            }
+        };
+        self.log.record(Tag::Quit, || match (is_locked, pause_on_lock) {
+            (Some(true), true) => "Quit: the cube is paused and locked".to_string(),
+            (Some(true), false) => "Quit: the cube is locked".to_string(),
+            (Some(false), _) => "Quit: the cube was not left locked".to_string(),
+            (None, _) => format!(
+                "Quit: the cube did not answer within {}s, so the app quits without it",
+                QUIT_DEADLINE.as_secs()
+            ),
+        });
         if let Some(connection) = self.connect() {
             self.report(rows::record_quit(&connection, &*self.log));
         }
