@@ -142,9 +142,9 @@ setup_the_cube() {
     fi
 
     since=$(mark)
-    press device-reset
-    sleep 0.5
-    press_title "Reset Device"
+    if ! confirm_the_reset; then
+        trouble "Reset Device asked nothing, so the cube was not reset"
+    fi
     step "resetting the cube, which takes up to two minutes..."
     verdict=$(wait_for "$since" "Reset: %" 140)
     case "$verdict" in

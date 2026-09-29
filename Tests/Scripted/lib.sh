@@ -458,6 +458,21 @@ pair_a_cube() {
     return 0
 }
 
+# Presses Reset on the Device tab and confirms it on the notice, waiting for the notice to be up before pressing its
+# button, since its label is the same as the Reset button's and a press that lands before it would press Reset again.
+# Answers 1 when the notice never offered Reset Device.
+confirm_the_reset() {
+    local waited=0
+    press device-reset
+    while [ "$waited" -lt 25 ]; do
+        [ "$(alert_buttons)" = "Cancel|Reset Device" ] && break
+        sleep 0.2
+        waited=$((waited + 1))
+    done
+    [ "$(alert_buttons)" = "Cancel|Reset Device" ] || return 1
+    press_title "Reset Device"
+}
+
 # Quits the app and launches it again, waits for it to reconnect to the paired cube on its own, and frees the cube the
 # quit left paused and locked. Answers 0 once the cube is unlocked and running again, and 1 when either half does not
 # happen. Leaves the Settings window shut.
