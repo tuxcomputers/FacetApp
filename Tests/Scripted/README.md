@@ -226,7 +226,6 @@ correctly, so it passes and the line says which case it met.
 | `04-categories` | create, rename, retire, reinstate, renaming a retired one, and the alerts a namesake raises |
 | `05-faces-timing` | a category on a face, the clock starting and pausing, and the menu bar naming it in cyan |
 | `06-time-entries` | a finished segment becoming tracked time, and a blip not |
-| `07-history-timer` | it fires while timing and stops when nothing is |
 | `08-app-settings` | each row on the App tab written and read back |
 | `09-report` | the range, the totals, folding a category open, the sorting |
 | `10-google-calendar` | the account, and recorded time reaching the calendar `03` made, each event read back before it is ticked |
@@ -252,6 +251,7 @@ correctly, so it passes and the line says which case it met.
 | `66-device-rename` | the cube renamed from the Device tab: `0x15` to the hardware, the row written only after it, and the cube still found afterwards |
 | `67-pause-on-lock` | the pause-on-lock row: written to the table and sent nowhere |
 | `68-device-link-lost` | the link dropping is noticed and recorded, the pairing kept, and a relaunch reaching the cube again (**asks you to switch Bluetooth off and on**) |
+| `69-history-timer` | the history timer firing on the interval the table holds, and a changed interval read at the next arming with no relaunch |
 | `99-quit` | the cube factory reset, so it is left on the vendor PIN, and the app quitting |
 
 ## How a check is written

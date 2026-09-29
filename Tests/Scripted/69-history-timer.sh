@@ -9,11 +9,12 @@
 # **The interval is changed straight in the table** and put back by a trap on any way out. That is safe because the
 # app reads this setting at the point of use, each time the timer is armed.
 #
-# **Converted from the Swift suite 2026-09-29**, against `feature/swiftParity`. The Swift timer ran only while
-# something was being timed and stopped when nothing was; the Rust one runs for as long as the link is held, whatever
-# the cube is doing, and stops only when the link goes or the app quits. So the Swift checks that it stays silent
-# with nothing timed, stops on a pause and starts again on a resume have no counterpart here. What replaces them is
-# the spacing of two firings and the interval being read again at each arming.
+# **Converted from the Swift suite 2026-09-29**, against `feature/swiftParity`, and numbered 69 so it runs after `51`
+# has paired the cube. The Swift timer ran only while something was being timed and stopped when nothing was; the Rust
+# one runs for as long as the link is held, whatever the cube is doing, and stops only when the link goes or the app
+# quits. So the Swift checks that it stays silent with nothing timed, stops on a pause and starts again on a resume have
+# no counterpart here. What replaces them is the spacing of two firings and the interval being read again at each
+# arming.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database

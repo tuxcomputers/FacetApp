@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=15
+EXPECTED_CHECKS=16
 start "the link to the cube dropping, and coming back at the next launch"
 
 require_a_paired_cube "there is no link to lose"
@@ -41,6 +41,7 @@ else
 fi
 expect_log "the drop is recorded" "$since" "The link to the cube dropped"
 expect_log "and the app says it will look for the cube again" "$since" "The cube went away; looking for it again in %s"
+expect_log "and the history timer stops, there being no link to ask" "$since" "History timer stopped, the cube is not connected" 10
 expect_log "the menu bar turns yellow, the cube being out of reach" "$since" "Menu bar: name yellow, figure yellow" 15
 check "the table says the cube is not connected" "0" "$(setting connection connected)"
 check_contains "and when the link was lost" "$(setting connection connection_lost)" "$(date '+%Y-%m-%d')"

@@ -1388,6 +1388,9 @@ impl Device {
                 let Some(device) = weak.upgrade() else { return };
                 let is_link_held = device.link.try_lock().map_or(true, |slot| slot.is_some());
                 if !is_link_held {
+                    device.log.record(Tag::History, || {
+                        "History timer stopped, it fired with no link to the cube held".to_string()
+                    });
                     return;
                 }
                 device
