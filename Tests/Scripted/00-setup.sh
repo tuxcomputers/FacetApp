@@ -153,6 +153,14 @@ setup_the_cube() {
     esac
     close_settings
     quit_app
+
+    # **The pairing filed the cube's history, and the run starts from none.** The login fetched it, leaving the segment
+    # the cube was on open in device_event, which every script below would inherit as something being timed. The app
+    # is shut, so the rows are cleared straight from the table, as the rebuild left it.
+    sql "DELETE FROM time_entry; DELETE FROM device_event;"
+    if [ "$(sql "SELECT (SELECT COUNT(*) FROM device_event) + (SELECT COUNT(*) FROM time_entry);")" != "0" ]; then
+        trouble "the history the setup pairing filed would not clear, so the scripts below would inherit it"
+    fi
 }
 
 if ask_about_the_device; then
