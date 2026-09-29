@@ -538,8 +538,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         show_in_dock(false, &settle_log);
     });
 
-    // A kill, and the Mac logging out, restarting or shutting down, quit the way the menu does, so the cube is left
-    // paused and locked.
+    // A kill, the Mac logging out, restarting or shutting down, and a terminate from the app menu quit the way the
+    // status item menu does, so the cube is left paused and locked.
     let signal_quit = Rc::clone(&quit);
     let signal_watch = slint::Timer::default();
     match facet_adapters::termination::requests() {
@@ -554,7 +554,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             log.record_failure(Tag::Quit, || format!("A kill will not lock the cube: {}", plain(&reason)))
         }
     }
-    let _power_off = quit_on_power_off(Rc::clone(&quit), &log);
+    let _termination = quit_on_termination(Rc::clone(&quit), &log);
 
     log.record(Tag::Launch, || "Facet is in the menu bar. Right click the icon for the menu".to_string());
 
@@ -641,39 +641,57 @@ fn show_in_dock(wanted: bool, log: &impl Record) {
 #[cfg(not(target_os = "macos"))]
 fn show_in_dock(_wanted: bool, _log: &impl Record) {}
 
-/// Runs `quit` when the Mac is about to log out, restart or shut down, before it asks the app to terminate. The
-/// returned observer must be held for as long as that is wanted.
+/// Runs `quit` when the Mac is about to log out, restart or shut down, and when AppKit is about to terminate the app,
+/// which is what the app menu's Quit and Command-Q do while a window is open. `quit` blocks until the cube is let go
+/// of, and the process does not exit while it does. The returned observers must be held for as long as that is
+/// wanted.
 #[cfg(target_os = "macos")]
-fn quit_on_power_off(
+fn quit_on_termination(
     quit: Rc<dyn Fn(&str)>,
     log: &impl Record,
-) -> Option<objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2::runtime::NSObjectProtocol>>> {
-    use objc2_app_kit::{NSWorkspace, NSWorkspaceWillPowerOffNotification};
-    use objc2_foundation::{NSNotification, NSOperationQueue};
-
-    let block = block2::RcBlock::new(move |_: std::ptr::NonNull<NSNotification>| {
-        quit("as the Mac logs out, restarts or shuts down");
-    });
-    let centre = NSWorkspace::sharedWorkspace().notificationCenter();
-    // SAFETY: the block is run on the main queue, which is the thread that made it, and the observer is never
-    // removed, so the block is neither run nor released on another thread while the app runs.
-    let observer = unsafe {
-        centre.addObserverForName_object_queue_usingBlock(
-            Some(NSWorkspaceWillPowerOffNotification),
-            None,
-            Some(&NSOperationQueue::mainQueue()),
-            &block,
-        )
+) -> Vec<objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2::runtime::NSObjectProtocol>>> {
+    use objc2_app_kit::{
+        NSApplicationWillTerminateNotification, NSWorkspace, NSWorkspaceWillPowerOffNotification,
     };
+    use objc2_foundation::{NSNotification, NSNotificationCenter, NSNotificationName, NSOperationQueue};
+
+    let observe = |centre: &NSNotificationCenter, name: &NSNotificationName, reason: &'static str| {
+        let quit = Rc::clone(&quit);
+        let block = block2::RcBlock::new(move |_: std::ptr::NonNull<NSNotification>| quit(reason));
+        // SAFETY: the block is run on the main queue, which is the thread that made it, and the observer is never
+        // removed, so the block is neither run nor released on another thread while the app runs.
+        unsafe {
+            centre.addObserverForName_object_queue_usingBlock(
+                Some(name),
+                None,
+                Some(&NSOperationQueue::mainQueue()),
+                &block,
+            )
+        }
+    };
+    let observers = vec![
+        observe(
+            &NSWorkspace::sharedWorkspace().notificationCenter(),
+            // SAFETY: an AppKit constant, set before main runs.
+            unsafe { NSWorkspaceWillPowerOffNotification },
+            "as the Mac logs out, restarts or shuts down",
+        ),
+        observe(
+            &NSNotificationCenter::defaultCenter(),
+            // SAFETY: an AppKit constant, set before main runs.
+            unsafe { NSApplicationWillTerminateNotification },
+            "as the app is terminated",
+        ),
+    ];
     log.record(Tag::Launch, || {
-        "Logging out, restarting or shutting down will quit through the quit sequence".to_string()
+        "Logging out, shutting down and a terminate will quit through the quit sequence".to_string()
     });
-    Some(observer)
+    observers
 }
 
 #[cfg(not(target_os = "macos"))]
-fn quit_on_power_off(_quit: Rc<dyn Fn(&str)>, _log: &impl Record) -> Option<()> {
-    None
+fn quit_on_termination(_quit: Rc<dyn Fn(&str)>, _log: &impl Record) -> Vec<()> {
+    Vec::new()
 }
 
 /// Gives the status item's button an accessibility identifier, so a script can find it by name.
