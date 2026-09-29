@@ -236,7 +236,7 @@ correctly, so it passes and the line says which case it met.
 | `50-device-scan` | the scan lists the cube, stops when pressed, ends by itself after fifteen seconds, and All Devices widens it |
 | `51-device-connect` | pairing: every step of the login, the PIN rotated or kept, what the table and the tab say afterwards, and Reset offered and called off |
 | `52-device-reset` | the factory reset: asked, called off, then sent, proved on the vendor PIN, and forgotten, and the wiped cube paired onto a new PIN |
-| `53-device-reconnect` | a quit closing the link, a paired app reaching its own cube at launch with the window shut, Forget, and a launch with nothing paired |
+| `53-device-reconnect` | a quit closing the link, a paired app reaching its own cube at launch with the window shut and the menu bar saying Connecting..., Forget, and a launch with nothing paired |
 | `54-device-battery` | the charge read as the link comes up, followed from then on, and shown on the tab, and the battery warning row |
 | `55-device-face` | the login's clock and face, history filed into `device_event` and growing in place, the Faces tab following the cube, and a turn opening a new segment (**asks you to turn the cube**) |
 | `56-manual-mode` | a paired app that cannot find its cube: what a click refuses, and what taking manual mode stops (**asks you to switch Bluetooth off and on**) |

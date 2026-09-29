@@ -1,19 +1,21 @@
 #!/bin/bash
-# The cube's auto-pause: stepped on the Device tab, sent as `0x05`, read back with `0x10`, and only then written down.
+# The cube's auto-pause: stepped on the Device tab, sent as `0x05`, read back with `0x10`, and only then written down,
+# and the cube stopping itself on it.
 #
 # **This is the setting with a read-back**, so the ordering is the assertion: the command, then the cube's own
 # `0x10` answer carrying the new delay, then the app saying the cube confirms it, and only then the table row.
-# Stepped once and put back, and both directions are checked.
+# Stepped to a minute and put back to the seeded 0, and both directions are checked.
 #
-# **Converted from the Swift suite 2026-09-28**, against the Device tab `feature/deviceTab` builds. The Swift script
-# also watched the cube pause itself when the delay ran out; that needs face notifications, which are not built, so
-# it comes back with them.
+# **Asks for hands twice**: the cube turned onto Meeting and left alone for a minute, and turned back onto Break.
+#
+# **Converted from the Swift suite 2026-09-28**, against the Device tab `feature/deviceTab` builds, and given the
+# self-stop on `feature/swiftParity`.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=16
+EXPECTED_CHECKS=22
 start "auto-pause, sent, read back, and only then written down"
 
 require_a_paired_cube "there is no cube to send auto-pause to"
@@ -63,10 +65,54 @@ step_auto_pause() {
     check "the table holds $value" "$value" "$(setting auto_pause_minutes minutes)"
 }
 
-was=$(setting auto_pause_minutes minutes)
-if [ "${was:-0}" -ge 240 ]; then want=$((was - 1)); else want=$((was + 1)); fi
-step_auto_pause "$want"
-step_auto_pause "$was"
+check "auto-pause starts off, as seeded" "0" "$(setting auto_pause_minutes minutes)"
+step_auto_pause 1
+
+# ---------------------------------------------------------------------------- the cube stopping itself
+#
+# **Turned rather than left where it is**, because the delay restarts on every face change, so a cube that has been
+# still for ten minutes says nothing about when the minute began. Meeting, face 2, holds a category, so nothing in the
+# app stops the cube there.
+
+open_paused() {
+    sql "SELECT paused FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC, device_event_id DESC LIMIT 1;"
+}
+
+turned=$(mark)
+if ask_and_detect "$(on_face_now "$turned" 2)" \
+    "Turn the cube so the Meeting face is up, then leave it alone" \
+    "That is face 2, the one lit cyan." \
+    "THEN DO NOT TOUCH IT. This script waits about a minute for the cube to stop itself," \
+    "and every turn starts that minute over."; then
+    check "the cube is counting on Meeting, so there is a clock for the delay to stop" "0" \
+        "$(wait_sql "0" "SELECT paused FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC, device_event_id DESC LIMIT 1;" 30)"
+    # A minute for the delay, and the history fetch every 10s coming round to file the pause.
+    step "waiting up to 150s: a minute for the cube to stop itself, then a history fetch to see it..."
+    if [ "$(wait_sql "1" "SELECT paused FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC, device_event_id DESC LIMIT 1;" 150)" = "1" ]; then
+        pass "the cube stopped itself once the minute was up"
+    else
+        fail "the cube never stopped itself, so the delay it confirmed had no effect on the hardware"
+    fi
+    # Everything in the app that pauses a cube sends 0x06 on, so its absence says the cube did it alone.
+    check "and nothing in the app asked it to" "0" \
+        "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $turned AND message = 'Sending 06 01';")"
+else
+    fail "nobody was there to turn the cube, so it was never started for the delay to stop"
+    fail "and so it was never watched stopping itself"
+    fail "and nothing could be said about whether the app stopped it"
+fi
+
+step_auto_pause 0
+
+since=$(mark)
+if ask_and_detect "$(on_face_now "$since" 8)" "Turn the cube back to the Break face" \
+    "That is face 8, the one lit red. Leave it there for the scripts after this one."; then
+    pass "the cube is back on Break"
+else
+    fail "there was no terminal to ask, so the cube was never turned back"
+fi
+check "and counting there" "0" \
+    "$(wait_sql "0" "SELECT paused FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC, device_event_id DESC LIMIT 1;" 20)"
 
 close_settings
 finish

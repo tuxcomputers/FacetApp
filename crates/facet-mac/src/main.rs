@@ -1,9 +1,8 @@
 //! Composition root for macOS. The only place that knows both a port and the thing that performs it.
 //!
-//! Today that is a status item, a menu, the Settings window and the two databases behind them. There is
-//! no radio yet. What it does establish is the shape the rest hangs off, and the two rules that are easy
-//! to get wrong later: the menu is the primary route to everything, and left click is an accelerator
-//! rather than a mechanism.
+//! That is a status item, a menu, the Settings window, the two databases behind them, the radio, the secret store
+//! and the Google calendar. Two rules hold throughout: the menu is the primary route to everything, and left
+//! click is an accelerator rather than a mechanism.
 //!
 //! **Where the files live is decided here and nowhere else.** `facet-core` is handed paths; it does not
 //! know which platform laid them out, and asking it to would be the core caring what it is running on.
