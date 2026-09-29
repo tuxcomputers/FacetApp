@@ -9,7 +9,7 @@
 // press reaches it. A bare TouchArea is invisible to AXPress and reports success anyway, which is the
 // silent pass CLAUDE.md has a section about.
 
-import { Palette, ScrollView, AboutSlint } from "std-widgets.slint";
+import { Palette, ScrollView, AboutSlint, Button } from "std-widgets.slint";
 
 // The UI's one typeface, compiled into the binary so every platform draws the same glyphs. Every weight
 // a `font-weight` in these files uses has a file here; a weight without one is synthesised or falls back.
@@ -87,6 +87,8 @@ export component SettingsWindow inherits Window {
     in property <string> app-version: "0.1.0";
 
     callback tab-selected(string);
+    // The Close button and Escape, which hide the window as its own close control does.
+    callback close-pressed();
 
     // Which tab an open lands on, as functions rather than as numbers in main.rs, so the indices sit
     // beside the tabs they index.
@@ -102,6 +104,17 @@ export component SettingsWindow inherits Window {
     public function open-on-faces() { root.active-tab = 0; }
     public function open-on-device() { root.active-tab = 4; }
     public function open-on-about() { root.active-tab = 5; }
+
+    // **Escape closes the window**, as it did in the Swift app. A key a field takes, such as Escape abandoning an
+    // edit, never reaches here.
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.close-pressed();
+                return accept;
+            }
+            reject
+        }
 
     VerticalLayout {
         padding: 0px;
@@ -283,5 +296,23 @@ export component SettingsWindow inherits Window {
                 height: parent.height;
             }
         }
+
+        Rectangle {
+            height: 1px;
+            background: Palette.border;
+        }
+
+        // Close, at the foot of every tab, as the Swift app had it.
+        HorizontalLayout {
+            alignment: end;
+            padding: 10px;
+            padding-right: Metrics.tab-padding;
+            Button {
+                text: "Close";
+                accessible-id: "settings-close";
+                clicked => { root.close-pressed(); }
+            }
+        }
+    }
     }
 }

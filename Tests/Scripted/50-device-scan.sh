@@ -9,14 +9,14 @@
 #
 # - **A heard device is drawn, not logged**, so the tree is polled for the `device-scan-result-` row rather than the
 #   trace for a peripheral line.
-# - **Leaving the tab or closing the window does not stop a scan yet**, so the two Swift checks on that are gone until
-#   it does. A scan here ends when it is stopped, when a device is chosen, or after its fifteen seconds.
+# - **A scan ends** when it is stopped, when a device is chosen, after its fifteen seconds, or when the Device tab is
+#   left or the window closed.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=20
+EXPECTED_CHECKS=24
 start "scanning for a TimeFlip, and finding one"
 
 if device_required; then
@@ -109,5 +109,20 @@ fi
 press device-scan-all
 sleep 0.5
 
+# ---------------------------------------------------------------------------- leaving the tab, and closing the window
+
+since=$(mark)
+press device-scan
+wait_for "$since" "Scanning, unfiltered" 20 >/dev/null
+select_tab Report
+expect_log "leaving the Device tab stops the scan" "$since" "Stopping the scan: the Report tab was selected" 10
+expect_log "and the scan ends" "$since" "The scan ended, %" 10
+select_tab Device
+
+since=$(mark)
+press device-scan
+wait_for "$since" "Scanning, unfiltered" 20 >/dev/null
 close_settings
+expect_log "closing the window stops the scan" "$since" "Stopping the scan: the Settings window closed" 10
+expect_log "and the scan ends" "$since" "The scan ended, %" 10
 finish

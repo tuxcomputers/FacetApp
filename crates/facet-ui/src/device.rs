@@ -604,6 +604,15 @@ impl Device {
         self.heard.borrow().iter().filter(|advert| scan::is_eligible(advert, &known, all)).count()
     }
 
+    /// Stops a scan that is running, saying `reason`: leaving the Device tab or closing the window. Does nothing with
+    /// no scan running.
+    pub fn stop_scan(&self, reason: &str) {
+        if self.is_scanning.get() && !self.stop.load(Ordering::Relaxed) {
+            self.log.record(Tag::Radio, || format!("Stopping the scan: {}", plain(reason)));
+            self.stop.store(true, Ordering::Relaxed);
+        }
+    }
+
     /// Starts a scan, or stops the one that is running.
     fn scan_pressed(&self) {
         let Some(radio) = self.radio.clone() else { return };

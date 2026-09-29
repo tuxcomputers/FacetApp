@@ -57,6 +57,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // channel to this one rather than a second connection.
     let log = Rc::new(open_databases()?);
 
+    // **One copy at a time.** Held until main returns; a second copy finds it held, says so and goes.
+    let _instance = match facet_core::instance::claim(&data_directory()) {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            log.record(Tag::Launch, || "Facet is already running, so this copy quits".to_string());
+            eprintln!("Facet is already running.");
+            return Ok(());
+        }
+        Err(reason) => {
+            log.record_failure(Tag::Launch, || {
+                format!("The single instance lock could not be taken: {reason}")
+            });
+            return Err(reason.into());
+        }
+    };
+
     let ui = SettingsWindow::new()?;
 
     // One notice for the whole window, shared by every tab that raises one.
@@ -196,16 +212,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let device = lost_device.clone();
         lost_notice.ask(
             "The TimeFlip was not found",
-            "Facet could not find the paired TimeFlip. Flip it to wake it and look again, or time by hand for the rest \
-             of this launch.",
-            &["Rescan", "Time by Hand"],
-            move |choice| {
-                if choice == 0 {
+            "Facet could not find the paired TimeFlip. Flip it to wake it and look again, time by hand for the rest of \
+             this launch, or quit.",
+            &["Rescan", "Time by Hand", "Quit"],
+            move |choice| match choice {
+                0 => {
                     if let Some(device) = device.upgrade() {
                         device.reconnect();
                     }
-                } else if let Some(faces) = faces.upgrade() {
-                    faces.give_up_on_cube();
+                }
+                1 => {
+                    if let Some(faces) = faces.upgrade() {
+                        faces.give_up_on_cube();
+                    }
+                }
+                _ => {
+                    if let Some(faces) = faces.upgrade() {
+                        faces.quit();
+                    }
+                    if let Some(device) = device.upgrade() {
+                        device.quit();
+                    }
+                    if let Err(error) = slint::quit_event_loop() {
+                        eprintln!("facet: the event loop refused to quit: {error}");
+                    }
                 }
             },
         );
@@ -245,10 +275,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tab_categories = Rc::clone(&categories);
     let tab_report = Rc::clone(&report);
     let tab_google = Rc::clone(&google);
+    let tab_device = Rc::clone(&device);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
         tab_log.record(Tag::Settings, || format!("Settings tab selected: {tab}"));
+        if tab != "Device" {
+            tab_device.stop_scan(&format!("the {tab} tab was selected"));
+        }
         if tab == "Faces" {
             tab_faces.refresh();
         }
@@ -270,10 +304,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // again. The values it holds are not carried over, whatever it keeps in memory: the window reads them
     // again on every open, per the source-of-truth rule in CLAUDE.md.
     let close_log = Rc::clone(&log);
+    let pressed_log = Rc::clone(&close_log);
+    let closing_device = Rc::clone(&device);
+    let pressed_device = Rc::clone(&device);
     ui.window().on_close_requested(move || {
         show_in_dock(false, &close_log);
+        closing_device.stop_scan("the Settings window closed");
         close_log.record(Tag::Settings, || "Settings closed".to_string());
         slint::CloseRequestResponse::HideWindow
+    });
+    // The Close button and Escape hide the window the way its own close control does.
+    let pressed_ui = ui.as_weak();
+    ui.on_close_pressed(move || {
+        let Some(ui) = pressed_ui.upgrade() else { return };
+        if let Err(error) = ui.hide() {
+            pressed_log
+                .record_failure(Tag::Settings, || format!("The Settings window would not hide: {error}"));
+            return;
+        }
+        show_in_dock(false, &pressed_log);
+        pressed_device.stop_scan("the Settings window closed");
+        pressed_log.record(Tag::Settings, || "Settings closed".to_string());
     });
 
     // About sits on the top level menu, and that placement is a licence condition. Slint's
