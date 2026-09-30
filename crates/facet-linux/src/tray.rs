@@ -142,7 +142,8 @@ impl Tray for FacetTray {
         "facet".into()
     }
 
-    /// **Shown beside the icon on desktops that do that**, which macOS and MATE can and Windows never can.
+    /// The line beside the icon. Published as `Title` and, through vendor/ksni, as `XAyatanaLabel`, which is the one
+    /// an XApp or Ayatana host draws.
     fn title(&self) -> String {
         self.line.clone()
     }

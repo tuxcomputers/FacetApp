@@ -30,7 +30,13 @@ fi
 # **Nothing is being timed at this point in a run**, a rebuilt database holding no open segment and no cube.
 check "nothing is being timed" "0" \
     "$(sql "SELECT COUNT(*) FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12;")"
-check_contains "so the item says Facet" "$item" "Facet"
+# **On Linux the line drawn beside the icon is `XAyatanaLabel`**, not `Title`: the XApp host draws the one and not
+# the other, so a label missing there is a tray with no text even while `Title` holds the line.
+if [ "$PLATFORM" = "linux" ]; then
+    check_contains "so the item says Facet beside the icon" "$(printf '%s\n' "$item" | grep '^XAyatanaLabel:')" "Facet"
+else
+    check_contains "so the item says Facet" "$item" "Facet"
+fi
 check "and the trace says so" "Menu bar reads Facet" \
     "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Menu bar reads %' ORDER BY debug_log_id DESC LIMIT 1;")"
 check "in the system's own colour" "Menu bar: name ordinary, figure ordinary" \
