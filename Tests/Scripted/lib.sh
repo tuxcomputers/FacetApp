@@ -490,6 +490,14 @@ relink_a_cube() {
 # leaving the cube paused**. Answers 0 once the cube says it is unlocked and running, and 1 otherwise. A cube resting on
 # a face with no category is paused again straight away by the app, which is why the run keeps it on Break.
 free_the_cube() {
+    free_the_cube_by_command || return 1
+    # **The table as well as the command.** The command's read-back comes before the history fetch that files the
+    # resume, and the next script reads the table first, so a cube resumed a moment ago still showed its paused row.
+    [ "$(wait_sql "0" "SELECT paused FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC, device_event_id DESC LIMIT 1;" 20)" = "0" ]
+}
+
+# The commands half of `free_the_cube`: answers 0 once the cube says it is unlocked and running.
+free_the_cube_by_command() {
     local freeing
     freeing=$(mark)
     wait_for "$freeing" "The cube is %locked and %" 25 >/dev/null
