@@ -69,7 +69,7 @@ cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 | `55-device-face` | The resting face: asked for when the link comes up, followed on every turn after |
 | `56-manual-mode` | Manual mode with a device still paired: what a click may do before it is chosen, and what the app stops doing after |
 | `57-cube-pause` | A single click stops the cube and starts it again |
-| `58-wrong-pin` | A paired cube that refuses this app's PIN: the offer, Rescan, and taking timing by hand |
+| `58-wrong-pin` | A paired cube that refuses this app's PIN: the offer, Rescan, and taking timing by hand. Not run on macOS, where the Keychain prompts after the PIN item is rewritten |
 | `59-double-tap` | The cube's double tap, which this app turns off and never turns back on |
 | `60-device-backlog` | A cube that goes out of range while timing, is turned while nobody can hear it, and comes back |
 | `61-lock-without-pause` | Locking with `pause_on_lock` off: the lock still goes, only the pause is skipped |

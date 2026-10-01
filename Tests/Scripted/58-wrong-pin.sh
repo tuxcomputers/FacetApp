@@ -46,6 +46,18 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
+
+# Not run on macOS: it rewrites the PIN item with the `security` tool, and the app's next read of that item raises a
+# Keychain prompt that an unattended run cannot answer. It runs on Linux, whose secret store does not prompt. A script
+# that declares no checks is not counted as short, and the stamp shows this one with none.
+if [ "$PLATFORM" = "mac" ]; then
+    EXPECTED_CHECKS=0
+    start "a cube that refuses this app's PIN: not run on macOS"
+    step "not run on macOS: the Keychain prompts when the app reads an item the security tool has rewritten"
+    finish
+    exit 0
+fi
+
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
 EXPECTED_CHECKS=32
