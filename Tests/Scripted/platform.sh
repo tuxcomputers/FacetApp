@@ -688,6 +688,18 @@ platform_date_from_epoch() {
     esac
 }
 
+# **The zone this machine says it is in, as an IANA name, read from the operating system and not from the app.**
+# A check that asked the app for it would compare the app with itself. Empty when it cannot be read, and the caller
+# says so.
+#
+# macOS keeps it as the target of `/etc/localtime`, under `.../zoneinfo/`. Linux answers it through systemd.
+platform_zone_name() {
+    case "$PLATFORM" in
+        mac)   readlink /etc/localtime | sed 's|.*/zoneinfo/||' ;;
+        linux) timedatectl show -p Timezone --value ;;
+    esac
+}
+
 # The operating system version, for the run record.
 platform_os_version() {
     case "$PLATFORM" in

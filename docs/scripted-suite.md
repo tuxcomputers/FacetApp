@@ -55,6 +55,7 @@ cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 | `11-google-reconnect` | Disconnecting an account and connecting it again, with the calendar surviving in between |
 | `12-daily-limit` | Reaching the hard limit stops the clock, and the app then refuses to start it again |
 | `13-device-tab` | The Device tab's two sections, and the folds that need no cube |
+| `14-time-zone` | A time entry, its segment and the trace are filed under this machine's own zone, with the machine's own local time beside it. New with the Rust app |
 
 ### Cube required
 

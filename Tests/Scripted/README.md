@@ -232,6 +232,7 @@ correctly, so it passes and the line says which case it met.
 | `11-google-reconnect` | disconnect keeps the calendar, and signing back in still reaches it (**asks you to sign in**) |
 | `12-daily-limit` | a category spending its `daily_limit` stops the clock, and every way of starting it again refuses |
 | `13-device-tab` | the Device tab's two sections folding, including a fold inside a fold, and every Settings control dead with no cube |
+| `14-time-zone` | a time entry, its segment and the trace filed under this machine's own zone, read from the operating system, with its local time beside it |
 | `50-device-scan` | the scan lists the cube, stops when pressed, ends by itself after fifteen seconds, and All Devices widens it |
 | `51-device-connect` | pairing: every step of the login, the PIN rotated or kept, what the table and the tab say afterwards, and Reset offered and called off |
 | `52-device-reset` | the factory reset: asked, called off, then sent, proved on the vendor PIN, and forgotten, and the wiped cube paired onto a new PIN |
