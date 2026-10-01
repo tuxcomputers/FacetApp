@@ -23,6 +23,7 @@ use facet_core::app_settings::Value;
 use facet_core::database;
 use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::device::command::{self, CubeStatus};
+use facet_core::device::forced_pause::{self, Decision, PauseClaim, Resting};
 use facet_core::device::name::{self, NameDecision, NameProblem};
 use facet_core::device::rows::{self, DeviceInfo, DeviceSetting};
 use facet_core::device::session::{Fetched, ResetOutcome};
@@ -170,15 +171,6 @@ enum Outcome {
     },
     LinkLost,
     Released,
-}
-
-/// Why the app paused the cube itself, which decides whether it may start it again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PauseClaim {
-    /// The face it rests on holds no category. Lifted once the face is given one.
-    NoCategory,
-    /// The category on show has spent its daily limit. Held until the limit is not spent.
-    DailyLimit,
 }
 
 /// A successful pairing: the cube is logged in, on `pin`, and the link is held.
@@ -1272,24 +1264,28 @@ impl Device {
         else {
             return;
         };
-        let decision = if !reading.is_paused {
-            match &reading.category {
-                None => Some((true, PauseClaim::NoCategory)),
-                Some(_) if reading.is_limit_reached => Some((true, PauseClaim::DailyLimit)),
-                Some(_) => None,
-            }
-        } else if self.pause_claim.get() == Some(PauseClaim::NoCategory)
-            && reading.category.is_some()
-            && !reading.is_limit_reached
-        {
-            Some((false, PauseClaim::NoCategory))
-        } else {
-            None
+        let cube = Resting {
+            face: reading.face,
+            is_paused: reading.is_paused,
+            has_category: reading.category.is_some(),
+            is_limit_reached: reading.is_limit_reached,
         };
-        let Some((pause, claim)) = decision else { return };
+        let (pause, claim) = match forced_pause::decide(cube, self.pause_claim.get()) {
+            Decision::Leave => return,
+            Decision::Release => {
+                self.log.record(Tag::Forced, || {
+                    "Forced pause released: the cube is no longer stopped on the face the app stopped it on"
+                        .to_string()
+                });
+                self.pause_claim.set(None);
+                return;
+            }
+            Decision::Pause(claim) => (true, claim),
+            Decision::Resume(claim) => (false, claim),
+        };
         let face = reading.face;
         match (pause, claim) {
-            (true, PauseClaim::NoCategory) => self.log.record(Tag::Forced, || {
+            (true, PauseClaim::NoCategory { .. }) => self.log.record(Tag::Forced, || {
                 format!("Forced pause: face {face} has no category, so the cube is being stopped")
             }),
             (true, PauseClaim::DailyLimit) => {
@@ -1311,7 +1307,7 @@ impl Device {
                 with_link(&held, |link| session::set_pause(link, pause, lines).map(|(status, _)| status));
             Outcome::CubeCommanded {
                 reason: match (pause, claim) {
-                    (true, PauseClaim::NoCategory) => format!("face {face} has no category"),
+                    (true, PauseClaim::NoCategory { .. }) => format!("face {face} has no category"),
                     (true, PauseClaim::DailyLimit) => "a category spent its daily limit".to_string(),
                     (false, _) => format!("face {face} has a category now"),
                 },

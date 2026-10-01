@@ -5,6 +5,7 @@
 pub mod colour;
 pub mod command;
 pub mod face;
+pub mod forced_pause;
 pub mod history;
 pub mod info;
 pub mod login;

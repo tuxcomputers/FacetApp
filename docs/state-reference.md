@@ -133,6 +133,7 @@ state, and had a quit report a command refused that the cube had taken.
 | --- | --- | --- |
 | `cubeLockState` | `unknown` / `locked` / `unlocked` | `BluetoothRadio.cubeStatus?.isLocked`; in Rust `Device.cube_status`, the last `0x10` answer, `None` for unknown |
 | `cubePauseState` | `unknown` / `paused` / `running` | `device_event.paused` on the open row, or `cubeStatus?.isPaused` live |
+| `pauseClaim` | `none` / `noCategory` (with the face) / `dailyLimit` | `Device.pause_claim`, held because no table records which face the app stopped the cube on. Decided by `forced_pause::decide`: dropped once the cube is seen running on a face with a category, or stopped on a different face than the claim names |
 | `cubeFace` | 1 to 12, or none | `device_event.device_face` on the open row; `BluetoothRadio.currentFace` live, in Rust `Device.cube_face` |
 | `batteryPercent` | 0 to 100, or none | `BluetoothRadio.batteryPercent`; in Rust `Device.battery`, through `device::info::charge_to_show` |
 | `batteryWarningPercent` | 1 to 20 | `setting.low_battery_level.percent` |
