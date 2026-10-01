@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=39
+EXPECTED_CHECKS=40
 start "pausing and locking the cube from the menu bar"
 
 require_a_paired_cube "there is no cube to pause"
