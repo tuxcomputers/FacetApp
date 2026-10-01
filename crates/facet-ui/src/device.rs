@@ -29,7 +29,7 @@ use facet_core::device::session::{Fetched, ResetOutcome};
 use facet_core::device::system_state::{self, CubeHardwareState, CubeSyncState};
 use facet_core::device::trace::TracedRadio;
 use facet_core::device::{colour, face, history, info, login, scan, session, uuids};
-use facet_core::port::{Advert, Link, Radio, RadioState, SecretLookup, SecretStore};
+use facet_core::port::{Advert, Link, Radio, RadioState, SecretLookup, SecretStore, Zone};
 use facet_core::{app_settings, cube_history};
 use rusqlite::Connection;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
@@ -47,8 +47,48 @@ const REACH_AGAIN_FIRST: Duration = Duration::from_secs(2);
 const REACH_AGAIN_AT_MOST: Duration = Duration::from_secs(30);
 /// How long each half of the low-battery blink lasts.
 const BLINK_EVERY: Duration = Duration::from_millis(500);
+/// How long a stepper's value has to stand still before it is sent to the cube.
+pub const EDIT_QUIET_FOR: Duration = Duration::from_millis(500);
 /// How long a quit waits for the cube to be paused, locked and let go of before quitting without it.
 pub const QUIT_DEADLINE: Duration = Duration::from_secs(5);
+
+/// One stepper's edits on their way to the cube.
+#[derive(Default)]
+struct EditedSetting {
+    /// Restarted by every edit, and sends the newest value when it runs out.
+    timer: slint::Timer,
+    /// The newest value edited and not yet sent.
+    unsent: Cell<Option<i64>>,
+    /// Whether a send of this setting is out with the cube.
+    is_sending: Cell<bool>,
+}
+
+impl EditedSetting {
+    /// Whether the person's value is still on its way to the table, and so not the table's to overwrite.
+    fn is_open(&self) -> bool {
+        self.unsent.get().is_some() || self.is_sending.get()
+    }
+}
+
+/// The three settings whose edits wait for the value to stop moving: the ones that go to the cube.
+#[derive(Default)]
+struct EditedSettings {
+    auto_pause: EditedSetting,
+    led_brightness: EditedSetting,
+    led_blink: EditedSetting,
+}
+
+impl EditedSettings {
+    /// `None` for a setting no stepper edits.
+    fn of(&self, setting: DeviceSetting) -> Option<&EditedSetting> {
+        match setting {
+            DeviceSetting::AutoPause => Some(&self.auto_pause),
+            DeviceSetting::LedBrightness => Some(&self.led_brightness),
+            DeviceSetting::LedBlink => Some(&self.led_blink),
+            DeviceSetting::PauseOnLock | DeviceSetting::BatteryWarning => None,
+        }
+    }
+}
 
 /// Where a background job logs: each line goes to the UI thread as it happens, through the same channel as the
 /// outcomes, so the trace keeps the order things happened in.
@@ -161,6 +201,9 @@ pub struct Device {
     notice: Rc<Notice>,
     radio: Option<Arc<dyn Radio>>,
     pins: Arc<dyn SecretStore>,
+    /// Names the zone each cube event is filed under when it is first recorded.
+    zone: Arc<dyn Zone>,
+    edited: EditedSettings,
     link: Arc<Mutex<Option<Box<dyn Link>>>>,
     /// The history characteristic's notifications for the held link, subscribed once at login.
     history_feed: Arc<Mutex<Option<Receiver<Vec<u8>>>>>,
@@ -225,6 +268,7 @@ impl Device {
         notice: Rc<Notice>,
         radio: Option<Arc<dyn Radio>>,
         pins: Arc<dyn SecretStore>,
+        zone: Arc<dyn Zone>,
     ) -> Rc<Device> {
         let (sender, receiver) = channel();
         // Every connection the radio makes is traced, into the same channel the jobs log through.
@@ -237,6 +281,8 @@ impl Device {
             notice,
             radio,
             pins,
+            zone,
+            edited: EditedSettings::default(),
             link: Arc::new(Mutex::new(None)),
             history_feed: Arc::new(Mutex::new(None)),
             cube_face: Cell::new(None),
@@ -338,7 +384,7 @@ impl Device {
             let weak = Rc::downgrade(&device);
             move |value: i32| {
                 if let Some(device) = weak.upgrade() {
-                    device.send_setting(setting, i64::from(value));
+                    device.edited(setting, i64::from(value));
                 }
             }
         };
@@ -405,9 +451,16 @@ impl Device {
         data.set_firmware(info::shown(paired, pairing.info.firmware.as_deref()).into());
         data.set_pause_on_lock(settings.pause_on_lock);
         data.set_battery_warning_percent(settings.battery_warning_percent as i32);
-        data.set_auto_pause_minutes(settings.auto_pause_minutes as i32);
-        data.set_led_brightness_percent(settings.led_brightness_percent as i32);
-        data.set_led_blink_seconds(settings.led_blink_seconds as i32);
+        // A value being edited is not read back underneath the person editing it, until its send has ended.
+        if !self.edited.auto_pause.is_open() {
+            data.set_auto_pause_minutes(settings.auto_pause_minutes as i32);
+        }
+        if !self.edited.led_brightness.is_open() {
+            data.set_led_brightness_percent(settings.led_brightness_percent as i32);
+        }
+        if !self.edited.led_blink.is_open() {
+            data.set_led_blink_seconds(settings.led_blink_seconds as i32);
+        }
         data.set_can_scan(self.radio.is_some());
         data.set_is_scanning(self.is_scanning.get());
         data.set_is_reaching_for_cube(self.is_reaching_for_cube.get());
@@ -1338,14 +1391,25 @@ impl Device {
             None => "the database would not open".to_string(),
             Some(connection) => match result {
                 Ok(Fetched::Unchanged(frame)) => {
-                    match self.report(cube_history::record(&connection, &frame, true, &*self.log)) {
+                    match self.report(cube_history::record(
+                        &connection,
+                        &*self.zone,
+                        &frame,
+                        true,
+                        &*self.log,
+                    )) {
                         Some(_) => format!("event {} again, {}s", frame.event_number, frame.duration_seconds),
                         None => "the table refused the write".to_string(),
                     }
                 }
                 Ok(Fetched::Frames { frames, latest }) => match history::plan(&frames, latest) {
                     Some(batch) => {
-                        match self.report(cube_history::record_batch(&connection, &batch, &*self.log)) {
+                        match self.report(cube_history::record_batch(
+                            &connection,
+                            &*self.zone,
+                            &batch,
+                            &*self.log,
+                        )) {
                             Some(count) => format!("{count} frame(s) written"),
                             None => "the table refused a write".to_string(),
                         }
@@ -1821,10 +1885,34 @@ impl Device {
         self.draw();
     }
 
+    /// A stepper changed `setting` to `value`. Only the value it stops on is sent, once, [`EDIT_QUIET_FOR`] after the
+    /// last change: a held arrow is a burst of changes, and the cube refuses a second command while the first is
+    /// out. The field keeps what was edited until the table holds it or the cube refuses it.
+    fn edited(&self, setting: DeviceSetting, value: i64) {
+        let Some(edit) = self.edited.of(setting) else { return };
+        edit.unsent.set(Some(value));
+        self.log.record(Tag::Settings, || format!("Device setting {setting:?} edited to {value}"));
+        let weak = self.this.borrow().clone();
+        edit.timer.start(slint::TimerMode::SingleShot, EDIT_QUIET_FOR, move || {
+            if let Some(device) = weak.upgrade() {
+                device.send_edited(setting);
+            }
+        });
+    }
+
+    /// Sends the value `setting` was last edited to, if it has not gone already.
+    fn send_edited(&self, setting: DeviceSetting) {
+        let Some(value) = self.edited.of(setting).and_then(|edit| edit.unsent.take()) else { return };
+        self.send_setting(setting, value);
+    }
+
     /// Sends a setting to the connected cube and stores it once the cube has it. Auto-pause is confirmed by
     /// reading it back with `0x10`; LED brightness and blink interval have no read-back, so the cube's
     /// acknowledgement is all there is.
     fn send_setting(&self, setting: DeviceSetting, value: i64) {
+        if let Some(edit) = self.edited.of(setting) {
+            edit.is_sending.set(true);
+        }
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
             let result = (|| {
@@ -1856,6 +1944,9 @@ impl Device {
     }
 
     fn sent(&self, setting: DeviceSetting, value: i64, result: Result<(), String>) {
+        if let Some(edit) = self.edited.of(setting) {
+            edit.is_sending.set(false);
+        }
         match result {
             Ok(()) => self.store_setting(setting, &Value::Number(value)),
             Err(reason) => {
@@ -2268,6 +2359,7 @@ mod tests {
             Rc::clone(&notice),
             None,
             Arc::new(MemoryStore(Mutex::new(None))),
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         without.open();
         assert_eq!(data.get_scan_status(), "This build has no Bluetooth.");
@@ -2286,6 +2378,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::clone(&store) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         device.open();
         settle(&device);
@@ -2324,6 +2417,29 @@ mod tests {
         settle(&device);
         assert_eq!(rows::settings(&connection).expect("read").led_brightness_percent, 70);
 
+        // A held arrow is a burst of edits: nothing goes while the value moves, and then only where it stopped.
+        let before = sent.lock().expect("lock").len();
+        for minutes in [6, 7, 8] {
+            data.set_auto_pause_minutes(minutes);
+            device.edited(DeviceSetting::AutoPause, i64::from(minutes));
+        }
+        assert_eq!(sent.lock().expect("lock").len(), before, "nothing is sent while the value is moving");
+        // The field holds what was edited, whatever else makes the tab redraw, while the table has the old value.
+        device.draw();
+        assert_eq!(data.get_auto_pause_minutes(), 8);
+        assert_eq!(rows::settings(&connection).expect("read").auto_pause_minutes, 5);
+        std::thread::sleep(EDIT_QUIET_FOR + Duration::from_millis(200));
+        slint::platform::update_timers_and_animations();
+        settle(&device);
+        let writes: Vec<Vec<u8>> = sent.lock().expect("lock")[before..].to_vec();
+        assert_eq!(writes, vec![vec![0x05, 0x00, 0x08]], "one write, at the number the arrow stopped on");
+        assert_eq!(rows::settings(&connection).expect("read").auto_pause_minutes, 8);
+        assert_eq!(data.get_auto_pause_minutes(), 8);
+        // With nothing left unsent the table is the answer again.
+        data.set_auto_pause_minutes(3);
+        device.draw();
+        assert_eq!(data.get_auto_pause_minutes(), 8);
+
         // A name the cube cannot store is refused before anything is sent; one it can is sent and then recorded.
         device.rename_opened();
         assert!(data.get_is_editing_device_name());
@@ -2354,6 +2470,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::clone(&store) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         assert!(!rows::pairing(&connection).expect("read").is_cube_connected);
         device.open();
@@ -2376,6 +2493,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::new(UnreadableStore),
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         locked.open();
         settle(&locked);
@@ -2394,6 +2512,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::clone(&store) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         device.open();
         settle(&device);
@@ -2440,6 +2559,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::clone(&empty) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         device.open();
         device.scan_pressed();
@@ -2462,6 +2582,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::new(UnreadableStore),
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         locked.open();
         locked.scan_pressed();

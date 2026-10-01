@@ -1430,6 +1430,7 @@ dependencies = [
  "dirs 7.0.0",
  "facet-core",
  "futures",
+ "iana-time-zone",
  "keyring",
  "rfd",
  "signal-hook",

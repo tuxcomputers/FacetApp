@@ -26,10 +26,11 @@ use facet_adapters::http::UreqHttp;
 use facet_adapters::loopback::StdLoopbackListener;
 use facet_adapters::radio::BtleplugRadio;
 use facet_adapters::secrets::KeyringSecretStore;
+use facet_adapters::zone::SystemZone;
 use facet_core::database;
 use facet_core::debug_log::{DebugLog, Record, Tag, Trace, plain};
 use facet_core::google::Credentials;
-use facet_core::port::{Opener, Radio};
+use facet_core::port::{Opener, Radio, Zone};
 use facet_core::setting;
 use facet_ui::app::App;
 use facet_ui::categories::Categories;
@@ -73,7 +74,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // **Shared rather than copied**, there being one trace database and one connection to it. Rc because
     // everything that records is on the UI thread; the tray thread has none and posts messages instead.
-    let log = std::rc::Rc::new(open_databases()?);
+    let zone: Arc<dyn Zone> = Arc::new(SystemZone);
+    let log = std::rc::Rc::new(open_databases(&zone)?);
 
     let ui = SettingsWindow::new()?;
 
@@ -88,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::rc::Rc::clone(&log),
         false,
         std::rc::Rc::clone(&notice),
+        Arc::clone(&zone),
     );
 
     let categories = Categories::attach(
@@ -155,6 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::rc::Rc::clone(&notice),
         radio,
         Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
+        Arc::clone(&zone),
     );
     // The Faces tab asks the cube which face is up, and a face given a category, or a category recoloured or retired,
     // relights the cube.
@@ -654,7 +658,7 @@ fn data_directory() -> PathBuf {
 /// The app database is opened even when nothing is going to be recorded, because it is what says whether
 /// anything should be. Its connection is then dropped: nothing reads it yet, and holding one open would be
 /// this app keeping a file something else may also want.
-fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
+fn open_databases(zone: &Arc<dyn Zone>) -> Result<Trace, Box<dyn std::error::Error>> {
     let directory = data_directory();
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
@@ -686,12 +690,12 @@ fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
         eprintln!(
             "[launch  ] Logging is off in the {which} database. Turn on debug.enabled in setting to record a trace."
         );
-        return Ok(Trace::new(file, None));
+        return Ok(Trace::new(file, None, Arc::clone(zone)));
     }
 
     std::fs::create_dir_all(&folder)
         .map_err(|error| format!("{} could not be created: {error}", folder.display()))?;
-    let log = Trace::new(file.clone(), Some(DebugLog::open(&file)?));
+    let log = Trace::new(file.clone(), Some(DebugLog::open(&file, &**zone)?), Arc::clone(zone));
     log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
     Ok(log)
 }

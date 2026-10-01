@@ -2,7 +2,8 @@
 //! reading it back, and ticking the entry only once what Google kept matches.
 //!
 //! An event's id is derived from its time entry (`facet<id>`), so a second insert of one already there is answered
-//! 409 and taken as Facet meeting its own earlier work. Times go as UTC; Google shows them in the calendar's zone.
+//! 409 and taken as Facet meeting its own earlier work. Times go as UTC instants, each beside the zone the entry was
+//! taken in when that is known; Google shows them in the calendar's zone.
 //! JSON is built and read with sqlite's own functions, as the rest of the Google code does.
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -23,15 +24,19 @@ pub struct Pending {
     pub category_name: String,
     pub start_epoch: i64,
     pub end_epoch: i64,
+    /// The IANA zone the entry was taken in, `None` when it was filed under Unknown.
+    pub timezone_name: Option<String>,
 }
 
 /// The time entries with `synced_to_google_calendar = 0`, oldest first, at most `limit`.
 pub fn pending(connection: &Connection, limit: usize) -> Result<Vec<Pending>, rusqlite::Error> {
     let mut statement = connection.prepare(
-        "SELECT te.time_entry_id, te.device_event_id, c.category_name, de.start_epoch, te.duration_seconds \
+        "SELECT te.time_entry_id, te.device_event_id, c.category_name, de.start_epoch, te.duration_seconds, \
+                tz.timezone_name \
            FROM time_entry te \
            JOIN device_event de ON de.device_event_id = te.device_event_id \
            JOIN category c ON c.category_id = te.category_id \
+           LEFT JOIN timezone tz ON tz.timezone_id = te.start_timezone_id AND tz.timezone_id != 0 \
           WHERE te.synced_to_google_calendar = 0 \
           ORDER BY de.start_epoch, te.time_entry_id LIMIT ?1",
     )?;
@@ -44,6 +49,7 @@ pub fn pending(connection: &Connection, limit: usize) -> Result<Vec<Pending>, ru
             category_name: row.get(2)?,
             start_epoch: start,
             end_epoch: start + duration.round() as i64,
+            timezone_name: row.get(5)?,
         })
     })?;
     rows.collect()
@@ -73,6 +79,8 @@ pub struct Expected {
     pub description: String,
     pub start_epoch: i64,
     pub end_epoch: i64,
+    /// The zone named beside both times, `None` to name none.
+    pub timezone_name: Option<String>,
 }
 
 /// The event `entry` should become: its category as the title, and the entry and its device event named in the
@@ -87,6 +95,7 @@ pub fn expected(entry: &Pending) -> Expected {
         ),
         start_epoch: entry.start_epoch,
         end_epoch: entry.end_epoch,
+        timezone_name: entry.timezone_name.clone(),
     }
 }
 
@@ -179,18 +188,24 @@ fn reason(reply: &HttpResponse) -> String {
         .map_or_else(|| format!("HTTP {}", reply.status), |message| format!("{message} ({})", reply.status))
 }
 
-/// The JSON body for `expected`, built by sqlite. Times are UTC, `YYYY-MM-DDTHH:MM:SSZ`.
+/// The JSON body for `expected`, built by sqlite. Times are UTC, `YYYY-MM-DDTHH:MM:SSZ`, each beside a `timeZone` when
+/// `expected` names one.
 pub fn body(expected: &Expected) -> Result<String, rusqlite::Error> {
     Connection::open_in_memory()?.query_row(
         "SELECT json_object('id', ?1, 'summary', ?2, 'description', ?3, \
-                'start', json_object('dateTime', strftime('%Y-%m-%dT%H:%M:%SZ', ?4, 'unixepoch')), \
-                'end', json_object('dateTime', strftime('%Y-%m-%dT%H:%M:%SZ', ?5, 'unixepoch')))",
+                'start', json(CASE WHEN ?6 IS NULL \
+                    THEN json_object('dateTime', strftime('%Y-%m-%dT%H:%M:%SZ', ?4, 'unixepoch')) \
+                    ELSE json_object('dateTime', strftime('%Y-%m-%dT%H:%M:%SZ', ?4, 'unixepoch'), 'timeZone', ?6) END), \
+                'end', json(CASE WHEN ?6 IS NULL \
+                    THEN json_object('dateTime', strftime('%Y-%m-%dT%H:%M:%SZ', ?5, 'unixepoch')) \
+                    ELSE json_object('dateTime', strftime('%Y-%m-%dT%H:%M:%SZ', ?5, 'unixepoch'), 'timeZone', ?6) END))",
         params![
             expected.event_id,
             expected.summary,
             expected.description,
             expected.start_epoch,
-            expected.end_epoch
+            expected.end_epoch,
+            expected.timezone_name
         ],
         |row| row.get(0),
     )
@@ -368,7 +383,43 @@ mod tests {
             description: String::new(),
             start_epoch: 0,
             end_epoch: 0,
+            timezone_name: None,
         };
         assert_eq!(mismatch(&event, &expected), Some(Mismatch::Summary));
+    }
+
+    #[test]
+    fn an_entry_taken_in_a_known_zone_goes_with_that_zone_beside_both_times() {
+        let connection = seeded();
+        let entry = entry(&connection);
+        connection
+            .execute(
+                "UPDATE time_entry SET start_timezone_id = \
+                     (SELECT timezone_id FROM timezone WHERE timezone_name = 'Australia/Sydney')",
+                [],
+            )
+            .expect("file the zone");
+        let entry = Pending {
+            time_entry_id: entry.time_entry_id,
+            ..pending(&connection, BATCH).expect("pending").remove(0)
+        };
+        assert_eq!(entry.timezone_name.as_deref(), Some("Australia/Sydney"));
+        let body = body(&expected(&entry)).expect("body");
+        assert!(
+            body.contains(r#""start":{"dateTime":"2026-09-29T09:00:00Z","timeZone":"Australia/Sydney"}"#),
+            "{body}"
+        );
+        assert!(
+            body.contains(r#""end":{"dateTime":"2026-09-29T09:01:30Z","timeZone":"Australia/Sydney"}"#),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn an_entry_filed_under_unknown_names_no_zone() {
+        let connection = seeded();
+        let entry = entry(&connection);
+        assert_eq!(entry.timezone_name, None);
+        assert!(!body(&expected(&entry)).expect("body").contains("timeZone"));
     }
 }

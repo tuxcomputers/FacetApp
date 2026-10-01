@@ -54,6 +54,7 @@ pub fn copy_name(connection: &Connection, now: i64) -> Result<String, rusqlite::
 mod tests {
     use super::*;
     use crate::debug_log::{DebugLog, Record, Tag, Trace};
+    use crate::timezone::SYDNEY;
 
     fn tempfile(name: &str) -> std::path::PathBuf {
         let path =
@@ -68,7 +69,11 @@ mod tests {
     fn a_copy_holds_the_rows_and_clearing_empties_the_trace() {
         let file = tempfile("trace");
         let copy = tempfile("copy");
-        let trace = Trace::new(file.clone(), Some(DebugLog::open(&file).expect("the trace should open")));
+        let trace = Trace::new(
+            file.clone(),
+            Some(DebugLog::open(&file, &SYDNEY).expect("the trace should open")),
+            std::sync::Arc::new(SYDNEY),
+        );
         trace.record(Tag::Settings, || "one".to_string());
         trace.record(Tag::Settings, || "two".to_string());
 

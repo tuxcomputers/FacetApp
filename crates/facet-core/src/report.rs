@@ -362,7 +362,8 @@ mod tests {
 
     fn record(connection: &Connection, category: i64, from: i64, to: i64) {
         face::assign(connection, category, 13).expect("should assign");
-        segment::start_segment(connection, 13, from, &NO_LOG).expect("should start");
+        segment::start_segment(connection, &crate::timezone::SYDNEY, 13, from, &NO_LOG)
+            .expect("should start");
         segment::close_open_segment(connection, to, &NO_LOG).expect("should close");
     }
 

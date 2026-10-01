@@ -484,7 +484,8 @@ mod tests {
         if trace_file.exists() {
             std::fs::remove_file(&trace_file).expect("a stale trace should be removable");
         }
-        let trace = Rc::new(Trace::new(trace_file.clone(), None));
+        let trace =
+            Rc::new(Trace::new(trace_file.clone(), None, std::sync::Arc::new(facet_core::timezone::SYDNEY)));
         let app = App::attach(
             &ui,
             path.clone(),

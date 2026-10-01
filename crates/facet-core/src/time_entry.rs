@@ -168,6 +168,7 @@ mod tests {
     use super::*;
     use crate::segment;
     use crate::testing::seeded;
+    use crate::timezone::SYDNEY;
 
     const NO_LOG: Option<crate::debug_log::DebugLog> = None;
 
@@ -176,7 +177,7 @@ mod tests {
     }
 
     fn run(connection: &Connection, face: i64, from: i64, to: i64) -> i64 {
-        let id = segment::start_segment(connection, face, from, &NO_LOG).expect("should start");
+        let id = segment::start_segment(connection, &SYDNEY, face, from, &NO_LOG).expect("should start");
         segment::close_open_segment(connection, to, &NO_LOG).expect("should close");
         id
     }
@@ -195,6 +196,22 @@ mod tests {
             .expect("the entry should exist");
         assert_eq!((category, duration), (meeting(&connection), 60.0));
         assert_eq!(consider(&connection, id, &NO_LOG).expect("should run"), Consideration::AlreadyRecorded);
+    }
+
+    #[test]
+    fn an_entry_carries_the_zone_its_segment_was_taken_in_at_both_ends() {
+        let connection = seeded();
+        let id = run(&connection, 13, 1_000, 1_060);
+        let (start, end, expected): (i64, i64, i64) = connection
+            .query_row(
+                "SELECT start_timezone_id, end_timezone_id, \
+                        (SELECT timezone_id FROM timezone WHERE timezone_name = 'Australia/Sydney') \
+                 FROM time_entry WHERE device_event_id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the entry should exist");
+        assert_eq!((start, end), (expected, expected));
     }
 
     #[test]
@@ -230,7 +247,7 @@ mod tests {
     #[test]
     fn an_open_segment_is_still_running() {
         let connection = seeded();
-        let id = segment::start_segment(&connection, 13, 1_000, &NO_LOG).expect("should start");
+        let id = segment::start_segment(&connection, &SYDNEY, 13, 1_000, &NO_LOG).expect("should start");
         assert_eq!(consider(&connection, id, &NO_LOG).expect("should run"), Consideration::StillRunning);
     }
 

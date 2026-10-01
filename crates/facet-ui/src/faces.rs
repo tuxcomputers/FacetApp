@@ -9,11 +9,13 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use facet_core::category::{self, Category};
 use facet_core::database;
 use facet_core::debug_log::{Record, Tag, Trace, plain};
+use facet_core::port::Zone;
 use facet_core::status_line::{self, StatusColour, StatusLine};
 use facet_core::{face, segment, setting, timing};
 use rusqlite::Connection;
@@ -61,6 +63,8 @@ pub struct Faces {
     ui: slint::Weak<SettingsWindow>,
     database: PathBuf,
     log: Rc<Trace>,
+    /// Names the zone each segment is filed under when it opens.
+    zone: Arc<dyn Zone>,
     /// Per launch and one-way: set when the reconnect did not find the cube and the app was told to time by hand.
     has_given_up_on_cube: Cell<bool>,
     tick: slint::Timer,
@@ -86,12 +90,14 @@ impl Faces {
         log: Rc<Trace>,
         has_given_up_on_cube: bool,
         notice: Rc<Notice>,
+        zone: Arc<dyn Zone>,
     ) -> Rc<Faces> {
         let faces = Rc::new(Faces {
             ui: ui.as_weak(),
             creator: Creator::new(database.clone(), Rc::clone(&log), notice),
             database,
             log,
+            zone,
             has_given_up_on_cube: Cell::new(has_given_up_on_cube),
             tick: slint::Timer::default(),
             on_timing_changed: RefCell::new(Vec::new()),
@@ -411,7 +417,7 @@ impl Faces {
         let Some(connection) = self.connect() else { return };
         match self.is_manual_mode(&connection).map(timing::click) {
             Some(timing::Click::StartTiming) => {
-                self.report(timing::start_timing(&connection, category_id, now(), &*self.log));
+                self.report(timing::start_timing(&connection, &*self.zone, category_id, now(), &*self.log));
             }
             Some(timing::Click::WaitingForTheDevice) => match self.live_cube_face() {
                 Some(face) => self.assign_to_cube(&connection, face, category_id),
@@ -473,7 +479,7 @@ impl Faces {
     pub fn toggle_pause(&self) {
         self.log.record(Tag::Click, || "Button clicked: play pause".to_string());
         let Some(connection) = self.connect() else { return };
-        self.report(timing::toggle_pause(&connection, now(), &*self.log));
+        self.report(timing::toggle_pause(&connection, &*self.zone, now(), &*self.log));
         self.show_timing(&connection);
     }
 
@@ -608,7 +614,14 @@ mod tests {
 
         let ui = SettingsWindow::new().expect("the window should build");
         let notice = Notice::attach(&ui, Rc::new(Trace::none()));
-        let faces = Faces::attach(&ui, path.clone(), Rc::new(Trace::none()), true, Rc::clone(&notice));
+        let faces = Faces::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            true,
+            Rc::clone(&notice),
+            Arc::new(facet_core::timezone::SYDNEY),
+        );
         let changes = Rc::new(std::cell::Cell::new(0));
         let counted = Rc::clone(&changes);
         faces.set_on_timing_changed(move || counted.set(counted.get() + 1));
@@ -630,6 +643,16 @@ mod tests {
         assert!(meeting.has_icon && meeting.has_colour);
 
         faces.pick(i64::from(meeting.id));
+        let zone: String = database::connect(&path)
+            .expect("the database should open")
+            .query_row(
+                "SELECT timezone_name FROM device_event JOIN timezone USING (timezone_id) \
+                 ORDER BY device_event_id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the started segment should name a zone");
+        assert_eq!(zone, "Australia/Sydney");
         assert!(data.get_has_category());
         assert!(data.get_running());
         assert_eq!(data.get_timing_category(), "Meeting");

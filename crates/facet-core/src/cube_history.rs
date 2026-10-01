@@ -8,7 +8,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::debug_log::{Record, Tag};
 use crate::device::history::Frame;
+use crate::port::Zone;
 use crate::time_entry;
+use crate::timezone;
 
 /// Where the next fetch resumes: the newest cube row (faces 1 to 12) by start, then event number, as
 /// `(event_number, start_epoch)`. `None` when no cube row has been recorded.
@@ -29,6 +31,7 @@ pub fn resume_point(connection: &Connection) -> Result<Option<(u32, u64)>, rusql
 /// app's own included.
 pub fn record(
     connection: &Connection,
+    zone: &dyn Zone,
     frame: &Frame,
     is_open: bool,
     log: &impl Record,
@@ -70,11 +73,12 @@ pub fn record(
                 finalised_now.extend(stranded);
             }
             let open = is_open && is_newest;
+            let timezone_id = timezone::current_id(connection, zone, log);
             transaction.execute(
                 "INSERT INTO device_event (event_number, event_type_id, device_face, start_time, timezone_id, \
                                            start_epoch, duration_seconds, paused, finalised) \
                  VALUES (?1, (SELECT event_type_id FROM event_type WHERE event_name = ?2), ?3, \
-                         strftime('%Y-%m-%dT%H:%M:%S', ?4, 'unixepoch', 'localtime'), 0, ?4, ?5, ?6, ?7)",
+                         strftime('%Y-%m-%dT%H:%M:%S', ?4, 'unixepoch', 'localtime'), ?8, ?4, ?5, ?6, ?7)",
                 params![
                     frame.event_number,
                     event_type,
@@ -82,7 +86,8 @@ pub fn record(
                     frame.start_epoch as i64,
                     frame.duration_seconds,
                     frame.is_paused,
-                    !open
+                    !open,
+                    timezone_id
                 ],
             )?;
             let id = transaction.last_insert_rowid();
@@ -108,11 +113,12 @@ pub fn record(
 /// Writes a planned batch in order, the last frame open, stopping at the first refusal. Returns how many landed.
 pub fn record_batch(
     connection: &Connection,
+    zone: &dyn Zone,
     frames: &[Frame],
     log: &impl Record,
 ) -> Result<usize, rusqlite::Error> {
     for (index, frame) in frames.iter().enumerate() {
-        record(connection, frame, index + 1 == frames.len(), log)?;
+        record(connection, zone, frame, index + 1 == frames.len(), log)?;
     }
     Ok(frames.len())
 }
@@ -122,6 +128,7 @@ mod tests {
     use super::*;
     use crate::debug_log::Trace;
     use crate::testing::seeded;
+    use crate::timezone::SYDNEY;
 
     fn frame(event_number: u32, face: u8, start_epoch: u64, duration_seconds: u32) -> Frame {
         Frame { event_number, face, is_paused: false, start_epoch, duration_seconds }
@@ -143,17 +150,17 @@ mod tests {
         let connection = seeded();
         let log = Trace::none();
         let start = 1_790_000_000;
-        record_batch(&connection, &[frame(1, 2, start, 30), frame(2, 8, start + 30, 5)], &log)
+        record_batch(&connection, &SYDNEY, &[frame(1, 2, start, 30), frame(2, 8, start + 30, 5)], &log)
             .expect("batch");
         assert_eq!(rows(&connection), vec![(1, 2, 30.0, true), (2, 8, 5.0, false)]);
         assert_eq!(resume_point(&connection).expect("read"), Some((2, start + 30)));
 
         // The same event again, longer: updated in place, still open.
-        record(&connection, &frame(2, 8, start + 30, 40), true, &log).expect("refresh");
+        record(&connection, &SYDNEY, &frame(2, 8, start + 30, 40), true, &log).expect("refresh");
         assert_eq!(rows(&connection), vec![(1, 2, 30.0, true), (2, 8, 40.0, false)]);
 
         // A newer event closes it, and the closed one becomes a time entry on face 8's category.
-        record(&connection, &frame(3, 2, start + 70, 0), true, &log).expect("turn");
+        record(&connection, &SYDNEY, &frame(3, 2, start + 70, 0), true, &log).expect("turn");
         assert_eq!(rows(&connection).iter().filter(|row| !row.3).count(), 1);
         let entries: i64 =
             connection.query_row("SELECT COUNT(*) FROM time_entry", [], |row| row.get(0)).expect("count");
@@ -161,11 +168,34 @@ mod tests {
     }
 
     #[test]
+    fn a_cube_row_is_filed_under_the_zone_it_arrived_in_and_a_resend_does_not_move_it() {
+        let connection = seeded();
+        let start = 1_700_000_000;
+        record(&connection, &SYDNEY, &frame(1, 2, start, 30), true, &Trace::none()).expect("insert");
+        record(
+            &connection,
+            &crate::timezone::FixedZone("America/Havana"),
+            &frame(1, 2, start, 45),
+            true,
+            &Trace::none(),
+        )
+        .expect("resend");
+        let zone: String = connection
+            .query_row(
+                "SELECT timezone_name FROM device_event JOIN timezone USING (timezone_id) WHERE event_number = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the row should name a zone");
+        assert_eq!(zone, "Australia/Sydney");
+    }
+
+    #[test]
     fn an_older_event_arriving_late_is_filed_closed_and_leaves_the_open_one() {
         let connection = seeded();
         let log = Trace::none();
-        record(&connection, &frame(5, 2, 2_000, 10), true, &log).expect("open");
-        record(&connection, &frame(4, 8, 1_900, 100), false, &log).expect("late");
+        record(&connection, &SYDNEY, &frame(5, 2, 2_000, 10), true, &log).expect("open");
+        record(&connection, &SYDNEY, &frame(4, 8, 1_900, 100), false, &log).expect("late");
         assert_eq!(rows(&connection), vec![(4, 8, 100.0, true), (5, 2, 10.0, false)]);
     }
 }

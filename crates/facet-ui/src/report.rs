@@ -444,7 +444,8 @@ mod tests {
         let record = |name: &str, offset: i64, seconds: i64| {
             let id = category::insert(&connection, name).expect("should insert");
             face::assign(&connection, id, 13).expect("should assign");
-            segment::start_segment(&connection, 13, start + offset, &NO_LOG).expect("should start");
+            segment::start_segment(&connection, &facet_core::timezone::SYDNEY, 13, start + offset, &NO_LOG)
+                .expect("should start");
             segment::close_open_segment(&connection, start + offset + seconds, &NO_LOG)
                 .expect("should close");
         };
@@ -454,7 +455,8 @@ mod tests {
             report::bounds(&connection, today.plus_days(-1), today.plus_days(-1)).expect("bounds").0;
         let old = category::insert(&connection, "Old").expect("should insert");
         face::assign(&connection, old, 13).expect("should assign");
-        segment::start_segment(&connection, 13, yesterday + 60, &NO_LOG).expect("should start");
+        segment::start_segment(&connection, &facet_core::timezone::SYDNEY, 13, yesterday + 60, &NO_LOG)
+            .expect("should start");
         segment::close_open_segment(&connection, yesterday + 360, &NO_LOG).expect("should close");
 
         let ui = SettingsWindow::new().expect("the window should build");

@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=35
+EXPECTED_CHECKS=36
 start "the cube's face, followed, and its history filed"
 
 require_a_paired_cube "there is no face to follow"
@@ -47,6 +47,8 @@ expect_log "the fetch finishes" "$since" "History fetch done (the link came up):
 expect_log "and the history timer starts" "$since" "History timer started, asking every %s" 20
 check "a segment is open on face 8" "8" "$(wait_sql 8 "SELECT device_face FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC LIMIT 1;" 30)"
 check "and it is counting, not a pause" "0" "$(open_cube_row paused)"
+check "and it is filed under this machine's zone, not Unknown" "0" \
+    "$(sql "SELECT COUNT(*) FROM device_event WHERE device_face BETWEEN 1 AND 12 AND timezone_id = 0;")"
 
 # ---------------------------------------------------------------------------- the tab and the figure
 

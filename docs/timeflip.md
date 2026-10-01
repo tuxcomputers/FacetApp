@@ -111,15 +111,20 @@ clock.
 
 ### Debouncing live-edited settings
 
-Auto-pause, LED brightness, blink interval, the double-tap registers and a face's assigned category are
-all edited live, through press-and-hold steppers and click-through lists, which fire many intermediate
-values in quick succession. Every change does two things:
+Auto-pause, LED brightness and blink interval are edited live, through press-and-hold steppers, which fire
+many intermediate values in quick succession. In the Rust app every change does two things:
 
-1. **Persists to the database and logs immediately**, so the database and the debug log always reflect the
-   live value, even mid-hold.
-2. **Reschedules a debounce of 2 s.** Only the value still current 2 s after the last change reaches the
-   cube. Every debounced write shares that one constant so the whole UI settles at the same rate, and each
-   setting has its own debouncer so editing one does not cancel another's pending write.
+1. **Logs the edit and restarts a debounce of 0.5 s for that setting.** Only the value still current when it
+   runs out reaches the cube, once. 0.5 s is `EDIT_QUIET_FOR` in `facet-ui`'s `device.rs`, and the Swift app's
+   `WriteDebounce.interval` is the same figure; this section said 2 s before, which neither app uses. Each
+   setting has its own debounce, so editing one does not cancel another's pending write.
+2. **Holds the field at the edited value** until the send has ended. The tab redraws after every outcome, and
+   it does not read these three fields back from the table while an edit is unsent or out with the cube. When
+   the cube has taken the value the table is written, and the field then shows the table again. A refusal
+   puts the table's value back and says so in a notice.
+
+The Swift app wrote the table at the first step and the cube at the second; the Rust app writes the table only
+once the cube has the value, which is what the read-back rule asks of a device setting.
 
 **Writes that are not a settling value are not debounced, and must not be**: lock and pause (a click that
 must act at once, including the pause-and-lock-before-quit sequence), the clock, the password, the name,

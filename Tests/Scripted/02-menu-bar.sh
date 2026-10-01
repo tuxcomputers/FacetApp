@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=13
+EXPECTED_CHECKS=14
 start "the menu bar item, what it says, and its menu"
 
 close_settings
@@ -44,6 +44,9 @@ check "in the system's own colour" "Menu bar: name ordinary, figure ordinary" \
     "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Menu bar: name %' ORDER BY debug_log_id DESC LIMIT 1;")"
 check "and the icon is a white pause" "Status icon: pause white" \
     "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Status icon: %' ORDER BY debug_log_id DESC LIMIT 1;")"
+# **The newest row, because a trace file carries rows from launches before the zone was recorded.**
+check "the trace files its rows under this machine's zone, not Unknown" "yes" \
+    "$([ "$(dsql "SELECT timezone_id FROM debug_log ORDER BY debug_log_id DESC LIMIT 1;")" != "0" ] && echo yes || echo no)"
 
 # ---------------------------------------------------------------------------- what the menu holds
 

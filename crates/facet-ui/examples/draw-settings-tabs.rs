@@ -100,6 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Rc::new(facet_core::debug_log::Trace::none()),
             true,
             Rc::clone(&notice),
+            std::sync::Arc::new(facet_core::timezone::SYDNEY),
         );
         let categories = facet_ui::categories::Categories::attach(
             &ui,

@@ -46,6 +46,7 @@ facet-adapters = { path = "crates/facet-adapters" }
 # and the XDG portal backend Linux uses does not need it.
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 dirs = "7.0.0"
+iana-time-zone = "0.1"
 # HTTPS for the Google calls, rustls with ring.
 ureq = "3.4.2"
 

@@ -16,10 +16,13 @@
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rusqlite::{Connection, params};
 
 use crate::database;
+use crate::port::Zone;
+use crate::timezone::{self, UnnamedZone};
 
 /// What a message is about. **One enum, so the padding is computed rather than typed**, and adding a case
 /// re-pads every tag automatically.
@@ -208,17 +211,20 @@ impl<T: Record + ?Sized> Record for std::rc::Rc<T> {
 pub struct Trace {
     file: PathBuf,
     log: RefCell<Option<DebugLog>>,
+    /// Names the machine's zone each time the log is opened.
+    zone: Arc<dyn Zone>,
 }
 
 impl Trace {
-    /// A trace kept in `file`, recording when `log` is given.
-    pub fn new(file: PathBuf, log: Option<DebugLog>) -> Trace {
-        Trace { file, log: RefCell::new(log) }
+    /// A trace kept in `file`, recording when `log` is given. `zone` names the zone the rows are filed under whenever
+    /// recording is switched on.
+    pub fn new(file: PathBuf, log: Option<DebugLog>, zone: Arc<dyn Zone>) -> Trace {
+        Trace { file, log: RefCell::new(log), zone }
     }
 
     /// A trace that records nothing and has no file, for tests and renders.
     pub fn none() -> Trace {
-        Trace::new(PathBuf::new(), None)
+        Trace::new(PathBuf::new(), None, Arc::new(UnnamedZone))
     }
 
     /// The trace file for this launch.
@@ -244,7 +250,7 @@ impl Trace {
                     source: rusqlite::Error::InvalidPath(PathBuf::from(error.to_string())),
                 })?;
             }
-            *self.log.borrow_mut() = Some(DebugLog::open(&self.file)?);
+            *self.log.borrow_mut() = Some(DebugLog::open(&self.file, &*self.zone)?);
             self.record(Tag::Settings, || "Logging turned on".to_string());
         } else {
             self.record(Tag::Settings, || "Logging turned off".to_string());
@@ -274,6 +280,8 @@ fn clock(stamped: &str) -> &str {
 /// The trace database, open from launch to quit.
 pub struct DebugLog {
     connection: Connection,
+    /// The zone every row is filed under, named when the log opened.
+    timezone_id: i64,
     /// Whether a failed write has already been complained about. **Announced once rather than never and
     /// rather than every time**: a trace that cannot be written is one fact, and repeating it per message
     /// would bury the run it is trying to describe under the complaint.
@@ -286,11 +294,30 @@ impl DebugLog {
     /// **The file is brought up by whoever opens it, not by the first message.** The Swift app deferred it
     /// so that a launch recording nothing left no `debug.sqlite` behind; here the logger is only built at
     /// all when the setting says so, so the launch that opens it is already one that is recording.
-    pub fn open(path: &Path) -> Result<Self, database::Error> {
-        Ok(DebugLog {
-            connection: database::open(path, database::DEBUG_DDL)?,
-            reported_failure: Cell::new(false),
-        })
+    ///
+    /// **The machine's zone is named once, here, and every row carries it.** A zone that cannot be named files the
+    /// rows under Unknown, said on stderr, there being nowhere else to say it.
+    pub fn open(path: &Path, zone: &dyn Zone) -> Result<Self, database::Error> {
+        let connection = database::open(path, database::DEBUG_DDL)?;
+        let timezone_id = match zone.name() {
+            Ok(name) => timezone::id_for(&connection, &name).unwrap_or_else(|error| {
+                eprintln!(
+                    "[{:width$}] the time zone {name} could not be filed, so the trace rows are filed under Unknown: {error}",
+                    Tag::Database.word(),
+                    width = Tag::WIDTH
+                );
+                timezone::UNKNOWN
+            }),
+            Err(error) => {
+                eprintln!(
+                    "[{:width$}] the time zone of this machine could not be named, so the trace rows are filed under Unknown: {error}",
+                    Tag::Database.word(),
+                    width = Tag::WIDTH
+                );
+                timezone::UNKNOWN
+            }
+        };
+        Ok(DebugLog { connection, timezone_id, reported_failure: Cell::new(false) })
     }
 
     /// Writes the message as a row and gives back the timestamp it was written with, so the line printed
@@ -322,8 +349,8 @@ impl DebugLog {
         };
 
         let written = self.connection.execute(
-            "INSERT INTO debug_log (logged_at, tag, message) VALUES (?1, ?2, ?3)",
-            params![stamped, tag.word(), message],
+            "INSERT INTO debug_log (logged_at, timezone_id, tag, message) VALUES (?1, ?2, ?3, ?4)",
+            params![stamped, self.timezone_id, tag.word(), message],
         );
         if let Err(error) = written {
             self.complain_once(&error);
@@ -352,6 +379,7 @@ impl DebugLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timezone::SYDNEY;
 
     #[test]
     fn every_tag_is_padded_to_the_longest_one() {
@@ -371,7 +399,7 @@ mod tests {
 
     #[test]
     fn a_recorded_message_is_a_row_that_can_be_read_back() {
-        let log = Some(DebugLog::open(&tempfile()).expect("the trace should open"));
+        let log = Some(DebugLog::open(&tempfile(), &SYDNEY).expect("the trace should open"));
         log.record(Tag::Launch, || "Facet is in the menu bar".to_string());
 
         let Some(log) = &log else { unreachable!() };
@@ -389,6 +417,40 @@ mod tests {
         assert_eq!(&stamped[10..11], "T", "got {stamped}");
     }
 
+    #[test]
+    fn every_row_is_filed_under_the_zone_the_machine_named_when_the_log_opened() {
+        let log = Some(DebugLog::open(&tempfile(), &SYDNEY).expect("the trace should open"));
+        log.record(Tag::Launch, || "one".to_string());
+        log.record(Tag::Launch, || "two".to_string());
+
+        let Some(log) = &log else { unreachable!() };
+        let zones: Vec<String> = log
+            .connection
+            .prepare(
+                "SELECT timezone_name FROM debug_log JOIN timezone USING (timezone_id) ORDER BY debug_log_id",
+            )
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows");
+        assert_eq!(zones, ["Australia/Sydney", "Australia/Sydney"]);
+    }
+
+    #[test]
+    fn a_zone_that_cannot_be_named_files_the_rows_under_unknown() {
+        let log =
+            Some(DebugLog::open(&tempfile(), &crate::timezone::UnnamedZone).expect("the trace should open"));
+        log.record(Tag::Launch, || "one".to_string());
+
+        let Some(log) = &log else { unreachable!() };
+        let id: i64 = log
+            .connection
+            .query_row("SELECT timezone_id FROM debug_log", [], |row| row.get(0))
+            .expect("the row should be there");
+        assert_eq!(id, crate::timezone::UNKNOWN);
+    }
+
     /// The gate is in the composition root, so this is what a launch with logging off costs.
     #[test]
     fn a_launch_with_no_logger_records_nothing_and_builds_nothing() {
@@ -403,7 +465,7 @@ mod tests {
 
     #[test]
     fn messages_arrive_in_the_order_they_were_recorded() {
-        let log = Some(DebugLog::open(&tempfile()).expect("the trace should open"));
+        let log = Some(DebugLog::open(&tempfile(), &SYDNEY).expect("the trace should open"));
         log.record(Tag::Launch, || "first".to_string());
         log.record(Tag::Settings, || "second".to_string());
         log.record(Tag::Quit, || "third".to_string());
@@ -424,7 +486,7 @@ mod tests {
     #[test]
     fn recording_switches_on_and_off_and_says_so_in_the_file() {
         let file = tempfile();
-        let trace = Trace::new(file.clone(), None);
+        let trace = Trace::new(file.clone(), None, Arc::new(SYDNEY));
         assert!(!trace.is_recording());
         trace.record(Tag::Settings, || "not written".to_string());
         trace.set_recording(true).expect("recording should start");

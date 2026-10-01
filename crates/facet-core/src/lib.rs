@@ -25,6 +25,7 @@ pub mod segment;
 pub mod setting;
 pub mod status_line;
 pub mod time_entry;
+pub mod timezone;
 pub mod timing;
 pub mod trace_file;
 

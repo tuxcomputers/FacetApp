@@ -5,6 +5,7 @@ pub mod dialogs;
 pub mod http;
 pub mod loopback;
 pub mod secrets;
+pub mod zone;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod radio;
