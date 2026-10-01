@@ -502,6 +502,7 @@ fn follow_the_clock(
     log: Rc<Trace>,
 ) -> impl Fn() + 'static {
     let has_reported_stopping = Cell::new(false);
+    let last_icon: Cell<Option<facet_ui::status_icon::Showing>> = Cell::new(None);
     let last_line: std::cell::RefCell<Option<facet_core::status_line::StatusLine>> =
         std::cell::RefCell::new(None);
     move || {
@@ -531,6 +532,15 @@ fn follow_the_clock(
                 "The tray service has stopped, so the status item no longer follows the clock".to_string()
             }),
             None => {}
+        }
+        let icon = facet_ui::status_icon::Showing {
+            paused: timing.is_paused,
+            locked: is_locked,
+            colour: timing.icon_colour,
+        };
+        if last_icon.get() != Some(icon) && tray.update(|tray| tray.show_icon_colour(icon.colour)).is_some() {
+            log.record(Tag::Tray, || format!("Status icon: {}", icon.description()));
+            last_icon.set(Some(icon));
         }
         let previous = last_line.borrow().clone();
         if previous.as_ref() != Some(&timing.line) {

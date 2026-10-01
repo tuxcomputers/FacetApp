@@ -20,6 +20,7 @@
 
 use std::sync::mpsc::Sender;
 
+use facet_core::status_line::StatusColour;
 use facet_ui::status_icon::{Rendered, Showing, render};
 use ksni::menu::StandardItem;
 use ksni::{Category, Icon, MenuItem, Status, ToolTip, Tray};
@@ -77,7 +78,7 @@ impl FacetTray {
     /// nothing offered until the first read says otherwise. That read is pushed in straight after spawning.
     pub fn new(to_ui: Sender<FromTray>) -> Self {
         Self {
-            showing: Showing { paused: true, locked: false },
+            showing: Showing { paused: true, locked: false, colour: StatusColour::Ordinary },
             pause_title: "Pause",
             is_pause_clickable: false,
             is_lock_clickable: false,
@@ -110,6 +111,13 @@ impl FacetTray {
         self.is_pause_clickable = is_clickable;
         self.showing.locked = is_locked;
         self.is_lock_clickable = is_lock_clickable;
+        changed
+    }
+
+    /// Draws the icon's play or pause glyph in `colour`. Returns whether it changed.
+    pub fn show_icon_colour(&mut self, colour: StatusColour) -> bool {
+        let changed = self.showing.colour != colour;
+        self.showing.colour = colour;
         changed
     }
 
@@ -284,7 +292,7 @@ mod tests {
     fn every_state_fills_the_buffer_it_declares() {
         for paused in [false, true] {
             for locked in [false, true] {
-                let showing = Showing { paused, locked };
+                let showing = Showing { paused, locked, colour: StatusColour::Ordinary };
                 let icon = argb_icon(&render(showing));
                 assert_eq!(
                     icon.data.len(),
@@ -343,8 +351,8 @@ mod tests {
     /// The conversion must not quietly drop the second glyph, which a chunk-size mistake would do.
     #[test]
     fn locking_widens_the_pixmap() {
-        let plain = argb_icon(&render(Showing { paused: false, locked: false }));
-        let locked = argb_icon(&render(Showing { paused: false, locked: true }));
+        let plain = argb_icon(&render(Showing { paused: false, locked: false, colour: StatusColour::Cube }));
+        let locked = argb_icon(&render(Showing { paused: false, locked: true, colour: StatusColour::Cube }));
         assert!(locked.width > plain.width, "the locked icon is not wider");
         assert_eq!(locked.height, plain.height, "locking must not change the height");
     }

@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=12
+EXPECTED_CHECKS=13
 start "the menu bar item, what it says, and its menu"
 
 close_settings
@@ -42,6 +42,8 @@ check "and the trace says so" "Menu bar reads Facet" \
     "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Menu bar reads %' ORDER BY debug_log_id DESC LIMIT 1;")"
 check "in the system's own colour" "Menu bar: name ordinary, figure ordinary" \
     "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Menu bar: name %' ORDER BY debug_log_id DESC LIMIT 1;")"
+check "and the icon is a white pause" "Status icon: pause white" \
+    "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Status icon: %' ORDER BY debug_log_id DESC LIMIT 1;")"
 
 # ---------------------------------------------------------------------------- what the menu holds
 

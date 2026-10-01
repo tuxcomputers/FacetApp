@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=34
+EXPECTED_CHECKS=35
 start "the cube's face, followed, and its history filed"
 
 require_a_paired_cube "there is no face to follow"
@@ -58,6 +58,9 @@ check "the menu bar names it" "Menu bar reads Break" \
     "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Menu bar reads %' ORDER BY debug_log_id DESC LIMIT 1;")"
 check "in green, the clock being the cube" "Menu bar: name green, figure green" \
     "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Menu bar: name %' ORDER BY debug_log_id DESC LIMIT 1;")"
+check_contains "and the icon is a green play" \
+    "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Status icon: %' ORDER BY debug_log_id DESC LIMIT 1;")" \
+    "Status icon: play green"
 check_contains "Break's face is locked, so the button offers to unlock it" "$(element timing-face-lock)" "Unlock face"
 check_contains "the square is the cube, lit for Break" "$(element timing-cube)" "face 8, lit for Break"
 check_contains "with Break's icon on its centre face" "$(element timing-centre-icon)" "Break"

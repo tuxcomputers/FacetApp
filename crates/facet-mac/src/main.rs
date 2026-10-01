@@ -368,7 +368,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     menu.append(&about_item)?;
     menu.append(&quit_item)?;
 
-    let showing = Rc::new(Cell::new(status_icon::Showing { paused: false, locked: false }));
+    let showing = Rc::new(Cell::new(status_icon::Showing {
+        paused: false,
+        locked: false,
+        colour: facet_core::status_line::StatusColour::Ordinary,
+    }));
 
     // Right click makes the host show the menu; left click reaches the app instead. That split is the
     // shape every platform can manage, and it is why nothing may live behind a left click that has no
@@ -437,7 +441,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             follow_lock_item.set_text(lock_title);
             follow_lock_item.set_enabled(is_connected);
         }
-        let next = status_icon::Showing { paused: timing.is_paused, locked: is_locked };
+        let next =
+            status_icon::Showing { paused: timing.is_paused, locked: is_locked, colour: timing.icon_colour };
         let previous = follow_line.borrow().clone();
         if previous.as_ref() != Some(&timing.line) {
             show_status_line(&follow_tray, &timing.line, &follow_log);
@@ -722,7 +727,9 @@ fn show_status_line(tray: &TrayIcon, line: &facet_core::status_line::StatusLine,
     use objc2_app_kit::NSAccessibility;
     use objc2_foundation::NSString;
 
-    if let Err(error) = tray.set_tooltip(Some(format!("{}\n{}", facet_core::status_line::APP_LABEL, line.spoken))) {
+    if let Err(error) =
+        tray.set_tooltip(Some(format!("{}\n{}", facet_core::status_line::APP_LABEL, line.spoken)))
+    {
         log.record_failure(Tag::Status, || format!("The status item tooltip could not be changed: {error}"));
     }
     let Some(mtm) = MainThreadMarker::new() else {
@@ -822,9 +829,7 @@ fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &impl
                 });
                 return;
             }
-            log.record(Tag::Tray, || {
-                format!("Status item now shows paused={} locked={}", showing.paused, showing.locked)
-            });
+            log.record(Tag::Tray, || format!("Status icon: {}", showing.description()));
         }
         Err(error) => {
             log.record_failure(Tag::Tray, || format!("The status item icon could not be drawn: {error}"))

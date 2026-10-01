@@ -24,7 +24,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=30
+EXPECTED_CHECKS=31
 start "a category spending its daily limit, and the refusal that follows"
 
 LIMIT_MINUTES=5
@@ -157,6 +157,7 @@ done
 
 expect_log "the menu bar's figure turns red, the category having spent its day" "$since" \
     "Menu bar: name cyan, figure red" 5
+expect_log "and the icon is a red pause" "$since" "Status icon: pause red" 5
 
 # ---------------------------------------------------------------------------- the refusal
 #

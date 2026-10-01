@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use facet_core::category::{self, Category};
 use facet_core::database;
 use facet_core::debug_log::{Record, Tag, Trace, plain};
-use facet_core::status_line::{self, StatusLine};
+use facet_core::status_line::{self, StatusColour, StatusLine};
 use facet_core::{face, segment, setting, timing};
 use rusqlite::Connection;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -43,7 +43,9 @@ pub struct MenuBarTiming {
     pub is_clickable: bool,
     /// The menu item's title: `Resume` while paused, otherwise `Pause`.
     pub pause_title: &'static str,
-    /// The line beside the icon.
+    /// The colour of the icon's play or pause glyph.
+    pub icon_colour: StatusColour,
+    /// The line the status item's tooltip is built from.
     pub line: StatusLine,
 }
 
@@ -205,15 +207,16 @@ impl Faces {
         let shows_seconds = self.report(setting::shows_seconds(&connection))?;
         let is_connected = self.report(setting::is_cube_connected(&connection))?;
         let flags = self.flags();
-        let facts = |timed: Option<status_line::Timed>, is_following_cube: bool| status_line::StatusFacts {
-            timed,
-            is_following_cube,
-            is_cube_connected: is_connected,
-            is_connecting: flags.is_connecting,
-            is_cube_locked: flags.is_locked,
-            is_battery_low: flags.is_battery_low,
-            is_blink_on: flags.is_blink_on,
-        };
+        let facts_for =
+            |timed: Option<status_line::Timed>, is_following_cube: bool| status_line::StatusFacts {
+                timed,
+                is_following_cube,
+                is_cube_connected: is_connected,
+                is_connecting: flags.is_connecting,
+                is_cube_locked: flags.is_locked,
+                is_battery_low: flags.is_battery_low,
+                is_blink_on: flags.is_blink_on,
+            };
         if !self.is_manual_mode(&connection)? {
             let reading = self.report(timing::read_cube(&connection, now()))?;
             let is_paused = reading.as_ref().is_none_or(|reading| reading.is_paused);
@@ -225,13 +228,15 @@ impl Faces {
                     is_limit_reached: reading.is_limit_reached,
                 })
             });
+            let facts = facts_for(timed, true);
             return Some(MenuBarTiming {
                 is_paused,
                 is_clickable: is_connected
                     && !flags.is_locked
                     && !(is_paused && reading.as_ref().is_some_and(|reading| reading.is_limit_reached)),
                 pause_title: if is_paused { "Resume" } else { "Pause" },
-                line: status_line::line(&facts(timed, true)),
+                icon_colour: status_line::icon_colour(&facts, is_paused),
+                line: status_line::line(&facts),
             });
         }
         let reading = self.report(timing::read(&connection, now()))?;
@@ -242,11 +247,13 @@ impl Faces {
             is_paused,
             is_limit_reached: reading.is_limit_reached,
         });
+        let facts = facts_for(timed, false);
         Some(MenuBarTiming {
             is_paused,
             is_clickable: timing::is_clickable(reading.timing_state, reading.is_limit_reached),
             pause_title: if reading.timing_state == timing::TimingState::Paused { "Resume" } else { "Pause" },
-            line: status_line::line(&facts(timed, false)),
+            icon_colour: status_line::icon_colour(&facts, is_paused),
+            line: status_line::line(&facts),
         })
     }
 

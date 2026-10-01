@@ -17,14 +17,14 @@ pub enum StatusColour {
 }
 
 impl StatusColour {
-    /// The colour as `#rrggbb`, or `None` for the system's own.
-    pub fn hex(self) -> Option<&'static str> {
+    /// The colour as red, green and blue, or `None` for the system's own.
+    pub fn rgb(self) -> Option<[u8; 3]> {
         match self {
             StatusColour::Ordinary => None,
-            StatusColour::ByHand => Some("#00c7d9"),
-            StatusColour::Cube => Some("#34c759"),
-            StatusColour::Unreachable => Some("#ffcc00"),
-            StatusColour::Spent => Some("#ff3b30"),
+            StatusColour::ByHand => Some([0, 199, 217]),
+            StatusColour::Cube => Some([52, 199, 89]),
+            StatusColour::Unreachable => Some([255, 204, 0]),
+            StatusColour::Spent => Some([255, 59, 48]),
         }
     }
 
@@ -170,6 +170,26 @@ pub fn line(facts: &StatusFacts) -> StatusLine {
     }
 }
 
+/// The colour of the icon's play or pause glyph.
+///
+/// A paused clock is `Ordinary`, or `Spent` once the category on show has spent its daily limit. A running clock is
+/// `ByHand` when timed by hand, `Cube` while the cube is connected and `Unreachable` while it cannot be contacted.
+pub fn icon_colour(facts: &StatusFacts, is_paused: bool) -> StatusColour {
+    if is_paused {
+        if facts.timed.as_ref().is_some_and(|timed| timed.is_limit_reached) {
+            StatusColour::Spent
+        } else {
+            StatusColour::Ordinary
+        }
+    } else if !facts.is_following_cube {
+        StatusColour::ByHand
+    } else if facts.is_cube_connected {
+        StatusColour::Cube
+    } else {
+        StatusColour::Unreachable
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +238,29 @@ mod tests {
         };
         assert_eq!(line(&spent).colour_description(), "name green, figure red");
         assert!(line(&spent).spoken.contains("daily limit reached"));
+    }
+
+    #[test]
+    fn the_icon_says_the_same_thing_in_its_own_glyph() {
+        let by_hand = facts(Some(break_at("0:01:00")));
+        assert_eq!(icon_colour(&by_hand, false), StatusColour::ByHand);
+        let cube = StatusFacts { is_following_cube: true, is_cube_connected: true, ..by_hand.clone() };
+        assert_eq!(icon_colour(&cube, false), StatusColour::Cube);
+        let unheard = StatusFacts { is_cube_connected: false, ..cube.clone() };
+        assert_eq!(icon_colour(&unheard, false), StatusColour::Unreachable);
+        for facts in [&by_hand, &cube, &unheard] {
+            assert_eq!(
+                icon_colour(facts, true),
+                StatusColour::Ordinary,
+                "a paused clock is white in every mode"
+            );
+        }
+        let spent = Timed { is_limit_reached: true, ..break_at("1:00:00") };
+        for facts in [&by_hand, &cube, &unheard] {
+            let spent = StatusFacts { timed: Some(spent.clone()), ..facts.clone() };
+            assert_eq!(icon_colour(&spent, true), StatusColour::Spent, "a spent limit is red once paused");
+        }
+        assert_eq!(icon_colour(&facts(None), true), StatusColour::Ordinary);
     }
 
     #[test]

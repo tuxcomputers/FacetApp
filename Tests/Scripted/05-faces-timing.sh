@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=31
+EXPECTED_CHECKS=32
 start "starting, pausing and resuming the clock"
 
 open_settings
@@ -44,6 +44,7 @@ pass "a category to time against ($NAME, id $ID)"
 
 expect_log "creating it on the Faces tab starts timing it" "$since" "Timing: started category_id $ID on face %"
 expect_log "in cyan, the clock being timed by hand" "$since" "Menu bar: name cyan, figure cyan" 5
+expect_log "and the icon is a cyan play" "$since" "Status icon: play cyan" 5
 
 # ---------------------------------------------------------------------------- starting, by picking a row
 #
