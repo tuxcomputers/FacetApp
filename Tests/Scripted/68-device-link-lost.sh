@@ -41,7 +41,8 @@ else
 fi
 expect_log "the drop is recorded" "$since" "The link to the cube dropped"
 expect_log "and the app says it will look for the cube again" "$since" "The cube went away; looking for it again in %s"
-expect_log "and the history timer stops, there being no link to ask" "$since" "History timer stopped, the cube is not connected" 10
+# Either row, as in 60: which is written depends on whether a fetch had the timer unarmed as the link went.
+expect_log "and the history timer stops, there being no link to ask" "$since" "History timer stopped, %" 10
 expect_log "the menu bar turns yellow, the cube being out of reach" "$since" "Menu bar: name yellow, figure yellow" 15
 check "the table says the cube is not connected" "0" "$(setting connection connected)"
 check_contains "and when the link was lost" "$(setting connection connection_lost)" "$(date '+%Y-%m-%d')"

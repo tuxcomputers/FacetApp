@@ -83,7 +83,9 @@ DROPPED_AT=$(date +%s)
 expect_log "the drop is recorded" "$DROP" "The link to the cube dropped"
 expect_log "and the app says it will look for the cube again in 2s" "$DROP" \
     "The cube went away; looking for it again in 2s"
-expect_log "the history timer stops with the link" "$DROP" "History timer stopped, the cube is not connected"
+# Either row: the link going stops the timer, or the timer firing as the link goes stops itself. Which one is written
+# depends on whether a fetch had the timer unarmed at that moment.
+expect_log "the history timer stops with the link" "$DROP" "History timer stopped, %"
 expect_log "the menu bar turns yellow, the cube being out of reach" "$DROP" "Menu bar: name yellow, figure yellow" 15
 check "the table says the cube is not connected" "0" "$(setting connection connected)"
 
