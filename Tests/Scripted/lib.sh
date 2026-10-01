@@ -514,31 +514,6 @@ free_the_cube_by_command() {
     wait_for "$freeing" "The cube is running" 20 >/dev/null
 }
 
-# Unlocks the cube when its newest status row after the mark `$1` says it is locked, through the menu's Unlock, and
-# waits for it to say so. Unlocking leaves the pause as it was. Answers 0 when the cube is unlocked afterwards, whether
-# it already was or has just been, and 1 when its state was never read or it would not unlock.
-unlock_the_cube_if_locked() {
-    local since="$1" state unlocking
-    wait_for "$since" "The cube is %locked and %" 25 >/dev/null
-    state=$(dsql "SELECT message FROM debug_log WHERE debug_log_id > $since AND message LIKE 'The cube is %locked and %' ORDER BY debug_log_id DESC LIMIT 1;")
-    case "$state" in
-        "The cube is unlocked and "*)
-            step "the cube is not locked"
-            return 0
-            ;;
-        "The cube is locked and "*)
-            step "the cube is locked, so it is being unlocked"
-            unlocking=$(mark)
-            menu_press toggle-cube-lock >/dev/null || return 1
-            wait_for "$unlocking" "The cube is unlocked" 20 >/dev/null || return 1
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
 # Waits up to 10 seconds for the menu item `$1` to read `$2` and not be greyed. Answers 0 when it does.
 wait_for_menu_item() {
     local line="" waited=0
