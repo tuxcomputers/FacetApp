@@ -1200,8 +1200,9 @@ impl Device {
         });
     }
 
-    /// Locks the cube if it is unlocked, pausing it first when pause_on_lock is on, and unlocks and resumes it if it
-    /// is locked. Refused, and said, with no cube connected.
+    /// Locks the cube if it is unlocked, pausing it first when pause_on_lock is on, and unlocks it if it is locked.
+    /// **Unlocking never changes whether the cube is paused**: a paused cube stays paused and a running one stays
+    /// running. Refused, and said, with no cube connected.
     pub fn toggle_cube_lock(&self) {
         if !self.is_cube_connected() {
             self.log.record(Tag::Command, || {
@@ -1210,17 +1211,6 @@ impl Device {
             return;
         }
         let unlock = self.is_cube_locked() == Some(true);
-        // An unlock resumes the cube, unless the category on show has spent its daily limit.
-        let is_limit_holding = self
-            .connect()
-            .and_then(|connection| self.report(facet_core::timing::read_cube(&connection, now_seconds())))
-            .flatten()
-            .is_some_and(|reading| reading.is_limit_reached);
-        if unlock && is_limit_holding {
-            self.log.record(Tag::Limit, || {
-                "The cube is left stopped: the category on show has spent its daily limit".to_string()
-            });
-        }
         self.pause_claim.set(None);
         let pause_on_lock = self
             .connect()
@@ -1229,15 +1219,7 @@ impl Device {
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
             let status = with_link(&held, |link| {
-                if unlock {
-                    let (status, _) = session::set_lock(link, false, lines)?;
-                    if is_limit_holding {
-                        return Ok(status);
-                    }
-                    session::set_pause(link, false, lines).map(|(status, _)| status)
-                } else {
-                    lock_the_cube(link, pause_on_lock, lines)
-                }
+                if unlock { session::unlock(link, lines) } else { lock_the_cube(link, pause_on_lock, lines) }
             });
             Outcome::CubeCommanded {
                 reason: format!(

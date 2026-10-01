@@ -486,19 +486,39 @@ relink_a_cube() {
     free_the_cube
 }
 
-# Unlocks and resumes a cube the quit left paused and locked, through the menu's Unlock. Answers 0 once the cube says
-# it is unlocked and running, and 1 otherwise. A cube resting on a face with no category is paused again straight
-# away by the app, which is why the run keeps it on Break.
+# Unlocks and resumes a cube the quit left paused and locked: the menu's Unlock, and then its Resume, **unlocking
+# leaving the cube paused**. Answers 0 once the cube says it is unlocked and running, and 1 otherwise. A cube resting on
+# a face with no category is paused again straight away by the app, which is why the run keeps it on Break.
 free_the_cube() {
     local freeing
     freeing=$(mark)
     wait_for "$freeing" "The cube is %locked and %" 25 >/dev/null
     case "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'The cube is %locked and %' ORDER BY debug_log_id DESC LIMIT 1;")" in
         "The cube is unlocked and running"*) return 0 ;;
+        "The cube is locked"*)
+            menu_press toggle-cube-lock >/dev/null || return 1
+            wait_for "$freeing" "The cube is unlocked" 20 >/dev/null || return 1
+            ;;
     esac
-    menu_press toggle-cube-lock >/dev/null || return 1
-    wait_for "$freeing" "The cube is unlocked" 20 >/dev/null || return 1
+    # The Pause item is dead while the cube is locked and comes back, reading Resume, once the unlock is read back.
+    wait_for_menu_item toggle-pause "'Resume'" || return 1
+    menu_press toggle-pause >/dev/null || return 1
     wait_for "$freeing" "The cube is running" 20 >/dev/null
+}
+
+# Waits up to 10 seconds for the menu item `$1` to read `$2` and not be greyed. Answers 0 when it does.
+wait_for_menu_item() {
+    local line="" waited=0
+    while [ "$waited" -lt 50 ]; do
+        line=$(platform_menu_item "$1")
+        case "$line" in
+            *insensitive*) ;;
+            *"$2"*) return 0 ;;
+        esac
+        sleep 0.2
+        waited=$((waited + 1))
+    done
+    return 1
 }
 
 # Asks for the cube to be put down on `face` and waits until the app says that face is up and it is still there.

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Pausing and locking the cube from the menu bar: Pause and Resume with 0x06, Lock with the pause first and then
-# 0x04, a pause refused while locked, Unlock resuming, a left click on the status item pausing and a double click
+# 0x04, a pause refused while locked, Unlock leaving the cube paused, a left click on the status item pausing and a double click
 # locking, and the quit leaving the cube paused and locked, from the menu and
 # on a SIGTERM, which is how a logout or a shutdown asks on Linux. Each command is
 # read back with 0x10, and each is followed by a history fetch that files what the cube did.
@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=35
+EXPECTED_CHECKS=39
 start "pausing and locking the cube from the menu bar"
 
 require_a_paired_cube "there is no cube to pause"
@@ -81,12 +81,20 @@ expect_log "a pause while locked is refused" "$since" "The cube is locked, so pa
 check "and nothing is sent for it" "0" \
     "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND message LIKE 'Sending 06 %';")"
 
-# ---------------------------------------------------------------------------- unlock, which resumes
+# ---------------------------------------------------------------------------- unlock, which changes nothing about the pause
 
 since=$(mark)
 menu_press toggle-cube-lock
 expect_log "Unlock unlocks" "$since" "The cube is unlocked" 15
-expect_log "and resumes" "$since" "The cube is running" 15
+sleep 1
+check "and sends nothing about the pause" "0" \
+    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND message LIKE 'Sending 06 %';")"
+check "the cube is still paused" "1" "$(wait_open_paused 1)"
+check_contains "and the menu offers Resume, live again" "$(wait_for_menu_item toggle-pause "'Resume'" && echo "'Resume'")" "Resume"
+
+since=$(mark)
+menu_press toggle-pause
+expect_log "Resume starts it" "$since" "The cube is running" 15
 check "the open segment counts again" "0" "$(wait_open_paused 0)"
 
 # ---------------------------------------------------------------------------- the status item's clicks
@@ -109,7 +117,11 @@ expect_log "and locks the cube" "$since" "The cube is locked" 15
 since=$(mark)
 double_click_left
 expect_log "a second double click unlocks it" "$since" "The cube is unlocked" 15
-expect_log "and it runs again" "$since" "The cube is running" 15
+sleep 1
+check "and leaves it paused" "1" "$(wait_open_paused 1)"
+since=$(mark)
+menu_press toggle-pause
+expect_log "and Resume runs it again" "$since" "The cube is running" 15
 sleep 1
 check "and neither double click also sent a single click's pause" "0" \
     "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $doubled AND message LIKE 'Fetching history (the cube was paused from the menu bar)%';")"

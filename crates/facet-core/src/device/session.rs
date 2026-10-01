@@ -313,6 +313,12 @@ pub fn set_pause(link: &mut dyn Link, on: bool, log: &impl Record) -> Result<(Cu
     Ok((status, took))
 }
 
+/// Unlocks the logged-in cube with `0x04` and returns the status read back. **Nothing is sent about the pause**:
+/// unlocking leaves a paused cube paused and a running one running, and the status read says which.
+pub fn unlock(link: &mut dyn Link, log: &impl Record) -> Result<CubeStatus, String> {
+    set_lock(link, false, log).map(|(status, _)| status)
+}
+
 /// Locks (`on`) or unlocks the logged-in cube with `0x04`, then reads the status back with `0x10`. Returns the status
 /// read, and whether the lock byte in it is the one asked for. A locked cube reports itself paused, so a pause is
 /// confirmed before the lock is sent, never after.
@@ -603,6 +609,44 @@ mod tests {
         let outcome = factory_reset(&cube, "cube", &mut *link, Duration::ZERO, 3, &Trace::none());
         assert_eq!(outcome, ResetOutcome::Unconfirmed);
         assert_eq!(cube.connections(), 4);
+    }
+
+    #[test]
+    fn unlocking_a_paused_cube_leaves_it_paused_and_sends_nothing_about_the_pause() {
+        let cube = FakeCube::new("000000");
+        let LoginOutcome::LoggedIn { mut link, .. } =
+            log_in(&cube, "cube", &pins(&["000000"]), None, &Trace::none())
+        else {
+            panic!("expected a login")
+        };
+        let log = Trace::none();
+        assert_eq!(set_pause(&mut *link, true, &log).map(|(_, took)| took), Ok(true));
+        assert_eq!(set_lock(&mut *link, true, &log).map(|(_, took)| took), Ok(true));
+        let sent = cube.commands().len();
+
+        let status = unlock(&mut *link, &log).expect("should unlock");
+
+        assert!(!status.is_locked && status.is_paused, "{status:?}");
+        assert_eq!(cube.commands()[sent..], [vec![0x04, 0x02]], "only the unlock went");
+    }
+
+    #[test]
+    fn unlocking_a_running_cube_leaves_it_running_and_sends_nothing_about_the_pause() {
+        let cube = FakeCube::new("000000");
+        let LoginOutcome::LoggedIn { mut link, .. } =
+            log_in(&cube, "cube", &pins(&["000000"]), None, &Trace::none())
+        else {
+            panic!("expected a login")
+        };
+        let log = Trace::none();
+        assert_eq!(set_pause(&mut *link, false, &log).map(|(_, took)| took), Ok(true));
+        assert_eq!(set_lock(&mut *link, true, &log).map(|(_, took)| took), Ok(true));
+        let sent = cube.commands().len();
+
+        let status = unlock(&mut *link, &log).expect("should unlock");
+
+        assert!(!status.is_locked && !status.is_paused, "{status:?}");
+        assert_eq!(cube.commands()[sent..], [vec![0x04, 0x02]], "only the unlock went");
     }
 
     #[test]
