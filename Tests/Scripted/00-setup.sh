@@ -24,8 +24,9 @@
 #      and reseeded from then on, so this is asked once per machine rather than once per run.
 #   4. **Whether a TimeFlip may be used has been asked**, once, and the answer written for `device_required`. A no is
 #      not a setup failure: it stops the run at `50-device-scan`, after every script that needs no cube.
-#   5. **The cube is resting on Break and has been reset**, when one may be used: paired so its face can be read, asked
-#      to be put on Break only when it is not there, then factory reset and forgotten, so 50 starts from a factory cube.
+#   5. **The cube is resting on Break and has been reset**, when one may be used: paired so its face can be read,
+#      unlocked if the pairing finds it locked, asked to be put on Break only when it is not there, then factory reset
+#      and forgotten, so 50 starts from a factory cube.
 #
 # **This writes straight to the tables**, which every other script in this folder is forbidden from doing.
 # It is right here for the same reason it is wrong there: the app is not running while the row goes in, so
@@ -126,6 +127,13 @@ setup_the_cube() {
         0) ;;
         *) trouble "the cube could not be paired to set it up: $PAIR_REASON"; close_settings; quit_app; return 1 ;;
     esac
+
+    # **A locked cube is unlocked before anything else is asked of it.** The quit at the end of a run leaves the cube
+    # paused and locked, and a locked cube refuses to be turned, so the face read and the turn asked for below could not
+    # happen. The pairing's status read says which it is. Unlocking leaves the pause as it was.
+    if ! unlock_the_cube_if_locked "$since"; then
+        trouble "the cube is locked and would not unlock, so the device scripts would start from a locked cube"
+    fi
 
     # **The face the cube is resting on, read on this link**, and asked about only when it is not Break: a face with no
     # category has the app pause the cube as soon as it counts there, so every script from 50 would inherit it stopped.
