@@ -28,7 +28,7 @@ use facet_adapters::radio::BtleplugRadio;
 use facet_adapters::secrets::KeyringSecretStore;
 use facet_adapters::zone::SystemZone;
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag, Trace, plain};
+use facet_core::debug_log::{self, Record, Tag, Trace, plain};
 use facet_core::google::Credentials;
 use facet_core::port::{Opener, Radio, Zone};
 use facet_core::setting;
@@ -682,6 +682,7 @@ fn open_databases(zone: &Arc<dyn Zone>) -> Result<Trace, Box<dyn std::error::Err
         stored => expand_home(stored),
     };
     let file = folder.join("debug.sqlite");
+    let fallback = directory.join("debug.sqlite");
 
     if !trace.enabled {
         // Said on stderr rather than recorded, there being nowhere to record it. It is the one message a
@@ -690,14 +691,30 @@ fn open_databases(zone: &Arc<dyn Zone>) -> Result<Trace, Box<dyn std::error::Err
         eprintln!(
             "[launch  ] Logging is off in the {which} database. Turn on debug.enabled in setting to record a trace."
         );
-        return Ok(Trace::new(file, None, Arc::clone(zone)));
+        return Ok(Trace::new(file, None, Arc::clone(zone)).with_fallback(fallback));
     }
 
-    std::fs::create_dir_all(&folder)
-        .map_err(|error| format!("{} could not be created: {error}", folder.display()))?;
-    let log = Trace::new(file.clone(), Some(DebugLog::open(&file, &**zone)?), Arc::clone(zone));
-    log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
-    Ok(log)
+    // A folder that cannot be used, such as one on a disk that is not mounted, falls back to the folder the app keeps
+    // its databases in, said on stderr and in the trace. With neither usable the launch goes on without a trace, said
+    // on stderr: a trace that cannot be kept is not a reason to refuse to track time.
+    match debug_log::open_with_fallback(&file, &fallback, &**zone) {
+        Ok((debug, used, refused)) => {
+            let log = Trace::new(used.clone(), Some(debug), Arc::clone(zone)).with_fallback(fallback);
+            log.record(Tag::Database, || {
+                format!("Trace open at {}, against the {which} database", used.display())
+            });
+            if let Some(reason) = refused {
+                debug_log::say_fallback(&log, &file, &used, &reason);
+            }
+            Ok(log)
+        }
+        Err(reason) => {
+            eprintln!(
+                "[launch  ] The trace could not be kept anywhere, so this run records nothing: {reason}"
+            );
+            Ok(Trace::new(file, None, Arc::clone(zone)).with_fallback(fallback))
+        }
+    }
 }
 
 /// A stored path with its leading `~` turned into this machine's home.

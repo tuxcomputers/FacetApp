@@ -263,7 +263,7 @@ impl App {
         if !self.has_trace() {
             return;
         }
-        let file = self.log.file().to_path_buf();
+        let file = self.log.file();
         self.log.record(Tag::Settings, || format!("Revealing the trace at {}", file.display()));
         if let Err(error) = self.opener.reveal(&file) {
             self.log.record_failure(Tag::Settings, || format!("The trace could not be revealed: {error}"));
@@ -283,7 +283,7 @@ impl App {
             self.log.record(Tag::Settings, || "The trace was not copied".to_string());
             return;
         };
-        match trace_file::copy_to(self.log.file(), &destination) {
+        match trace_file::copy_to(&self.log.file(), &destination) {
             Ok(()) => self.log.record(Tag::Settings, || format!("Trace copied to {}", destination.display())),
             Err(error) => {
                 self.log.record_failure(Tag::Settings, || format!("The trace was not copied: {error}"));
@@ -310,7 +310,7 @@ impl App {
                     app.log.record(Tag::Settings, || "The trace was not cleared".to_string());
                     return;
                 }
-                match trace_file::clear(app.log.file()) {
+                match trace_file::clear(&app.log.file()) {
                     Ok(()) => app.log.record(Tag::Settings, || "Trace cleared".to_string()),
                     Err(error) => {
                         app.log.record_failure(Tag::Settings, || format!("The trace was not cleared: {error}"));
