@@ -318,7 +318,7 @@ impl Categories {
                     active_namesake.name
                 );
                 let this = self.this.borrow().clone();
-                self.notice.ask(title, &message, &["Cancel"], move |_| {
+                self.notice.ask_with_way_out(title, &message, &["Cancel"], Some(0), move |_| {
                     if let Some(this) = this.upgrade() {
                         this.log.record(Tag::Click, || {
                             format!("Button clicked: Cancel, {} rename refused, name taken", plain(&old))
@@ -359,7 +359,7 @@ impl Categories {
             format!("Category {} rename -> {}, asking: {title}", plain(&old), plain(&new_name))
         });
         let this = self.this.borrow().clone();
-        self.notice.ask(title, &message, &["Cancel", confirm], move |index| {
+        self.notice.ask_with_way_out(title, &message, &["Cancel", confirm], Some(0), move |index| {
             if let Some(this) = this.upgrade() {
                 this.rename_answered(id, &old, &new_name, index == 1, confirm);
             }

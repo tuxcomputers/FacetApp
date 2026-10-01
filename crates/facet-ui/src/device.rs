@@ -1587,11 +1587,12 @@ impl Device {
     fn reset_pressed(&self) {
         self.log.record(Tag::Click, || "Button clicked: Reset Device".to_string());
         let weak = self.this.borrow().clone();
-        self.notice.ask(
+        self.notice.ask_with_way_out(
             "Reset this TimeFlip to factory settings?",
             "This erases everything stored on the device -- face colours, task settings, name, and password -- back \
              to factory defaults. This cannot be undone.",
             &["Cancel", "Reset Device"],
+            Some(0),
             move |choice| {
                 let Some(device) = weak.upgrade() else { return };
                 if choice == 1 {

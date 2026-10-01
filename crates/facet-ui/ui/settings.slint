@@ -101,6 +101,8 @@ export component SettingsWindow inherits Window {
     // Neither fires tab-selected. That callback is a user choosing a tab; an open is its own event
     // and main.rs reports it, which is also the only way it gets reported at all, since selecting a
     // tab that is already selected changes nothing and announces nothing.
+    // Gives the window's own key handling the keyboard, which a notice takes while it is up and leaves with nothing.
+    public function focus-keys() { escape-scope.focus(); }
     public function open-on-faces() { root.active-tab = 0; }
     public function open-on-device() { root.active-tab = 4; }
     public function open-on-about() { root.active-tab = 5; }

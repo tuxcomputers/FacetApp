@@ -16,8 +16,8 @@
 # - **The stepper hold is not here.** Slint's SpinBox has no `-up`/`-down` arrows to hold and repeats at its own
 #   rate, so the Swift acceleration (1 per 0.1s to the second multiple of 5, then 5 per 0.3s) was not built and
 #   there is nothing to time. The typed-value checks stay; the eight hold checks went with the feature.
-# - **Return on an open question does nothing**, where on macOS it was bound to Cancel. The claim that matters
-#   is the same -- Return must not agree -- so that is what is checked, and the question is then answered.
+# - **Return on an open question takes its way out, Cancel**, as it did on macOS. Return must not agree, so the table
+#   is what is checked, and the question is found closed.
 # - **A refused write now raises a notice** ("The change was not saved"). Nothing a script can do provokes one
 #   short of breaking the table, so it is not checked here.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -435,15 +435,13 @@ sleep 1
 check "taking an active name offers a way through and a way out" "Cancel|Rename anyway" "$(alert_buttons)"
 check_contains "and the notice says what it costs" "$(platform_alert_message)" "brought back"
 
-# **Return must not agree with it.** On macOS it was bound to Cancel; here nothing in the notice takes Return at
-# all. Either way the claim is the same, and the table is what answers it.
+# **Return must not agree with it.** It takes the question's way out, Cancel, as it did on macOS, so the question
+# closes and the table is unchanged.
 press_return
 sleep 1
 check "Return does not answer the question with yes" "$DISTINCT" \
     "$(sql "SELECT category_name FROM category WHERE category_id = $blocked;")"
-press_title Cancel
-sleep 1
-check "and Cancel then answers it with no" "no|$DISTINCT" \
+check "and Return answers it with no, which closes it" "no|$DISTINCT" \
     "$(alert_is_open && echo yes || echo no)|$(sql "SELECT category_name FROM category WHERE category_id = $blocked;")"
 
 show_inactive

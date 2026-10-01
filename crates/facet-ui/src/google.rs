@@ -762,12 +762,13 @@ impl Google {
         let (Some(id), Some(name)) = (account.calendar_id, account.calendar_name) else { return };
         let this = self.this.borrow().clone();
         let asked_about = name.clone();
-        self.notice.ask(
+        self.notice.ask_with_way_out(
             &format!("Delete the \u{201c}{name}\u{201d} calendar?"),
             "This deletes the calendar from your Google account, along with every event Facet has written to it. It \
              cannot be undone from here.\n\nYour recorded time is not affected: it stays in Facet, and a new calendar \
              can be made and filled from it.",
             &["Cancel", "Delete Calendar"],
+            Some(0),
             move |index| {
                 let Some(google) = this.upgrade() else { return };
                 if index != 1 {

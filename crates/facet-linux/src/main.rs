@@ -81,6 +81,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // One notice for the whole window, shared by every tab that raises one.
     let notice = Notice::attach(&ui, std::rc::Rc::clone(&log));
+    // A notice raised while Settings is hidden shows the window, which closes again once the notice is answered.
+    let notice_ui = ui.as_weak();
+    let notice_log = std::rc::Rc::clone(&log);
+    notice.set_window_opener(move || {
+        if let Some(ui) = notice_ui.upgrade() {
+            ui.invoke_open_on_faces();
+            show_settings(&ui, "Faces", &*notice_log);
+        }
+    });
 
     // `false` for has_given_up_on_cube: a paired cube is followed until the reconnect fails to find it and the
     // owner chooses to time by hand.
@@ -245,11 +254,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let faces = lost_faces.clone();
         let device = lost_device.clone();
         let quit = std::rc::Rc::clone(&lost_quit);
-        lost_notice.ask(
+        lost_notice.ask_with_way_out(
             "The TimeFlip was not found",
             "Facet could not find the paired TimeFlip. Flip it to wake it and look again, time by hand for the rest of \
              this launch, or quit.",
             &["Rescan", "Time by Hand", "Quit"],
+            Some(0),
             move |choice| match choice {
                 0 => {
                     if let Some(device) = device.upgrade() {

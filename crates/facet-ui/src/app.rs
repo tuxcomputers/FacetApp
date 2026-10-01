@@ -298,12 +298,13 @@ impl App {
             return;
         }
         let this = self.this.borrow().clone();
-        self.notice.ask(
+        self.notice.ask_with_way_out(
             "Clear the debug trace?",
             "This removes every message Facet has recorded so far. It cannot be undone, and anything you have \
              been asked to send in goes with it.\n\nNothing else is affected: your recorded time, categories and \
              settings are in a different file.",
             &["Cancel", "Clear Trace"],
+            Some(0),
             move |index| {
                 let Some(app) = this.upgrade() else { return };
                 if index != 1 {

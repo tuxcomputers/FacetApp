@@ -11,6 +11,8 @@ export global NoticeData {
     in property <string> message;
     in property <[string]> choices;
     callback chosen(int);
+    // Return or Escape while the notice is up. Rust answers with the choice that changes nothing, when it names one.
+    callback way-out-pressed();
 }
 
 export component NoticeOverlay inherits Rectangle {
@@ -19,6 +21,19 @@ export component NoticeOverlay inherits Rectangle {
     accessible-role: groupbox;
     accessible-id: "notice";
     accessible-label: NoticeData.title;
+
+    // Takes the keyboard while the notice is up, so a field that had it does not take a Return or an Escape meant for the
+    // notice. Both are taken whether or not the notice has a way out, so Escape cannot close the window from under it.
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape || event.text == Key.Return {
+                NoticeData.way-out-pressed();
+                return accept;
+            }
+            reject
+        }
+    }
+    init => { keys.focus(); }
 
     // Takes clicks on the backdrop so nothing under the notice can be pressed.
     TouchArea { }
