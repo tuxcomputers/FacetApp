@@ -10,6 +10,7 @@ pub mod history;
 pub mod info;
 pub mod login;
 pub mod name;
+pub mod pin_source;
 pub mod rows;
 pub mod scan;
 pub mod session;

@@ -302,10 +302,18 @@ were paid for.
 1. **Wait for the radio.**
 2. **Scan unfiltered and match on service or name.** A service-filtered scan finds nothing (finding 12).
 3. **Connect, discover services, discover every characteristic in §2.**
-4. **Write the password.** **Two candidates and no third guess**: the vendor default, then the stored one,
-   **each on a connection of its own**. There is no "fall back to the default if the user's fails",
-   because there is no user-supplied PIN. A second attempt on the same peripheral must let the first one
-   go.
+4. **Write the password.** **The vendor default and the stored PIN, and no guess beyond them**, **each on a
+   connection of its own**. There is no "fall back to the default if the user's fails", because there is no
+   user-supplied PIN. A second attempt on the same peripheral must let the first one go.
+
+   **The stored PIN has two homes.** The secret store is where it belongs. `config.json` beside the databases,
+   under the key `PIN`, holds it only when the store refused a write, so that a cube moved onto a PIN of the app's
+   own is never left on one nothing can name (only taking its batteries out puts it back on the vendor PIN). Both
+   are read at the moment they are wanted. The file's PIN is presented first, being the newer, and a PIN both hold
+   is presented once. The file is cleared as soon as it is redundant: when the store holds the same PIN, or once a
+   login has proved the PIN and the store has taken it. A file that is not a JSON object is never overwritten, and
+   the file's other keys, such as the Google client credentials, are left alone. A secret store that will not
+   answer, with nothing in the file, still stops the login before any PIN is presented.
 5. **Subscribe by property, not by list.** Subscribe to every characteristic whose properties say it can
    notify, so nothing the cube can push is silently unsubscribed and therefore never sent. The archived
    driver named five characteristics and that is how a notification goes missing.

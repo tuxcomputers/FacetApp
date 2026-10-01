@@ -25,6 +25,7 @@ use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::device::command::{self, CubeStatus};
 use facet_core::device::forced_pause::{self, Decision, PauseClaim, Resting};
 use facet_core::device::name::{self, NameDecision, NameProblem};
+use facet_core::device::pin_source::{self, AfterLogin, AtRead};
 use facet_core::device::rows::{self, DeviceInfo, DeviceSetting};
 use facet_core::device::session::{Fetched, ResetOutcome};
 use facet_core::device::system_state::{self, CubeHardwareState, CubeSyncState};
@@ -193,6 +194,8 @@ pub struct Device {
     notice: Rc<Notice>,
     radio: Option<Arc<dyn Radio>>,
     pins: Arc<dyn SecretStore>,
+    /// Where the PIN goes when `pins` will not take it, and is read from when `pins` will not answer.
+    pin_fallback: RefCell<Option<Arc<dyn SecretStore>>>,
     /// Names the zone each cube event is filed under when it is first recorded.
     zone: Arc<dyn Zone>,
     edited: EditedSettings,
@@ -273,6 +276,7 @@ impl Device {
             notice,
             radio,
             pins,
+            pin_fallback: RefCell::new(None),
             zone,
             edited: EditedSettings::default(),
             link: Arc::new(Mutex::new(None)),
@@ -384,6 +388,12 @@ impl Device {
         data.on_led_brightness_edited(sends(DeviceSetting::LedBrightness));
         data.on_led_blink_edited(sends(DeviceSetting::LedBlink));
         device
+    }
+
+    /// Gives the PIN a second home, `fallback`, which is written when the secret store will not take a PIN and read
+    /// when it will not answer. Call at launch, before a cube is paired or reconnected.
+    pub fn set_pin_fallback(&self, fallback: Arc<dyn SecretStore>) {
+        *self.pin_fallback.borrow_mut() = Some(fallback);
     }
 
     /// Reads the tab from the table, folds the sections as a fresh window has them, and asks the radio whether
@@ -714,6 +724,7 @@ impl Device {
         self.draw();
         let handle = handle.to_string();
         let pins = Arc::clone(&self.pins);
+        let fallback = self.pin_fallback.borrow().clone();
         let held = Arc::clone(&self.link);
         let feed = Arc::clone(&self.history_feed);
         let is_radio_scanning = Arc::clone(&self.is_radio_scanning);
@@ -730,11 +741,11 @@ impl Device {
                     "The scan had not ended after 5s, so connecting anyway".to_string()
                 });
             }
-            let stored = match stored_pin(&pins, lines) {
+            let stored = match read_pins(&pins, fallback.as_ref(), lines) {
                 Ok(stored) => stored,
                 Err(message) => return Outcome::PairingFailed { label, message },
             };
-            let candidates = login::pairing_candidates(stored.as_deref());
+            let candidates = login::pairing_candidates(&stored.order());
             let new_pin = match login::new_pin() {
                 Ok(pin) => pin,
                 Err(reason) => {
@@ -745,9 +756,19 @@ impl Device {
                 }
             };
             match session::log_in(&*radio, &handle, &candidates, Some(&new_pin), lines) {
-                session::LoginOutcome::LoggedIn { link, pin, rotated } => {
-                    settle(link, &pin, rotated, stored.as_deref(), &pins, &held, &feed, lines, handle, label)
-                }
+                session::LoginOutcome::LoggedIn { link, pin, rotated } => settle(
+                    link,
+                    &pin,
+                    rotated,
+                    &stored,
+                    &pins,
+                    fallback.as_ref(),
+                    &held,
+                    &feed,
+                    lines,
+                    handle,
+                    label,
+                ),
                 outcome => Outcome::PairingFailed { message: outcome.describe(&label), label },
             }
         });
@@ -794,11 +815,12 @@ impl Device {
         self.set_status("Looking for the paired cube...");
         self.draw();
         let pins = Arc::clone(&self.pins);
+        let fallback = self.pin_fallback.borrow().clone();
         let held = Arc::clone(&self.link);
         let feed = Arc::clone(&self.history_feed);
         self.run(move |lines| {
             lines.record(Tag::Pair, || "Looking for the paired cube".to_string());
-            let stored = match stored_pin(&pins, lines) {
+            let stored = match read_pins(&pins, fallback.as_ref(), lines) {
                 Ok(stored) => stored,
                 Err(message) => return Outcome::ReconnectFailed { message },
             };
@@ -818,7 +840,7 @@ impl Device {
                 return Outcome::ReconnectFailed { message: format!("The scan failed: {reason}") };
             }
             found.sort_by_key(|advert| recorded.as_deref() != Some(advert.handle.as_str()));
-            let candidates = login::reconnect_candidates(stored.as_deref());
+            let candidates = login::reconnect_candidates(&stored.order());
             let new_pin = match login::new_pin() {
                 Ok(pin) => pin,
                 Err(reason) => {
@@ -835,8 +857,9 @@ impl Device {
                             link,
                             &pin,
                             rotated,
-                            stored.as_deref(),
+                            &stored,
                             &pins,
+                            fallback.as_ref(),
                             &held,
                             &feed,
                             lines,
@@ -1969,16 +1992,135 @@ impl Device {
     }
 }
 
-/// The PIN the store holds, or `None` when it holds none. An error, already logged, is a store that would not
-/// answer, and says so in words fit for the Device tab; the caller stops there rather than presenting a PIN.
-fn stored_pin(pins: &Arc<dyn SecretStore>, lines: &Lines) -> Result<Option<String>, String> {
-    match timed::look_up(pins) {
-        SecretLookup::Found(pin) => Ok(Some(pin)),
-        SecretLookup::Missing => Ok(None),
+/// What the two homes of the cube's PIN hold.
+struct StoredPins {
+    /// The PIN in the config file, which only holds one because the secret store refused it.
+    file: Option<String>,
+    /// The PIN in the secret store.
+    store: Option<String>,
+}
+
+impl StoredPins {
+    /// The PINs to present, in order.
+    fn order(&self) -> Vec<String> {
+        pin_source::read_order(self.file.as_deref(), self.store.as_deref())
+    }
+}
+
+/// The PINs the two homes hold, read now. An error, already logged, is a secret store that would not answer with
+/// nothing in the config file to go on, and says so in words fit for the Device tab; the caller stops there rather than
+/// presenting a PIN.
+///
+/// A config file copy that the secret store already holds is removed here, being a live PIN in a plain file for no
+/// reason. Two that differ are left for the next login to settle, since only the cube can say which it took.
+fn read_pins(
+    pins: &Arc<dyn SecretStore>,
+    fallback: Option<&Arc<dyn SecretStore>>,
+    lines: &Lines,
+) -> Result<StoredPins, String> {
+    let (store, unreadable) = match timed::look_up(pins) {
+        SecretLookup::Found(pin) => (Some(pin), None),
+        SecretLookup::Missing => (None, None),
+        SecretLookup::Unavailable(reason) => (None, Some(reason)),
+    };
+    let file = fallback.and_then(|fallback| match timed::look_up(fallback) {
+        SecretLookup::Found(pin) => Some(pin),
+        SecretLookup::Missing => None,
         SecretLookup::Unavailable(reason) => {
-            lines
-                .record_failure(Tag::Pin, || format!("The stored PIN could not be read: {}", plain(&reason)));
-            Err(format!("The stored PIN could not be read, so no cube was contacted: {reason}"))
+            lines.record_failure(Tag::Pin, || {
+                format!("The config file could not be read: {}", plain(&reason))
+            });
+            None
+        }
+    });
+    if let Some(reason) = unreadable {
+        lines.record_failure(Tag::Pin, || format!("The stored PIN could not be read: {}", plain(&reason)));
+        if file.is_none() {
+            return Err(format!("The stored PIN could not be read, so no cube was contacted: {reason}"));
+        }
+        lines.record(Tag::Pin, || {
+            "The secret store would not say whether it holds a PIN, so the one in the config file is used"
+                .to_string()
+        });
+    }
+    match (pin_source::at_read(file.as_deref(), store.as_deref()), fallback) {
+        (AtRead::ClearTheFile, Some(fallback)) => clear_config_copy(
+            fallback,
+            lines,
+            "The secret store already holds the PIN the config file names, so the file no longer needs to",
+        ),
+        (AtRead::AwaitTheCube, _) => lines.record(Tag::Pin, || {
+            "The secret store and the config file name different PINs, so the next login settles it"
+                .to_string()
+        }),
+        _ => {}
+    }
+    Ok(StoredPins { file, store })
+}
+
+/// Removes the config file's copy of the PIN, and says whether it went.
+fn clear_config_copy(fallback: &Arc<dyn SecretStore>, lines: &Lines, said: &str) {
+    match timed::clear(fallback) {
+        Ok(()) => lines.record(Tag::Pin, || said.to_string()),
+        Err(reason) => lines.record_failure(Tag::Pin, || {
+            format!("The config file would not give up its copy of the PIN: {}", plain(&reason))
+        }),
+    }
+}
+
+/// Writes down the PIN a cube has just proved it is on, which is called only after the cube has taken it. The secret
+/// store is where it belongs. When that refuses, the config file holds it instead, so the cube is never left on a PIN
+/// nothing can name. An error says why nowhere would hold it.
+fn record_pin(
+    pin: &str,
+    rotated: bool,
+    stored: &StoredPins,
+    pins: &Arc<dyn SecretStore>,
+    fallback: Option<&Arc<dyn SecretStore>>,
+    lines: &Lines,
+) -> Result<(), String> {
+    match pin_source::after_login(pin, rotated, stored.file.as_deref(), stored.store.as_deref()) {
+        AfterLogin::Nothing => Ok(()),
+        AfterLogin::ClearTheFile => {
+            if let Some(fallback) = fallback {
+                clear_config_copy(
+                    fallback,
+                    lines,
+                    "The secret store holds the PIN the cube answered to, so the config file no longer needs to hold one",
+                );
+            }
+            Ok(())
+        }
+        AfterLogin::WriteIt => {
+            let refused = match timed::store(pins, pin) {
+                Ok(true) => None,
+                Ok(false) => Some("it did not read back".to_string()),
+                Err(reason) => Some(reason),
+            };
+            let Some(reason) = refused else {
+                if let (Some(fallback), Some(_)) = (fallback, stored.file.as_deref()) {
+                    clear_config_copy(
+                        fallback,
+                        lines,
+                        "The PIN the cube answered to is in the secret store, so the config file no longer needs to hold one",
+                    );
+                }
+                return Ok(());
+            };
+            let Some(fallback) = fallback else { return Err(reason) };
+            match timed::store(fallback, pin) {
+                Ok(true) => {
+                    lines.record(Tag::Pin, || {
+                        format!(
+                            "The secret store would not take the PIN ({}), so it is in the config file instead",
+                            plain(&reason)
+                        )
+                    });
+                    Ok(())
+                }
+                Ok(false) => Err(format!("{reason}; and the config file did not read back")),
+                Err(file_reason) => Err(format!("{reason}; and the config file: {file_reason}")),
+            }
         }
     }
 }
@@ -2116,23 +2258,16 @@ fn settle(
     mut link: Box<dyn Link>,
     pin: &str,
     rotated: bool,
-    stored: Option<&str>,
+    stored: &StoredPins,
     pins: &Arc<dyn SecretStore>,
+    fallback: Option<&Arc<dyn SecretStore>>,
     held: &Arc<Mutex<Option<Box<dyn Link>>>>,
     feed: &Arc<Mutex<Option<Receiver<Vec<u8>>>>>,
     lines: &Lines,
     handle: String,
     label: String,
 ) -> Outcome {
-    let pin_stored = if rotated || stored != Some(pin) {
-        match timed::store(pins, pin) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err("it did not read back".to_string()),
-            Err(reason) => Err(reason),
-        }
-    } else {
-        Ok(())
-    };
+    let pin_stored = record_pin(pin, rotated, stored, pins, fallback, lines);
     set_the_clock(&mut *link, lines);
     let gap_name = link.gap_name();
     let info = session::device_info(&mut *link, lines);
@@ -2280,6 +2415,20 @@ mod tests {
         }
         fn clear(&self) -> Result<(), String> {
             *self.0.lock().expect("lock") = None;
+            Ok(())
+        }
+    }
+
+    /// A store that holds nothing and will not take anything, as a Keychain that refuses a write.
+    struct RefusingStore;
+    impl SecretStore for RefusingStore {
+        fn store(&self, _secret: &str) -> Result<bool, String> {
+            Err("refused".into())
+        }
+        fn look_up(&self) -> SecretLookup {
+            SecretLookup::Missing
+        }
+        fn clear(&self) -> Result<(), String> {
             Ok(())
         }
     }
@@ -2570,6 +2719,73 @@ mod tests {
         assert!(data.get_scan_status().contains("stored PIN could not be read"));
         assert!(!rows::pairing(&connection).expect("read").is_cube_paired);
         assert_eq!(pin.lock().expect("lock").as_str(), "000000");
+        drop(locked);
+
+        // A secret store that refuses the new PIN leaves it in the config file, and the cube is paired all the same.
+        let file = Arc::new(MemoryStore(Mutex::new(None)));
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let refused = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::new(RefusingStore),
+            Arc::new(facet_core::timezone::SYDNEY),
+        );
+        refused.set_pin_fallback(Arc::clone(&file) as Arc<dyn SecretStore>);
+        refused.open();
+        refused.scan_pressed();
+        settle(&refused);
+        refused.pair("cube");
+        settle(&refused);
+        assert_eq!(notice.title(), "", "a PIN the config file holds is a PIN saved");
+        assert!(rows::pairing(&connection).expect("read").is_cube_paired);
+        let rotated = pin.lock().expect("lock").clone();
+        assert_ne!(rotated, "000000");
+        assert_eq!(file.look_up(), SecretLookup::Found(rotated.clone()), "the config file holds the new PIN");
+        drop(refused);
+
+        // A secret store that will not answer no longer stops the reconnect when the config file has the PIN.
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let from_file = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::new(UnreadableStore),
+            Arc::new(facet_core::timezone::SYDNEY),
+        );
+        from_file.set_pin_fallback(Arc::clone(&file) as Arc<dyn SecretStore>);
+        from_file.open();
+        settle(&from_file);
+        from_file.reconnect();
+        settle(&from_file);
+        assert_eq!(data.get_connection(), "Connected");
+        assert_eq!(pin.lock().expect("lock").as_str(), rotated, "nothing was rotated");
+        drop(from_file);
+
+        // Once the secret store takes the PIN again, the next login moves it there and the file lets go of it.
+        let store = Arc::new(MemoryStore(Mutex::new(None)));
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let healed = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::clone(&store) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
+        );
+        healed.set_pin_fallback(Arc::clone(&file) as Arc<dyn SecretStore>);
+        healed.open();
+        settle(&healed);
+        healed.reconnect();
+        settle(&healed);
+        assert_eq!(store.look_up(), SecretLookup::Found(rotated.clone()), "the secret store has it now");
+        assert_eq!(file.look_up(), SecretLookup::Missing, "and the config file does not");
+        drop(healed);
 
         std::fs::remove_file(&path).expect("the test database should be removable");
     }

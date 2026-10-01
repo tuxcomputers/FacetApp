@@ -19,7 +19,7 @@ use facet_adapters::dialogs::NativeFileChooser;
 use facet_adapters::http::UreqHttp;
 use facet_adapters::loopback::StdLoopbackListener;
 use facet_adapters::radio::BtleplugRadio;
-use facet_adapters::secrets::KeyringSecretStore;
+use facet_adapters::secrets::{FileSecretStore, KeyringSecretStore};
 use facet_adapters::zone::SystemZone;
 use facet_core::database;
 use facet_core::debug_log::{self, Record, Tag, Trace, plain};
@@ -152,6 +152,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
         Arc::clone(&zone),
     );
+    // Where the cube's PIN goes when the secret store will not take it, so the cube is never left on a PIN nothing can
+    // name. The file also holds the Google client credentials, which it leaves alone.
+    device.set_pin_fallback(Arc::new(FileSecretStore::new(data_directory().join("config.json"), "PIN")));
     // The Faces tab asks the cube which face is up, and a face given a category, or a category recoloured or retired,
     // relights the cube.
     let face_device = Rc::downgrade(&device);

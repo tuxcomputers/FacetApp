@@ -1433,6 +1433,7 @@ dependencies = [
  "iana-time-zone",
  "keyring",
  "rfd",
+ "serde_json",
  "signal-hook",
  "tokio",
  "ureq",
