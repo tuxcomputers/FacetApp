@@ -31,6 +31,7 @@ NAMED_ATTRIBUTES = (
     ("AXTitle", "title"),
     ("AXDescription", "desc"),
     ("AXValue", "value"),
+    ("AXHelp", "help"),
 )
 
 
@@ -43,7 +44,8 @@ def describe(element, show_frames):
     parts = []
     for name, label in NAMED_ATTRIBUTES:
         value = attribute(element, name)
-        text = "" if value is None else str(value)
+        # A tooltip can span lines, and a dump is one line per element for a check to grep.
+        text = "" if value is None else " / ".join(str(value).splitlines()) if name == "AXHelp" else str(value)
         # An AXValue holding a child element prints as an opaque pointer; skip it rather than
         # putting a memory address in the output.
         if text and not text.startswith("<AXUIElement"):

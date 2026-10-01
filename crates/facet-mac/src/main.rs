@@ -422,7 +422,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let follow_pause_item = pause_item.clone();
     let follow_lock_item = lock_item.clone();
     let follow_device = Rc::downgrade(&device);
-    // The line beside the icon, as last drawn, so a tick that changes nothing draws nothing.
+    // The line the tooltip was last set from, so a tick that changes nothing sets nothing.
     let follow_line: Rc<RefCell<Option<facet_core::status_line::StatusLine>>> = Rc::new(RefCell::new(None));
     // A change to the icon, the item's title or whether it is enabled writes one row, in the wording the
     // Linux tray writes, which the scripted checks read. The item's current text and enabled state are read
@@ -714,62 +714,40 @@ fn quit_on_termination(_quit: Rc<dyn Fn(&str)>, _log: &impl Record) -> Vec<()> {
     Vec::new()
 }
 
-/// Gives the status item's button an accessibility identifier, so a script can find it by name.
-///
-/// The identifier is `status-item` because that is what `scripts/status-item-click.py` already looks
-/// for: the locator model converts rather than being reinvented.
-#[cfg(target_os = "macos")]
-/// Shows `line` beside the status item's icon: the name in its colour, a space, and the figure in its own, and
-/// gives the item `line`'s spoken words for a screen reader.
+/// Sets the status item's tooltip to `Facet` and then `line`'s spoken words, and gives its button the spoken words
+/// for a screen reader. The line itself is not drawn: the item shows its icon alone.
 #[cfg(target_os = "macos")]
 fn show_status_line(tray: &TrayIcon, line: &facet_core::status_line::StatusLine, log: &impl Record) {
     use objc2::MainThreadMarker;
-    use objc2::rc::Retained;
-    use objc2_app_kit::{NSAccessibility, NSColor, NSForegroundColorAttributeName};
-    use objc2_foundation::{NSMutableAttributedString, NSRange, NSString};
+    use objc2_app_kit::NSAccessibility;
+    use objc2_foundation::NSString;
 
+    if let Err(error) = tray.set_tooltip(Some(format!("{}\n{}", facet_core::status_line::APP_LABEL, line.spoken))) {
+        log.record_failure(Tag::Status, || format!("The status item tooltip could not be changed: {error}"));
+    }
     let Some(mtm) = MainThreadMarker::new() else {
         log.record_failure(Tag::Status, || {
-            "Not on the main thread, so the menu bar line was not drawn".to_string()
+            "Not on the main thread, so the status item was not given its spoken line".to_string()
         });
         return;
     };
     let Some(button) = tray.ns_status_item().and_then(|item| item.button(mtm)) else {
         log.record_failure(Tag::Status, || {
-            "The status item has no button, so its line was not drawn".to_string()
+            "The status item has no button, so it was not given its spoken line".to_string()
         });
         return;
     };
-    let text = format!(" {}", line.text());
-    let string = NSMutableAttributedString::from_nsstring(&NSString::from_str(&text));
-    let colour = |hex: &str| -> Option<Retained<NSColor>> {
-        let channel =
-            |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok().map(|byte| f64::from(byte) / 255.0);
-        Some(NSColor::colorWithSRGBRed_green_blue_alpha(channel(1)?, channel(3)?, channel(5)?, 1.0))
-    };
-    // Ranges are in UTF-16 units, which is what NSString counts.
-    let name_start = 1;
-    let name_length = line.name.encode_utf16().count();
-    let mut ranges = vec![(NSRange::new(name_start, name_length), line.name_colour)];
-    if let Some(figure) = &line.figure {
-        ranges.push((
-            NSRange::new(name_start + name_length + 1, figure.encode_utf16().count()),
-            line.figure_colour,
-        ));
-    }
-    for (range, status_colour) in ranges {
-        if let Some(colour) = status_colour.hex().and_then(colour) {
-            // SAFETY: the attribute name is AppKit's constant, and the value is an NSColor, which is what it takes.
-            unsafe { string.addAttribute_value_range(NSForegroundColorAttributeName, &colour, range) };
-        }
-    }
-    button.setAttributedTitle(&string);
     button.setAccessibilityLabel(Some(&NSString::from_str(&line.spoken)));
 }
 
 #[cfg(not(target_os = "macos"))]
 fn show_status_line(_tray: &TrayIcon, _line: &facet_core::status_line::StatusLine, _log: &impl Record) {}
 
+/// Gives the status item's button an accessibility identifier, so a script can find it by name.
+///
+/// The identifier is `status-item` because that is what `scripts/status-item-click.py` already looks
+/// for: the locator model converts rather than being reinvented.
+#[cfg(target_os = "macos")]
 fn name_the_status_item(tray: &TrayIcon, log: &impl Record) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSAccessibility;
