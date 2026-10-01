@@ -75,10 +75,18 @@ fi
 expect_log "the cube reads back locked" "$since" "The cube is locked" 15
 check_contains "and the menu offers Unlock" "$(menu_eventually toggle-cube-lock Unlock)" "Unlock"
 
+# **The Pause and Resume entry is dead while the cube is locked**, which is all locking does to it, so a press reaches
+# nothing and there is no refusal to read. The entry greys when the lock is read back.
+greyed=no
+for _ in $(seq 1 25); do
+    case "$(platform_menu_item toggle-pause)" in *insensitive*) greyed=yes; break ;; esac
+    sleep 0.2
+done
+check "the menu's Pause is greyed while the cube is locked" "yes" "$greyed"
 since=$(mark)
 menu_press toggle-pause
-expect_log "a pause while locked is refused" "$since" "The cube is locked, so pausing it means nothing; unlock it first" 10
-check "and nothing is sent for it" "0" \
+sleep 1.5
+check "and a press on it sends nothing" "0" \
     "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND message LIKE 'Sending 06 %';")"
 
 # ---------------------------------------------------------------------------- unlock, which changes nothing about the pause
