@@ -1,10 +1,10 @@
 # Methods
 
-Reusable techniques for checking this app against a running copy of itself. A checklist step says
-`Method: N` and points here rather than repeating the mechanics.
+Reusable techniques for checking this app against a running copy of itself. A script or driver comment says
+`Method N` and points here rather than repeating the mechanics.
 
-**Numbers are permanent.** Once a checklist cites one, renumbering silently repoints that step at
-another method, which is the same class of fault as addressing a tab by index -- the step goes on
+**Numbers are permanent.** Once a script or a driver cites one, renumbering silently repoints that citation at
+another method, which is the same class of fault as addressing a tab by index -- the check goes on
 passing while testing something else. A new method takes the next unused number and goes at the end,
 however tidy it would be to slot it in beside a related one.
 
@@ -12,35 +12,34 @@ Everything here has been done, not guessed. When you discover something new, add
 command, not the story of finding it. Keep entries short: a rule buried in prose is a rule nobody
 follows.
 
-The suite these serve is being rebuilt from scratch, per the device-test section of the root
-`CLAUDE.md`. The previous suite's methods are in the git history; its locators addressed the
-old app's accessibility tree and do not apply, but its **device measurements** still do, because they
-are facts about the hardware.
+The suite these serve is `Tests/Scripted/`, and it is complete: see [`docs/scripted-suite.md`](../docs/scripted-suite.md).
+Most methods below were measured against the Swift app (AppKit, then GTK) and carried across unchanged, and the
+notes at the end (AppKit layout, `swift test`, the type checker) are Swift-only throughout. **An entry marked
+Swift-era describes a command, a file or a control the Rust app does not have; it stays for what it measured about
+the hardware and the platforms, and the Slint answer is in [`docs/port-findings.md`](../docs/port-findings.md).**
 
 <a id="method-1"></a>
-## Method 1: Build and bundle
+## Method 1: Build before you drive
 
-`swift build` compiles; it does not make something launchable. Accessibility ignores a bare executable
--- no status item appears in the tree at all -- so anything driven by a script has to be bundled:
+There is no bundle: cargo builds the executable and that is the app. A bare executable is in the accessibility
+tree, status item included, so nothing has to be bundled before a script can drive it.
 
 ```sh
-swift build && mint run stackotter/swift-bundler@main bundle Facet
-open .build/bundler/apps/Facet/Facet.app
+cargo build --locked -p facet-mac        # or -p facet-linux
 ```
 
-**`scripts/run.sh` builds; `open`ing the `.app` does not.** The script ends in `swift-bundler run`, which builds and
-bundles before it launches (`--skip-build` exists to opt out), so a run after an edit always carries the edit. The two
-lines above are the dangerous shape: `open` launches whatever was bundled last, however old.
+**Driving a stale binary proves nothing, and nothing about a running app announces its age.** `scripts/run.sh`
+builds before it launches, and `ensure_app_running` in `lib.sh` rebuilds when anything under `crates/` is newer
+than the binary, but it never replaces an app that is already running. Check the timestamp of what is driven:
+
+```sh
+stat -f '%Sm' target/debug/facet-mac     # macOS
+stat -c '%y' target/debug/facet-linux    # Linux
+```
 
 This has already cost an hour. A fix was confirmed correct in the source at 21:51:49 and tested against a binary
-built at 21:47:55, and the feature "still did not work" because the running app predated it. Nothing about a running
-app announces its age, so when driving a verification, **either go through `scripts/run.sh` or check the timestamp**:
+built at 21:47:55, and the feature "still did not work" because the running app predated it.
 
-```sh
-stat -f '%Sm' .build/bundler/apps/Facet/Facet.app/Contents/MacOS/Facet
-```
-
-<a id="method-2"></a>
 ## URL.appendingPathComponent escapes what you give it
 
 `appendingPathComponent` percent-encodes its argument. Handing it a string that is already escaped escapes it
@@ -61,6 +60,7 @@ deleted resource are the same status code**, so anything that acts on a 404 need
 character in a test, not merely checked for the right prefix. The test that passed before this bug asserted the
 prefix and the absence of "@", and both were true of the broken URL.
 
+<a id="method-2"></a>
 ## Method 2: Press anything by name
 
 ```sh
@@ -81,20 +81,20 @@ Exits non-zero when nothing matches, so a missing element is distinguishable fro
 nothing.
 
 <a id="method-3"></a>
-## Method 3: Open the status item's menu
+## Method 3: Reach the status item's menu
 
 ```sh
-scripts/status-item-click.py            # left half: opens the menu
-scripts/status-item-click.py --right    # right half
+python3 scripts/ax-dump.py --menu-bar              # the status item and its menu
+python3 scripts/ax-press.py --title "Settings..."  # a menu item, by its label
+python3 scripts/status-item-click.py               # a real left click (Pause's accelerator)
+python3 scripts/status-item-click.py --double      # a double click (locks the cube)
 ```
 
-The **only** gesture that needs a real mouse event: a status item exposes no accessibility action, so
-there is nothing to press. Its menu items are ordinary named elements once it is open --
-`scripts/ax-press.py open-settings`, `scripts/ax-press.py quit-app` (Method 2) -- and they are absent
-from the tree while it is closed, so open it first.
-
-The item's position is read at click time, never remembered: its width follows its title, which becomes
-a live duration once something is being timed.
+**A real mouse event is needed only to test the click and the double click themselves.** The menu's items are in
+the accessibility tree and take a press with the menu closed (measured 2026-09-25 against `facet-mac`).
+**Address them by label**: tray-icon gives every item the same `AXIdentifier`, `fireMenuItemAction:`, so
+`ax-press.py open-settings` finds nothing. `menu_press open-settings` in `lib.sh` is that mapping. The item's
+position is read at click time, never remembered.
 
 <a id="method-4"></a>
 ## Method 4: Read the accessibility tree
@@ -167,6 +167,9 @@ has to commit it: press the Save button beside it, or move focus.
 <a id="method-8"></a>
 ## Method 8: Hold a button down
 
+**Swift-era: the Rust steppers are Slint SpinBoxes with no arrows to hold, so no script uses `ax-hold.py` now, and
+`category-limit-1-up` is not an identifier in this app.** What follows was measured against the Swift app.
+
 Accessibility has no hold: `AXPress` is always a click, so anything that repeats while held needs real
 mouse events.
 
@@ -190,7 +193,7 @@ the point, and post real events there:
 ```python
 import Quartz, time, subprocess
 from AppKit import NSRunningApplication, NSApplicationActivateIgnoringOtherApps
-pid = int(subprocess.check_output(["pgrep", "-x", "Facet"]).split()[0])
+pid = int(subprocess.check_output(["pgrep", "-x", "facet-mac"]).split()[0])
 NSRunningApplication.runningApplicationWithProcessIdentifier_(pid).activateWithOptions_(
     NSApplicationActivateIgnoringOtherApps)                      # or the click only activates the app
 time.sleep(0.4)
@@ -230,10 +233,14 @@ else for the key to land. **Escape is still never posted** -- it reaches whateve
 the app is often what that is.
 
 Confirmed on the rename: `ax-press.py category-name-11`, `ax-set.py category-name-11-field "Admin work"`, Return,
-then the sheet's own buttons are ordinary named elements (`action-button-1` is the first one added).
+then the notice's own buttons are ordinary named elements (`notice-choice-<n>`, [Method 12](#method-12)).
 
 <a id="method-10a"></a>
 ## Method 10a: Exercise a keyboard shortcut
+
+**Swift-era mechanism:** the paragraphs on `NSApplication.sendEvent` and `MainMenu` explain the Swift app;
+`facet-mac` has no main menu, and `04-categories` still pastes with `post_key v --command`. The command, and the
+rule that a shortcut needs a real keystroke, stand.
 
 `scripts/ax-key.py` posts a real key with modifiers, and `post_key` in `lib.sh` is the wrapper that reports a
 failure rather than swallowing it:
@@ -256,79 +263,50 @@ when it opens, so nothing has to click into it first.
 
 Same caveats as Method 10: the app is activated first (`ax-key.py` does it), and Escape is never posted.
 
+<a id="method-11"></a>
 ## Method 11: Open a collapsible section
 
 A folded section's rows are **not in the accessibility tree at all**, so reading one before opening it looks
-identical to a tab that failed to draw it. Open it first, and press the *heading button*, not the section:
+identical to a tab that failed to draw it. Open it first. **The whole heading is the button**, pressed on its own
+identifier:
 
 ```sh
-python3 scripts/ax-press.py device-more-heading-button   # works
-python3 scripts/ax-press.py device-more                  # does nothing: that is the AXGroup
+python3 scripts/ax-press.py device-timeflip-section-heading   # a section heading
+python3 scripts/ax-press.py device-more                       # a fold inside a panel (also device-led)
 ```
 
-Every collapsible group carries three elements, and only the middle one is pressable:
-
-```
-AXGroup             id=device-more                  <- the section; pressing it is a no-op
-  AXButton          id=device-more-heading-button   <- press this
-  AXDisclosureTriangle id=device-more-toggle        <- value=0 folded, 1 open; read it to confirm
-```
-
-Confirm on the triangle's `value` rather than by sleeping: `value=1` is the section open. Measured 2026-08-17,
-driving the Device tab's **More** rows -- the first press went to `device-more`, returned success, and changed
+On the App and Device tabs a section's heading is `<name>-section-heading` and its panel `<name>-section-panel`;
+other tabs name theirs (`faces-timing-heading`, `report-total-<id>-heading`). There is no separate triangle and no
+`-heading-button`: those were the Swift ids. Confirm the fold by whether its rows are in the tree (`on_tab <id>`),
+never by sleeping. Measured 2026-08-17 (Swift): the first press went to the group, returned success, and changed
 nothing, which read as the four rows being missing rather than hidden.
 
-The naming follows `PanelSection`'s pattern (the borderless button spanning the row, per the root `CLAUDE.md`),
-so `<section-id>-heading-button` and `<section-id>-toggle` hold for every folding group the app has.
+<a id="method-12"></a>
+## Method 12: Answer a confirmation
 
-## Method 12: Answer a confirmation sheet
-
-**Press the sheet's button with `--sheet`, never by title alone.** A confirmation names its agreeing button after the
-control that opened it, so `Reset Device` matches *two* elements -- the sheet's, and the one behind it:
+The Rust app has no native alert or sheet. A question is an in-window notice with `notice-title`,
+`notice-message` and one `notice-choice-<n>` button per answer, in the ordinary tree on both platforms.
 
 ```sh
-python3 scripts/ax-press.py device-reset                      # opens the sheet
-python3 scripts/ax-alert.py                                   # Cancel / Reset Device, in drawn order
-python3 scripts/ax-press.py --sheet --title "Reset Device"    # answers it
-python3 scripts/ax-press.py --title "Reset Device"            # WRONG: presses the button behind the sheet
+python3 scripts/ax-dump.py | grep notice-         # what is asked, and the buttons
+python3 scripts/ax-press.py notice-choice-1       # press one
 ```
 
-Without `--sheet` the whole-tree search finds the pane's button first and presses *that*, which opens a **second**
-sheet on top of the first while the reset never happens. Measured 2026-08-17: two `Button clicked: Reset Device` rows,
-no reset, and two sheets to dismiss.
+**Press by label with `press_title`**, which finds a notice's button first and presses it by identifier: a label
+is not unique in the window (`Cancel` is also the create control's, `Reset Device` also the Reset button's).
+`ax-alert.py` and `ax-press.py --sheet` are for native sheets, which this app does not raise.
 
-**AppKit relocates a button titled `Cancel` to the left**, so `ax-alert.py` lists it first whatever order it was added
-in -- and Return therefore fires the *rightmost* button unless key equivalents are set explicitly. Read the order from
-`ax-alert.py` rather than assuming it matches the code.
+**Swift-era measurement, 2026-08-17:** a native confirmation named its agreeing button after the control that
+opened it, so `Reset Device` matched two elements, and without `--sheet` the press went to the pane's button and
+opened a **second** sheet while the reset never happened: two `Button clicked: Reset Device` rows, no reset, and
+two sheets to dismiss.
 
-## Method 13: Answer an app-modal alert
+<a id="method-13"></a>
+## Method 13: superseded by Method 12
 
-**`ax-alert.py` cannot see one, and `--sheet` does not apply.** An `NSAlert` run with `runModal()` -- as opposed to
-`beginSheetModal` -- is a window of the app's own, not an `AXSheet` hanging off another window, and both of those
-tools only walk sheets. The whole-tree search is what finds it:
-
-```sh
-python3 scripts/ax-dump.py | head -9
-#   AXWindow  id=_NS:87  desc=alert
-#     AXStaticText  value=Unable to find your device
-#     AXButton  id=action-button-1  title=Rescan
-#     AXButton  id=action-button-2  title=Time by Hand
-#     AXButton  id=action-button-3  title=Quit
-
-python3 scripts/ax-press.py --title "Time by Hand"
-```
-
-**An `AXPress` does actuate it, from inside the modal run loop.** That was the open question: `runModal` blocks the
-main thread, so it was not obvious the app would service an accessibility request at all, let alone act on it. It
-does -- the alert dismissed and the app carried on. Measured 2026-08-19 against the cube-not-found offer, which is
-the only app-modal alert this app puts up. Its buttons were `Retry` and `Stop Looking` until 2026-09-02.
-
-**The buttons carry identifiers as well as titles**, `action-button-1` upwards in the order they were added, the same
-scheme [Method 10](#method-10) records for sheets. Prefer the title: the order is the order `addButton` was called
-in, which is a detail of the code rather than of the screen, and AppKit relocates a button titled `Cancel` regardless.
-
-`--sheet` would find nothing here, so the ambiguity [Method 12](#method-12) warns about does not arise -- but check
-that no control *behind* the alert shares the title before matching on it.
+There is no app-modal alert any more, so there is nothing for `ax-alert.py` to find outside a notice. Measured
+2026-08-19 against the Swift cube-not-found offer: an `AXPress` does actuate an `NSAlert` run with `runModal()`,
+from inside the modal run loop. The Swift text is in the git history.
 
 <a id="method-14"></a>
 ## Method 14: Read a colour the accessibility tree cannot show
@@ -343,10 +321,12 @@ The app writes down what it drew instead, and the row is the evidence:
 ```sh
 sqlite3 ~/Library/Application\ Support/Facet/debug.sqlite \
   "SELECT message FROM debug_log WHERE tag = 'status' ORDER BY debug_log_id DESC LIMIT 1;"
-# Menu bar: name yellow, glyph label, figure yellow
+# Menu bar: name yellow, figure yellow
 ```
 
-In the scripted suite that is `expect_colours "what this checks" "name yellow, glyph label, figure yellow"`.
+`expect_colours` in `lib.sh` reads that row, though no script calls it now: the checks read the rows directly with
+`expect_log` and `check` (`Menu bar: name yellow, figure yellow`). The icon's colour is the row
+`Status icon: <glyph> <colour>` (`Status icon: pause white`).
 
 **A state read, not a baselined wait**, which is the one thing to get right about it. The row is written when the
 colours *change* rather than per draw -- the figure moves every second, so a row per drawn title would be a row per
@@ -377,7 +357,7 @@ windows = Quartz.CGWindowListCopyWindowInfo(
     Quartz.kCGNullWindowID,
 )
 [w["kCGWindowNumber"] for w in windows
- if w.get("kCGWindowOwnerName") == "Facet" and w.get("kCGWindowName") == "Facet Settings"]
+ if w.get("kCGWindowOwnerName") == "facet-mac" and w.get("kCGWindowName") == "Facet Settings"]
 ```
 
 ```sh
@@ -393,7 +373,9 @@ to stdout rather than stderr, which is why it hides in a script that only checks
 **Open the image afterwards and look at it.** Both failures above -- the wrong window and the missing file -- produced
 a plausible-looking run and an image nobody had seen.
 
-<a id="method-16"></a>
+**Swift-era (GTK) notes on the Linux tools, kept for what they measured.** Slint has no notebook, so a tab is a
+`page tab` pressed with its own action (`at-press.py`), and the tray's paths and the dump's value attribute are
+corrected below.
 
 **Two tabs hold the same identifier, so a search has to prune the ones not on show.** `create-category`,
 `category-name-field` and `save-category` are the Categories tab's create control *and* the Faces tab's --
@@ -413,10 +395,11 @@ rather than anything obviously absent: every child of the unselected Faces page 
 real pointer event has to check the position too -- otherwise the click goes to the far corner of the
 coordinate space, lands on nothing, and reports a hold that happened.
 
-**The tray's own words are properties on a different object from its menu.** The menu is
-`/org/ayatana/NotificationItem/facet/Menu` on `com.canonical.dbusmenu`; what the status item *displays* is
-`XAyatanaLabel` (and `Title`, and `ToolTip`) on `/org/ayatana/NotificationItem/facet` under
-`org.kde.StatusNotifierItem`, read through `org.freedesktop.DBus.Properties.Get`:
+**The tray's own words are properties on a different object from its menu.** The menu is a
+`com.canonical.dbusmenu` object whose path is read from the item's `Menu` property (ksni answers `/MenuBar`;
+libayatana-appindicator answered `/org/ayatana/NotificationItem/facet/Menu`); what the status item *displays* is
+`XAyatanaLabel` (and `Title`, and `ToolTip`) on `/StatusNotifierItem` under `org.kde.StatusNotifierItem`, read
+through `org.freedesktop.DBus.Properties.Get`:
 
 ```
 $ python3 scripts/tray-menu.py --label
@@ -429,64 +412,48 @@ answers a dict missing the key -- which reads as an empty label rather than as a
 **A Linux dump must print the same line shape as `ax-dump.py`, attribute for attribute.** `lib.sh` does not
 read that output as prose: `element` greps `id=X `, `on_tab` counts `id=X` on a word boundary,
 `window_width` pulls the number out of `size=w:N`, and `tree_has` matches whole strings. So `at-dump.py`
-prints `id=` (the accessible name), `title=` (the words drawn), `value=` (**the accessible description,
-because that is where the value is on this platform**), `disabled`, `pos=` and `size=`. There is no `desc=`:
-one attribute is doing both jobs here, and printing it twice under two names would give a check asserting
-*absence* a question with two answers.
+prints `id=` (the `AccessibleId` Slint publishes for `accessible-id`), `title=` (the words drawn), `value=` (the
+accessible name, which is the label; GTK had the name as the identifier and put the value in the description,
+Slint does not, [port-findings.md](../docs/port-findings.md) Linux fact 1), `disabled`, `pos=` and `size=`. There is
+no `desc=`, and printing the value twice under two names would give a check asserting *absence* a question with two
+answers.
 
 
+<a id="method-16"></a>
 ## Method 16: Make a paired cube refuse the login, with the cube on the desk
 
-**Both stores have to be wrong, and the cube's own PIN has to be readable before you break either.**
-`DevicePINRules.readOrder` presents `config.json` first and the Keychain behind it, so a wrong value in the file
-alone is refused and the Keychain's real one gets straight in.
+`58-wrong-pin` does this unattended on Linux and is the reference. It reads the PIN the cube is on out of the
+trace, writes a wrong one over the app's own PIN item with the app shut, launches, and puts the real one back by a
+trap on any way out.
 
-**Read the PIN the cube is actually on first.** It is six random digits chosen at pairing and written to the Keychain
-alone, so there is no compiled-in value to fall back on. `DeviceLogin` records the rotation:
+**Read the real PIN first.** It is the write just before the newest `PIN accepted` row,
+`password withResponse: <hex> (<pin>)`. The PIN is not a secret, and a stranded one is a battery pull.
 
-```sh
-sqlite3 ~/Library/Application\ Support/Facet/debug.sqlite \
-  "SELECT message FROM debug_log WHERE message LIKE 'The cube is now on %' ORDER BY debug_log_id DESC LIMIT 1;"
-```
+**The item is `au.com.tux.facet.cube`, account `pin`, and it is overwritten, never deleted.** On macOS
+`security add-generic-password -U` keeps the item's access list; an item `security` creates afresh trusts only
+`security`, and the app's next read raises a Keychain prompt nothing unattended can answer, which is why `58`
+declares no checks on macOS. **Do not touch `au.com.tux.facet.device` or `.google`**: they are the Swift app's
+items, kept as its fallback.
 
-Then put a wrong PIN in the file and delete the Keychain item:
+**The refusal is the notice `The TimeFlip was not found`**, and the row that tells it from a cube out of range is
+`Not the paired cube: <label> refused the PIN`. The vendor PIN `000000` is tried after the stored one, so a cube
+whose batteries have been out logs straight in on it and the arrangement is gone.
 
-```sh
-# ~/Library/Application Support/Facet/config.json -- the key is "PIN", the archive's own
-{"PIN": "123457"}
-security delete-generic-password -s au.com.tux.facet.device -a device-pin
-```
-
-Deleting is prompt-free: the Keychain dialog is for *reading* an item another program owns, and this reads nothing.
-
-Quit and start the app with the cube in range. The login is refused, `Offering manual mode: the cube was found and
-refused the PIN this app has` is written, and the offer dialog comes up ([Method 13](#method-13)) without the cube
-having gone anywhere. This is what `58-wrong-pin` needs; `56-manual-mode` still needs the radio off, its subject
-being a cube that answers nothing at all.
-
-**Put the real PIN in `config.json` afterwards**, and let the app heal the rest: the next launch finds the two stores
-disagreeing, presents the file's, and once the cube accepts it promotes it back into the Keychain and clears the
-file. Writing the Keychain back by hand with `security` would need `-A`, which leaves the cube's PIN readable by
-every program on the machine.
-
-**The cube must not be on `000000` when you do this.** `DeviceLoginRules.reconnectCandidates` appends the vendor
-default after the stored list, so a cube whose batteries have been out logs straight in on it, and
-`DevicePINRules.rotates` then gives it a fresh random PIN -- the run passes through a working login and the
-arrangement is gone.
-
-**Between 2026-09-02 and 2026-09-04 the Keychain step was not needed**, a developer build having read the file alone.
-The developer flag is gone and both stores are candidates again, which is what this method was before it and is
-again.
+**The PIN also has a fallback in `config.json`** beside the databases, used when the secret store refuses or will
+not answer (commit 7274bc8, 2026-10-01). `58` writes only the secret store.
 
 <a id="method-17"></a>
 ## Method 17: Measure a window, and see a layout fault `swift test` cannot
+
+**The mechanism stands (`window_width settings-window` in `lib.sh`); the fix prose below is AppKit and Swift-era.**
 
 **`ax-dump.py --frames` reports every element's position and size**, which is the only way this suite reads
 geometry. `window_width` in `lib.sh` is that, narrowed to the one number a check usually wants:
 
 ```sh
-python3 scripts/ax-dump.py --frames | grep -m1 "id=settings-window "
-# AXWindow  id=settings-window  title=Facet Settings  pos=x:1184 y:253  size=w:640 h:712
+python3 scripts/ax-dump.py --frames | grep -m1 "^AXWindow  title=Facet Settings"     # macOS
+python3 scripts/at-dump.py --frames | grep -m1 "^frame "                              # Linux
+# AXWindow  title=Facet Settings  pos=x:1184 y:253  size=w:640 h:712
 ```
 
 **Why it is worth a method: a pane that demands too much width is invisible hermetically.** `swift test` hosts a
@@ -518,32 +485,32 @@ it in the big label as well as in the list, then walks the tabs reading `window_
 ## Method 18: Read and drive the tray menu on Linux
 
 ```sh
-scripts/tray-menu.py                     # every line, with its id and whether it is sensitive
-scripts/tray-menu.py --press "Quit"      # choose one, by label
+scripts/tray-menu.py                        # every line, with its id and whether it is sensitive
+scripts/tray-menu.py --press "Quit Facet"   # choose one, by label
 ```
 
-**No mouse, no focus, no coordinates.** The status item is absent from the accessibility tree on both
-platforms, but where a Mac needs a real `CGEvent` (Method 3), Linux exposes the menu as a D-Bus object:
-`com.canonical.dbusmenu`'s `GetLayout` reads it and `Event` chooses an item. It works while the session
-is doing something else, which is the property that matters most for a suite.
+**No mouse, no focus, no coordinates.** The status item is absent from the accessibility tree on Linux, and its
+menu is a D-Bus object: `com.canonical.dbusmenu`'s `GetLayout` reads it and `Event` chooses an item. It works while
+the session is doing something else, which is the property that matters most for a suite. (The Mac needs a real
+mouse event only for the left click and the double click: [Method 3](#method-3).)
 
-**Address items by label, never by id.** No identifier crosses -- neither `gtk_widget_set_name` nor the
-accessible description -- so `StatusItemMenu.Item.identifier` reaches `AXIdentifier` on the Mac and
-reaches nothing here. What `GetLayout` answers is the label plus `enabled`, and the numeric ids are
-libdbusmenu's own, reassigned every time the menu is rebuilt.
+**Address items by label, never by id.** No identifier crosses on either platform: what `GetLayout` answers is the
+label plus `enabled`, the numeric ids are libdbusmenu's own and are reassigned every time the menu is rebuilt, and
+on the Mac tray-icon gives every item the same `AXIdentifier`, `fireMenuItemAction:`.
 
-**Insensitive is reported, not pressed.** A line with no action comes back `(insensitive)` and `--press`
-refuses it with exit 1, because pressing one in AppKit silently does nothing and that is a whole class of
-check that passes while testing nothing (see `pair_a_cube` in the root `CLAUDE.md`).
+**Insensitive is reported, not pressed.** A line with no action comes back `(insensitive)` and `--press` refuses
+it with exit 1, because pressing one silently does nothing and that is a whole class of check that passes while
+testing nothing.
 
 <a id="method-19"></a>
 ## Method 19: Find the app on the session bus without hanging
 
-`scripts/tray-menu.py` asks the **bus daemon** which connection belongs to the `FacetLinux` pid, rather
+`scripts/tray-menu.py` takes the tray item's connection from the StatusNotifierWatcher, which lists every
+registered item as `name/path`, and asks the **bus daemon** which of them belongs to the `facet-linux` pid, rather
 than asking each connection whether it has Facet's menu object:
 
 ```python
-daemon.GetConnectionUnixProcessID(name)   # against the pids from `pgrep -f FacetLinux`
+daemon.GetConnectionUnixProcessID(name)   # against the pids from `pgrep -x facet-linux`
 ```
 
 **Measured 2026-09-13.** The obvious version -- walk `list_names()` and call a method on each `:` name --
@@ -554,12 +521,20 @@ answers.
 <a id="method-20"></a>
 ## Method 20: Drive a GTK window on Linux, and screenshot it
 
+**Swift-era (GTK).** The technique stands (pyatspi, `doAction(0)`, window-id screenshots), but these specifics do
+not apply to the Slint app: it is `facet-linux`, not `FacetLinux`; Slint publishes `accessible-id` as `AccessibleId`
+and the label as the name, where GTK had the name as the identifier and the description as the value; a Slint text
+field cannot be written with `setTextContents`, so `at-set.py` types with XTEST and reads the field back; there is
+no tab list, each tab being a `page tab` pressed with its own action; and there is no `GtkDialoguePresenter`, a
+question being an in-window notice ([Method 12](#method-12)). The first two are
+[port-findings.md](../docs/port-findings.md) Linux facts 1 and 2.
+
 **Measured 2026-09-16 against the real Settings window**, and it is the Linux answer to Methods 1, 2, 10 and
 15 at once. No mouse, no coordinates, and it works while the window is behind something else.
 
 ```python
 import pyatspi
-app = next(a for a in pyatspi.Registry.getDesktop(0) if a and a.name == "FacetLinux")
+app = next(a for a in pyatspi.Registry.getDesktop(0) if a and a.name == "facet-linux")
 # a locator is one walk of the tree comparing `name`
 node.queryAction().doAction(0)                      # press a button, tick a check box, fold a section
 node.queryEditableText().setTextContents("Reading") # type into a field
@@ -601,8 +576,8 @@ Gdk.pixbuf_get_from_window(win, 0, 0, win.get_width(), win.get_height()).savev(p
 ```
 
 **There is no Xvfb and no ImageMagick on the Linux box** (measured the same day), so none of this can be run
-headless yet and every window check costs the owner's screen. That is the open question item 12 of
-`docs/linux-port.md` says is worth the most, and it costs one `apt install`.
+headless yet and every window check costs the owner's screen. That is the open question
+[`docs/system-linux.md`](../docs/system-linux.md) names as worth the most, and it costs one `apt install xvfb`.
 
 **Switch tabs through the notebook's Selection, not the tab's action.** A `page tab` has no action interface at
 all -- `queryAction()` raises `NotImplementedError` -- and the `page tab list` above it exposes `Selection`:
@@ -623,16 +598,18 @@ behind Google sync stops being readable without a prompt. Nothing reports this: 
 log line. The sweep simply never runs, and the app looks like it forgot how.
 
 ```sh
-codesign -dvvv .build/bundler/apps/Facet/Facet.app 2>&1 | grep -E "Signature|TeamIdentifier"
+codesign -dvvv target/debug/facet-mac 2>&1 | grep -E "Signature|TeamIdentifier"
 # Signature=adhoc / TeamIdentifier=not set   <- sync will be silent
 ```
 
-Measured 2026-08-16: a hand-run `mint run stackotter/swift-bundler@main bundle Facet` replaced a signed build,
-and `Tests/Scripted/10-google-calendar.sh` found the sweep gone with no explanation in `debug_log` at all --
+Measured 2026-08-16 (Swift): a hand-run `mint run stackotter/swift-bundler@main bundle Facet` replaced a signed
+build, and `Tests/Scripted/10-google-calendar.sh` found the sweep gone with no explanation in `debug_log` at all --
 not even the "waiting to sync, but ..." line, because the token read never returned.
 
-**Always build through `scripts/run.sh` or `Tests/Scripted/lib.sh`**, both of which take the identity from
-`scripts/codesign-identity.sh`. A bare `swift-bundler bundle` is the trap.
+**Always build through `scripts/run.sh` or `Tests/Scripted/lib.sh`** (`platform_sign_app`), both of which sign with
+the identity from `scripts/codesign-identity.sh`. **A bare `cargo build` is the trap**: it leaves an ad-hoc
+signature whose requirement is the binary's own hash, so every rebuild asks again. Signed with the Apple
+Development identity, the Keychain asks once per item and the answer holds across rebuilds (observed 2026-10-03).
 
 **And read that check's answer with care, because the obvious way of writing it is wrong.** See the next method:
 the suite spent six runs reporting a properly signed app as ad-hoc, and the app was never the thing at fault.
@@ -680,8 +657,8 @@ line and the pipeline's exit code is never read.
   swept for identifiers (`ManualMode`) and for the button title it changed (`Switch to Manual Mode`), both of which
   came back clean -- and `01-launch` waits on the literal `Manual mode:%`, which nothing in that sweep looked at. The
   run died on its second script, twenty checks in, having cost a full device session to reach a one-word mismatch.
-  `git show HEAD -- Sources/ | grep -E '^-.*record\(\.'` lists exactly the strings a commit removed; every one of
-  them is a pattern to hunt.
+  `git show HEAD -- crates/ | grep -E '^-.*\.record\(Tag::'` lists exactly the strings a commit removed; every one
+  of them is a pattern to hunt.
 
 - **A `sleep` sized against a constant in `Sources/` goes stale silently, and the wait after it then reports the
   wrong thing.** `BluetoothRadio.timeoutSeconds` went from ten seconds to fifteen on 2026-09-07, and the two waits
@@ -738,10 +715,9 @@ line and the pipeline's exit code is never read.
   for the process to disappear (10s), which covers the quit's own 5s device budget. From the archive's Method 3, where
   it cost a run.
 
-- **A popover is invisible to accessibility.** The icon picker and the colour list are not in the app's
-  `AXWindows`, not in its `AXChildren`, and not under the window that opened them, so `ax-dump.py` shows nothing
-  and `ax-press.py` cannot press a cell by name. Click them by position ([Method 9](#method-9)). The click that
-  *opens* one is an ordinary named press.
+- **The icon grid and the colour list are in the tree.** They are in-window overlays pressed by identifier:
+  `icon-cell-<file>` and `colour-option-<name>` (`04-categories`, `64-face-colours`). Click by position
+  ([Method 9](#method-9)) only for something with no identifier.
 
 - **A button behind a label is never pressed.** A click on an `NSTextField` label goes up the responder chain to
   the label's own *superview*, so a borderless button sitting behind it as a **sibling** gets nothing. The row or
@@ -812,10 +788,8 @@ line and the pipeline's exit code is never read.
   test is not the code being driven, and the single-instance lock means a genuinely new process would
   stand down anyway. `pgrep -x Facet` before every launch, and quit what is there first. This cost a
   wrong diagnosis: a new quit step looked broken when the running copy simply predated it.
-- **A menu item pressed while its menu is closed reports success and does nothing.**
-  `scripts/ax-press.py toggle-pause` exits 0 with `pressed toggle-pause` and the app is unchanged.
-  Open the menu first ([Method 3](#method-3)), or press the on-screen control instead
-  (`timing-play-pause`). Check the effect, never the exit code.
+- **A menu item is pressed by its label, with the menu closed.** `ax-press.py toggle-pause` finds nothing, the ids
+  not reaching AX ([Method 3](#method-3)). Check the effect, never the exit code.
 - **The app writes to whichever database `appdata.sqlite` points at.** Check `db_type` before trusting a
   session with real data: `sqlite3 "$DB" "SELECT setting_value FROM setting WHERE setting_name='db_type';"`,
   and the menu bar's own badge says which one it opened.

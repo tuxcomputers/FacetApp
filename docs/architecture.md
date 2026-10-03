@@ -21,20 +21,23 @@ Cargo.toml                  workspace root
 crates/
   facet-core/               no platform crate may appear in its dependencies
     src/
-    tests/
     resources/database/     the DDL, compiled in
   facet-ui/                 the Settings window, compiled once and drawn by all three
     ui/                     the .slint sources
+    src/                    each tab's behaviour, and the status icon's pixels
+  facet-adapters/           adapters built only on portable crates, shared by every composition root
   facet-mac/                composition root + adapters for macOS
   facet-linux/              composition root + adapters for Linux (MATE)
-  facet-windows/            composition root + adapters for Windows
+  facet-windows/            composition root for Windows, a stub
+vendor/ksni/                ksni 0.3.6 with the Ayatana label added, used by facet-linux
 Tests/Scripted/             bash, drives a running app against a real cube
 probe/                      throwaway programs that answered a question, kept because they can be re-run
 scripts/                    the accessibility drivers and the database tooling
 ```
 
-`facet-core` and `facet-ui` are libraries. The three platform crates are binaries, and each one is a
-**composition root**: the only place in the program that knows both a port and the thing that performs it.
+`facet-core`, `facet-ui` and `facet-adapters` are libraries. The three platform crates are binaries, and each
+one is a **composition root**: the only place in the program that knows both a port and the thing that performs
+it.
 
 **`facet-ui` is the second platform-blind crate, and it is blind for a different reason.** The core must not
 know what it is running on because a capability has to be swappable. The UI must not know because
@@ -47,8 +50,9 @@ window rather than building one.
 sat: that crate's `build.rs` compiled it, so a second composition root had no way to reach it. Moving it cost
 nothing but the move, and the rendered tabs are identical either side of it.
 
-**The two libraries do not know about each other.** `facet-core` says what the app is, `facet-ui` says what
-it looks like, and nothing in the workspace depends on both except a composition root.
+**The dependency runs one way.** `facet-core` says what the app is and knows nothing of the UI or the
+adapters; `facet-ui` says what it looks like and uses the core to fill each tab; `facet-adapters` performs the
+core's ports and knows nothing of the UI. Only a composition root depends on all three.
 
 ---
 
@@ -65,8 +69,9 @@ than for what performs it.** A store of secrets, not a Keychain. A radio, not Co
 not `NSStatusItem`. The name is load-bearing, because a trait called `KeychainStore` has already decided
 the answer and the second adapter arrives reading like a lie.
 
-**An adapter lives in a platform crate and `main.rs` injects it.** A core type that selects its own
-implementation, however small the `cfg`, is the core caring what platform it is on.
+**An adapter lives in a platform crate, or in `facet-adapters` where one implementation serves every
+platform, and `main.rs` injects it.** A core type that selects its own implementation, however small the `cfg`,
+is the core caring what platform it is on.
 
 **Modules of the same name behave identically on every platform.** A caller written against a port reads
 the same everywhere, and a difference between platforms is a difference between adapters and nowhere
@@ -110,6 +115,9 @@ under a different name.
    successor is the same idea. The list is widened one symbol at a time, because deciding a symbol
    belongs on it is a judgement rather than a pattern.
 
+**Neither half is asserted by a test yet.** `crates/facet-core/Cargo.toml` names only `getrandom`, `rusqlite`
+and `sha2`, and there is no `cargo deny` rule, manifest test or banned-spellings scan.
+
 **A green run means "nothing new has declared itself"**, not "the core is platform-blind". The judgement
 is still a person's.
 
@@ -118,28 +126,37 @@ is still a person's.
 ## The arms
 
 Eight were drawn. Two were taken off as not being platform capabilities at all, one was discovered late,
-and the rest are real. This is the state the Swift port left them in, which is the starting specification
-rather than a history.
+and the rest are real. That was the state the Swift port left them in. The table is where each stands in the
+Rust app, with the ports added since (the Google calls and the time zone). Ports are in `facet_core::port`;
+adapters are in `facet-adapters` where one serves every platform. Windows is a stub, so its column is empty.
 
 | Arm | Port | macOS | Linux (MATE) | Windows |
 |---|---|---|---|---|
-| Radio | scan, connect, discover, read, write, subscribe | CoreBluetooth | BlueZ over D-Bus | WinRT |
-| Menu bar | a label and a list of items, both as closures | `NSStatusItem` | StatusNotifierItem | `Shell_NotifyIcon` |
-| The clock | scheduled wake-ups | `RunLoop` | GLib main loop | |
-| Secrets | store and fetch one item | Keychain | Secret Service | Credential Manager |
-| Dialogues | ask a question, carry which button is the way out | AppKit alert | GTK dialogue | |
-| Starting and stopping | end the app | app delegate | a menu item | |
-| Opening a URL | hand the desktop a URL or a file | `NSWorkspace` | `xdg-open` | shell execute |
-| Single instance | refuse a second copy | `flock` | `flock` | |
+| Radio | `Radio` and `Link`: scan, connect, discover, read, write, subscribe | `BtleplugRadio` (CoreBluetooth) | the same adapter (BlueZ over D-Bus) | |
+| Menu bar | none in the core: `status_line` says what the line is and `facet_ui::status_icon` draws the icon, and each composition root builds its own tray | `tray-icon` (`NSStatusItem`) | `ksni` (StatusNotifierItem), patched in `vendor/ksni` | |
+| The clock | none: `slint::Timer` on the UI thread | | | |
+| Secrets | `SecretStore`: store, look up, clear | `KeyringSecretStore` (Keychain) | `KeyringSecretStore` (Secret Service) | |
+| Dialogues | `FileChooser` for folder and save panels; a question is an in-app `Notice` in `facet-ui`, drawn by Slint | `NativeFileChooser` (native panels) | `NativeFileChooser` (XDG portal) | |
+| Starting and stopping | none: `facet_adapters::termination::requests()` turns SIGTERM, SIGHUP and SIGINT into the quit sequence, and Quit is a menu item | the same | the same | |
+| Opening a URL | `Opener`: hand the desktop a URL or a file | `MacOpener` (`open`) | `LinuxOpener` (`xdg-open`) | |
+| Single instance | none: `facet_core::instance::claim` takes a lock with `std::fs::File::try_lock` | in the core | in the core | |
+| Google | `Http` and `LoopbackListener` | `UreqHttp` and `StdLoopbackListener` | the same | |
+| Time zone | `Zone` | `SystemZone` (`iana-time-zone`) | the same | |
 | ~~Storage~~ | **not an arm** | | | |
 | ~~Files and folders~~ | **not an arm** | | | |
+
+`FileSecretStore` is a second `SecretStore` adapter: it keeps the cube PIN in `config.json` when the secret
+store will not take it.
 
 **In Rust the whole radio column collapses into one crate.** `btleplug` is one async API over
 CoreBluetooth, BlueZ and WinRT, and it was measured against the cube on 2026-09-20 doing every step this
 app needs. That is the single largest saving of the language change and it is why the change was made.
-The detail is in [rust-port.md](rust-port.md).
+The adapter is `facet-adapters/src/radio.rs`, behind the `Radio` and `Link` ports. The detail is in
+[rust-port.md](rust-port.md).
 
-**`tray-icon` and `keyring` collapse two more**, untested. The menu bar arm stays an arm regardless,
+**`keyring` collapses the secrets arm** (`KeyringSecretStore`, measured on both machines on 2026-09-22).
+**`tray-icon` collapses the menu bar on macOS only**: its Linux backend is AppIndicator, which emits no click
+events, so `facet-linux` drives `ksni` directly. The menu bar arm stays an arm regardless,
 because what the three platforms *allow* differs: Windows can never put text beside the icon, and on
 Linux the host owns the right click. [rust-port.md](rust-port.md) has the table and the design rule that
 follows from it, which is that **nothing may live behind a left click that has no menu equivalent.**
@@ -166,7 +183,7 @@ reconnect path reads.
 
 ## What the Swift split proved, and what it cost
 
-**Measured, and the reason the model is being carried over rather than reconsidered.**
+**Measured, and the reason the model was carried over rather than reconsidered.**
 
 - **A second platform cost the core zero lines** (2026-09-11, re-checked 2026-09-16). Twelve core modules
   including the whole device pipeline were constructed in a second composition root and ran. There was no
@@ -177,7 +194,7 @@ reconnect path reads.
 - **The split itself cost 589 access-level edits** and could not be read off one build; the first build
   reported 4,801 error lines naming 94 types, and widening those exposed the next layer, for a dozen
   rounds. **This cost does not recur in Rust.** It was Swift's `internal`-by-default across module
-  boundaries, and `pub(crate)` against a workspace has the same shape but the split is being made once,
+  boundaries, and `pub(crate)` against a workspace has the same shape but the split was made once,
   up front, rather than retrofitted.
 - **Three things had to move out of a platform target into the core**, and each was the same shape: a
   decision written down inside a platform target that the second platform needed too. The BLE trace
@@ -190,6 +207,10 @@ port carries *which button is the way out* as a position, because AppKit relocat
 Cancel, which takes Return off the way out. GTK relocates nothing, so the Linux adapter honours the field
 in one line. A port whose shape was forced by one platform's difficulty cost the other nothing.
 
+**In Rust the asymmetry does not arise**: a notice is drawn by Slint over the Settings window, the same on
+every platform, and carries the way out as an explicit choice index (`Notice::ask_with_way_out` in
+`facet-ui`).
+
 ---
 
 ## Deep modules
@@ -201,7 +222,7 @@ has to know: the signature, but also the ordering constraints, the error modes a
 module is **deep** when a lot of behaviour sits behind a small interface, and **shallow** when its
 interface is nearly as complex as what is inside it.
 
-The rewrite is the moment to make the shallow ones deep, because the interfaces are being written from
+The rewrite was the moment to make the shallow ones deep, because the interfaces were written from
 scratch anyway. The review's nine candidates are in the reference tree at
 `~/harry.git/TimeFlipLinux/docs/architecture-review-2026-09.md`; four were done in Swift and the rest are
 open. Read it before

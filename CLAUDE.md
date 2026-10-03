@@ -13,10 +13,10 @@ is not already present as its first rule, add it.
 
 ## Where this project came from
 
-**Facet is being rewritten in Rust.** It existed as a macOS app in Swift, with a Linux port under way,
-and that repository is frozen at `~/harry.git/TimeFlipApp` on GitHub as `tuxcomputers/TimeFlipApp`. The
-decision, the requirements it was judged against and every measurement behind it are in
-[`docs/rust-port.md`](docs/rust-port.md).
+**Facet is a Rust rewrite of an app that began in Swift, and the rewrite is complete.** The Swift app was a
+macOS app with a Linux port under way, and that repository is frozen at `~/harry.git/TimeFlipApp` on GitHub
+as `tuxcomputers/TimeFlipApp`. The decision, the requirements it was judged against and every measurement
+behind it are in [`docs/rust-port.md`](docs/rust-port.md).
 
 **`~/harry.git/TimeFlipLinux` is the reference tree on the Mac, and it is where to read the Swift app.** It is a
 git worktree of that repository pinned to `feature/linuxPort`, which is the furthest state of the app and
@@ -42,16 +42,16 @@ outright rather than carry a transitional one.
 |---|---|---|
 | Called | TimeFlip | Facet |
 | Identifier | `au.com.tux.timeflip` | `au.com.tux.facet` |
-| Data | `~/Library/Application Support/TimeFlip` | `~/Library/Application Support/Facet` |
-| Keychain | `au.com.tux.timeflip.device` and `.google` | `au.com.tux.facet.*` |
-| Process | `TimeFlip` | `facet-mac` |
+| Data | `~/Library/Application Support/TimeFlip` | `~/Library/Application Support/Facet` on the Mac, `~/.local/share/Facet` on Linux |
+| Keychain | `au.com.tux.timeflip.device` and `.google` | `au.com.tux.facet.cube` and `au.com.tux.facet.google-refresh` |
+| Process | `TimeFlip` | `facet-mac` on the Mac, `facet-linux` on Linux |
 
 **Nothing is shared between them except the codesigning identity and the Google project**, and the Google
 half is why two strings in the Swift app still say Facet: the calendar's name and the text written into
 each event. Renaming those would orphan the calendar that account already has.
 
-**On the Mac, `~/harry.git/TimeFlipApp` sits on `renameToTimeFlip` and is the working app**, built and run day to day
-because Facet cannot track time yet. **Do not switch its branch: somebody is using it.** Other branches
+**On the Mac, `~/harry.git/TimeFlipApp` sits on `renameToTimeFlip` and is the working app**, built and run day to day.
+**Do not switch its branch: somebody is using it.** Other branches
 are still reachable there with `git show feature/rustPort:<path>`, which in practice is only wanted for
 the two probes, and those are already in `probe/` here.
 
@@ -74,7 +74,7 @@ inspection today. **Do not commit to it**: it is checked out on a real branch, s
 | What the hardware does | [`docs/timeflip2-firmware-observations.md`](docs/timeflip2-firmware-observations.md), with `docs/timeflip2-firmware-evidence.sqlite` holding the rows behind each claim |
 | What the ports model proved | [`docs/architecture.md`](docs/architecture.md) and [`docs/port-findings.md`](docs/port-findings.md) |
 | What the 2,063 Swift tests pin down | [`docs/behaviour-inventory.md`](docs/behaviour-inventory.md) |
-| What the scripted suite proved, and how it converts | [`docs/scripted-suite.md`](docs/scripted-suite.md) |
+| What the scripted suite proved, and how it was converted | [`docs/scripted-suite.md`](docs/scripted-suite.md) |
 | Test techniques | [`Tests/Methods.md`](Tests/Methods.md) |
 
 **Anything else found over there that turns out to matter gets written into `docs/` in the same change**,
@@ -211,7 +211,9 @@ sessions cost.**
    measured on the real cube where the spec is silent or wrong, with
    `docs/timeflip2-firmware-evidence.sqlite` holding the rows behind each claim. **Add to it only from an
    actual device run, citing the evidence, and never from reasoning about the protocol.**
-2. **This app's own radio code**, once it exists. It talks to this hardware and is checked against a real
+2. **This app's own radio code**: the `Radio` and `Link` ports in `crates/facet-core/src/port.rs`, the session
+   code over them in `crates/facet-core/src/device/`, and the `btleplug` adapter in
+   `crates/facet-adapters/src/radio.rs`. It talks to this hardware and is checked against a real
    cube by the scripted suite, so where it departs from a document it is because the document was wrong
    and the code had to work anyway. **Its comments say which measurement forced each departure.**
 3. **[`docs/TimeFlip2 BLE Protocol v4.3.md`](docs/TimeFlip2%20BLE%20Protocol%20v4.3.md)**, the vendor spec.
@@ -277,8 +279,8 @@ leaving a reader to assume it was forgotten.
 
 **The crate tests are hermetic**: no window, no radio. A feature can be entirely green there and broken
 the moment it runs. **[`Tests/Scripted/`](Tests/Scripted/) is what says it works**, driving the real app
-and reading the real database. [`docs/scripted-suite.md`](docs/scripted-suite.md) is the plan for it and
-[`Tests/Scripted/README.md`](Tests/Scripted/README.md) is how to run it.
+and reading the real database. [`docs/scripted-suite.md`](docs/scripted-suite.md) is the record of it and of
+how it was converted from Swift, and [`Tests/Scripted/README.md`](Tests/Scripted/README.md) is how to run it.
 
 **The evidence that this matters is on the record.** The Swift suite was green at 1,718 tests on the day
 the app was first put in front of a real cube on Linux, and that session found three real faults in an

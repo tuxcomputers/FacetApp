@@ -5,34 +5,40 @@
 **The suite that drives a running copy of the app, with a real cube, by accessibility.** It is the only
 thing that can say the app works on hardware; everything the crate tests prove is proven against doubles.
 
-**Ten checks are back, 2026-09-27: `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11`, `12` and `13`.** The first
-nine pass 293 of 293 on both machines; `13-device-tab`, the Device tab with no cube, passes 37 of 37 on the Mac
-and on Linux. **The device range, `50`, `51`, `53`, `54`, `63`, `65`, `67` and `68`, passed on both machines on 2026-09-28, with `52`, `66` and `99`. The time-tracking range, `55`, `57`, `61`, `62` and `64`, came with `feature/timeTracking` on 2026-09-29.** What each one had to drop because the Rust app does not have it yet is said in its
-own header. **`feature/swiftParity` brings back the rest on 2026-09-29: `01`, `02`, `10`, `56`, `58` and `60`,
-with the Swift `07-history-timer` as `69`**, numbered after `51` because it needs a paired cube. Every Swift
-script now has a Rust counterpart.
+**Every script is back, as of 2026-10-03: all 35 pass in full on both machines.** On that date the Linux run
+was 865 checks and the Mac run 833, and the stamps are the source of those numbers, each with a row per script:
+`Tests/Scripted/last-run-linux.md` and `last-run-mac.md`. `58-wrong-pin` is not run on macOS and declares no
+checks there, so the Mac stamp shows it as 0 of 0; it runs in full on Linux. Every Swift script has a Rust
+counterpart: the Swift `07-history-timer` is `69`, numbered after `51` because it needs a paired cube, and
+`14-time-zone`, `67` and `68` are new with the Rust app. What each script had to drop or change because the
+Rust app is built differently is said in its own header.
 
 **`11` needs somebody to sign in to Google on every full run.** It presses Sign in, the browser opens on that
 machine's screen, and it waits four minutes for the account to come back. Nobody signing in is a fail.
 
-**What else is in this repository is the harness.** `Tests/Scripted/` carries
-`run.sh`, `lib.sh`, `testlog.sh`, `seed-private.sh`, `stepper-timing.py` and the suite's own README, all
-carried over from `feature/linuxPort` where they had already been made to drive **two** platforms. The 32
-checks are not here, because a check for a feature the Rust app does not have yet cannot pass, and a tree
-full of red that nobody can act on teaches nothing. **They are listed below and each one is added back as
-its feature lands.**
+**A full run needs somebody there.** `00-setup` asks whether the run may use your TimeFlip, then (when the run
+has no Google account) for a Google sign-in, then for a y once the cube is on Break; `51` asks for the Break turn
+if the cube is elsewhere; `11` asks for a sign-in on every run; `55`, `62` and `65` ask for turns of the cube;
+`56`, `60` and `68` ask for Bluetooth off and on (`60` also asks for turns). Each waits and carries on by itself
+once it sees the change. Everything else runs unattended.
 
-**Read `Tests/Scripted/README.md` before writing one.** It is the suite's own manual and it came across
-intact.
+**What else is in this repository is the harness.** `Tests/Scripted/` carries `run.sh`, `lib.sh`, `platform.sh`,
+`testlog.sh`, `seed-private.sh` and the suite's own README, which drive **two** platforms, beside the 35 numbered
+scripts and each machine's stamp. CI refuses a pull request whose stamps do not show every script passing on both
+machines (`scripts/check-scripted-stamps.sh`).
+
+**Read `Tests/Scripted/README.md` before writing one.** It is the suite's own manual.
 
 ---
 
-## The 32 checks, and the order they came in
+## The 35 scripts
 
-Numbering is meaningful: `00` sets up, `01`–`13` need no cube, `50`–`66` need one, `99` shuts down. Keep
-the numbers as each check is re-added, so a gap is visibly a gap.
+Numbering is meaningful: `00` sets up, `01`–`14` need no cube, `50`–`69` need one, `99` shuts down. `07` is
+empty on purpose: the Swift `07-history-timer` needs a paired cube and is `69`. A new script takes the next free
+number in its own half and nothing is renumbered.
 
-**To read any of them in full:**
+**Each script is in `Tests/Scripted/`.** The Swift originals, for seeing what a conversion dropped, are in the
+reference tree (`~/harry.git/TimeFlipApp` on the Linux box):
 
 ```sh
 cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
@@ -40,56 +46,58 @@ cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 
 ### No cube required
 
-| | What it proves |
-|---|---|
-| `00-setup` | Puts the app, the database and the cube into the state every other script starts from |
-| `01-launch` | The app starts, opens the database it was told to, records what it is doing, and refuses to run twice |
-| `02-menu-bar` | The status item: what it says, what its menu holds, and that the two halves do different things |
-| `03-settings-window` | The six tabs, moving between them, closing the window, and the calendar the run fills |
-| `04-categories` | Creating a category, renaming it, retiring it, and bringing it back |
-| `05-faces-timing` | Picking a category starts the clock on it, and pausing stops it |
-| `06-time-entries` | A finished segment becoming tracked time, and a flick past a face not becoming anything |
-| `08-app-settings` | Every row on the App tab written to the table, and put back again |
-| `09-report` | Picking a range, what it totals, folding a category open, and the two sort columns |
-| `10-google-calendar` | The Google section, and recorded time reaching the calendar |
-| `11-google-reconnect` | Disconnecting an account and connecting it again, with the calendar surviving in between |
-| `12-daily-limit` | Reaching the hard limit stops the clock, and the app then refuses to start it again |
-| `13-device-tab` | The Device tab's two sections, and the folds that need no cube |
-| `14-time-zone` | A time entry, its segment and the trace are filed under this machine's own zone, with the machine's own local time beside it. New with the Rust app |
+| | What it proves | Needs |
+|---|---|---|
+| `00-setup` | Puts the app, the database and the cube into the state every other script starts from: debug logging on, the Google account written back, and, when the run may use the cube, the cube paired, put on Break and factory reset | Hands: whether the cube may be used, a Google sign-in if there is no account, a y once the cube is on Break |
+| `01-launch` | The app starts, records what it is doing, and a second copy stands down before opening either database | None |
+| `02-menu-bar` | The status item: its idle line reading Facet, what its menu holds (Settings, About, Quit, one Pause item), and Settings from the menu | None |
+| `03-settings-window` | The six tabs, moving between them, closing the window three ways (window manager, Close, Escape), and the calendar the run fills | The Google account `00` seeds |
+| `04-categories` | Creating a category, renaming it, retiring it, and bringing it back, and the notices a namesake raises | None |
+| `05-faces-timing` | Picking a category starts the clock on it, pausing stops it, and the tray follows the clock | None |
+| `06-time-entries` | A finished segment becoming tracked time (and reaching the calendar when an account is connected), and a flick past a face not becoming anything | None |
+| `08-app-settings` | Every row on the App tab written to the table, and put back again | None |
+| `09-report` | Picking a range, what it totals, folding a category open, and the two sort columns | None |
+| `10-google-calendar` | The Google section, and recorded time reaching the calendar | The Google account `00` seeds |
+| `11-google-reconnect` | Disconnecting an account and connecting it again, with the calendar surviving in between | Hands: a Google sign-in, every full run, waited for up to four minutes |
+| `12-daily-limit` | Reaching the hard limit stops the clock, and the app then refuses to start it again | None |
+| `13-device-tab` | The Device tab's two sections, and the folds that need no cube | None |
+| `14-time-zone` | A time entry, its segment and the trace are filed under this machine's own zone, with the machine's own local time beside it. New with the Rust app | None |
 
 ### Cube required
 
-| | What it proves |
-|---|---|
-| `50-device-scan` | Looking for a TimeFlip, and finding one |
-| `51-device-connect` | Reaching the cube, getting a PIN accepted, leaving the cube on a PIN of the app's own. **Asserts on the raw `commandResult: 02`**, so a firmware release that ever matches the document fails a check rather than silently admitting the wrong cube |
-| `52-device-reset` | Putting a cube back to how it left the factory, and proving it took |
-| `53-device-reconnect` | Getting back to the cube by itself, at launch, with nobody watching |
-| `54-device-battery` | Read once on connecting, then pushed, and drawn as one steady figure |
-| `55-device-face` | The resting face: asked for when the link comes up, followed on every turn after |
-| `56-manual-mode` | Manual mode with a device still paired: what a click may do before it is chosen, and what the app stops doing after |
-| `57-cube-pause` | A single click stops the cube and starts it again |
-| `58-wrong-pin` | A paired cube that refuses this app's PIN: the offer, Rescan, and taking timing by hand. Not run on macOS, where the Keychain prompts after the PIN item is rewritten |
-| `59-double-tap` | The cube's double tap, which this app turns off and never turns back on |
-| `60-device-backlog` | A cube that goes out of range while timing, is turned while nobody can hear it, and comes back |
-| `61-lock-without-pause` | Locking with `pause_on_lock` off: the lock still goes, only the pause is skipped |
-| `62-forced-pause` | The app stopping the cube itself: a face with nothing on it, and a category that has spent its day |
-| `63-led-settings` | Brightness and blink period, stepped, sent, and **only then** written down |
-| `64-face-colours` | `0x11`, twelve colours when a cube connects and one when a face changes |
-| `65-auto-pause` | The delay stepped, sent as `0x05`, read back with `0x10`, and only then written down |
-| `66-device-rename` | `0x15` to the hardware, the row written only after it |
-| `67-pause-on-lock` | The pause-on-lock row, kept in the table and sent nowhere. **New with the Rust app** |
-| `69-history-timer` | The history timer firing on the table's interval while the link is held, and a changed interval read at the next arming. **The Swift `07`**, whose timer ran only while something was timed |
-| `68-device-link-lost` | A held link dropping: noticed, recorded, the pairing kept, and a relaunch reaching the cube. **New with the Rust app** |
-| `99-quit` | The way out closes what was left open, and the cube is left as the factory made it |
+| | What it proves | Needs |
+|---|---|---|
+| `50-device-scan` | Looking for a TimeFlip, and finding one | Cube in reach, Bluetooth on, and the yes `00` recorded |
+| `51-device-connect` | Reaching the cube, getting a PIN accepted, leaving the cube on a PIN of the app's own. **Asserts on the raw `commandResult: 02`**, so a firmware release that ever matches the document fails a check rather than silently admitting the wrong cube | Cube; hands only if it is not on Break |
+| `52-device-reset` | Putting a cube back to how it left the factory, and proving it took | Cube |
+| `53-device-reconnect` | Getting back to the cube by itself, at launch, with nobody watching | Cube |
+| `54-device-battery` | The charge read once the cube has accepted the PIN, followed from then on and shown on the Device tab, and the battery warning row kept in the table and sent nowhere | Cube |
+| `55-device-face` | The resting face: asked for when the link comes up, followed on every turn after | Hands: turn the cube onto Meeting and back onto Break |
+| `56-manual-mode` | A paired launch that cannot find its cube: the notice (Rescan, Time by Hand, Quit), what a click may do before a choice, and what Time by Hand stops | Hands: Bluetooth off, then on |
+| `57-cube-pause` | The menu's Pause, Resume, Lock and Unlock on the cube, each read back, the pause going before the lock, a left click pausing, a double click locking, and the quit (menu and SIGTERM) leaving it paused and locked | Cube |
+| `58-wrong-pin` | A paired cube that refuses this app's PIN: the not-found notice, Rescan, and Time by Hand, then the real PIN put back. **Not run on macOS** (declares no checks there), where the Keychain prompts after the PIN item is rewritten | Cube, Linux only; no hands |
+| `59-double-tap` | The cube's double tap kept off: its registers read at every login, the window left at 0, and nothing sent to change them | Cube |
+| `60-device-backlog` | A cube that goes out of range while timing, is turned while nobody can hear it, and comes back | Hands: Bluetooth off, turn onto Meeting, Bluetooth on, turn back onto Break |
+| `61-lock-without-pause` | Locking with `pause_on_lock` off: the lock still goes, only the pause is skipped | Cube |
+| `62-forced-pause` | The app stopping the cube itself: a face with nothing on it, and a category that has spent its day | Hands: turn onto a face with no category, then back onto Break |
+| `63-led-settings` | Brightness and blink period, stepped, sent, and **only then** written down | Cube |
+| `64-face-colours` | `0x11`: twelve colours as a cube connects, and the faces a category wears relit when it is recoloured | Cube |
+| `65-auto-pause` | The delay stepped, sent as `0x05`, read back with `0x10`, and only then written down, and the cube stopping itself on it | Hands: turn onto Meeting and leave it a minute, then back onto Break |
+| `66-device-rename` | `0x15` to the hardware, the row written only after it, and the name surviving the next connection | Cube |
+| `67-pause-on-lock` | The pause-on-lock row, kept in the table and sent nowhere. **New with the Rust app** | Cube |
+| `68-device-link-lost` | A held link dropping: noticed, recorded, the pairing kept, and the app reaching the cube again by itself once Bluetooth is back, with no relaunch. **New with the Rust app** | Hands: Bluetooth off, then on |
+| `69-history-timer` | The history timer firing on the table's interval while the link is held, and a changed interval read at the next arming. **The Swift `07`**, whose timer ran only while something was timed | Cube |
+| `99-quit` | The way out closes what was left open, and the cube is factory reset so it is left on the vendor PIN | Cube |
 
-**Four of them (`63`, `65`, `66`, and `51`'s PIN half) are the read-back rule made visible**: the app asks
-the cube, waits for the cube to confirm, and only then writes the row. That ordering is the assertion, not
-the value.
+**Two of them (`65`, and `51`'s PIN half) wait for the cube's own answer**: `65` sends `0x05`, waits for the
+`0x10` read-back carrying the new delay, and only then writes the row; `51` asserts on the raw
+`commandResult: 02`. **`63` and `66` have no read-back** (the LED commands and `0x15` carry none): they assert
+that the row is written after the cube acknowledged the write and never before. That ordering is the assertion,
+not the value.
 
 ---
 
-## What converts, what does not
+## What was measured against Slint
 
 **Measured 2026-09-20 against the Slint probe**, using the suite's own mechanisms rather than a stand-in.
 This is the part of [rust-port.md](rust-port.md) that this suite depends on.
@@ -106,27 +114,26 @@ This is the part of [rust-port.md](rust-port.md) that this suite depends on.
 concluded to be false. [port-findings.md](port-findings.md) records why that conclusion was wrong and
 what it cost.
 
-### Five things to fix while converting
+### Five things to know about the drivers
 
-1. **A bare touch area is a silent pass.** `ax-press.py` prints `pressed` and exits 0 against one. **A
-   guard belongs in that script**, and the design rule is that anything a check must press is a real
-   button or carries an accessibility action of its own.
+1. **A bare touch area is a silent pass on macOS.** `ax-press.py` prints `pressed` and exits 0 against one, where
+   `at-press.py` refuses a control that exposes no accessible action. The guard is still to be added to
+   `ax-press.py`, and the design rule stands: anything a check must press is a real button or carries an
+   accessibility action of its own.
 2. **Slint refuses `accessible-id` unless `accessible-role` is set alongside it.** Every control a check
    must find needs both.
-3. **The status item loses its handle.** `MenuBarController` set an accessibility identifier on the status
-   item button and `scripts/status-item-click.py` found it that way. `tray-icon` exposes no equivalent.
-   **The Linux answer already works and transfers: address a tray item by its label.** This is the one
-   real line item against a suite whose front door is the status item.
-4. **`ax-set.py` and `ax-key.py` hardcode the app.** `ax-set.py` runs `pgrep -x Facet` and `ax-key.py`
-   refuses to run unless Facet is running, so neither takes `--app` the way `ax-press.py` does. Two
-   one-liners.
-5. **`lib.sh` and `run.sh` are the dual-platform versions.** They already know about both the AX and the
-   AT-SPI driver sets. Do not regress that while adapting them.
+3. **The status item's handle is set by the app.** `facet-mac` sets `status-item` on the status item's button, so
+   `ax-dump.py --menu-bar` and `status-item-click.py` find it. The menu's items all carry the same `AXIdentifier`
+   (`fireMenuItemAction:`), so on both platforms **a menu item is addressed by its label**.
+4. **Every macOS driver takes the app's name from `FACET_APP_NAME`**, which `platform.sh` exports (`facet-mac`);
+   most also take `--app`.
+5. **`lib.sh`, `run.sh` and `platform.sh` drive both the AX and the AT-SPI sets.** Keep it that way.
 
-### What was never tested
+### Not covered
 
-Sorting, a row leaving the list while it is being edited, the icon grid, the status item itself, and any
-of it on Linux or Windows.
+Windows (`facet-windows` is a stub and has no driver set), and what the drivers cannot reach: a bare touch area,
+and on Linux a disabled element, which AT-SPI does not report ([port-findings.md](port-findings.md), Linux
+fact 4).
 
 ---
 
@@ -139,14 +146,15 @@ of it on Linux or Windows.
 | `ax-press.py` | `at-press.py` | Perform the press action on a control found by identifier |
 | `ax-set.py` | `at-set.py` | Write a value |
 | `ax-key.py` | `at-key.py` | A real keystroke |
-| `ax-hold.py` | `at-hold.py` | Press and hold, for the stepper |
+| `ax-hold.py` | `at-hold.py` | Press and hold. **No script uses these now**: the Rust steppers are Slint SpinBoxes with no arrows to hold |
 | `ax-dump.py` | `at-dump.py`, `atspi_tree.py` | Dump the tree, which is how a locator is found in the first place |
-| `ax-alert.py` | `at-alert.py` | Drive a dialogue |
-| `status-item-click.py` | `tray-menu.py` | The menu bar. **Different mechanisms**: a real mouse event on macOS, D-Bus on Linux |
-| | `at-clipboard.py` | |
+| `ax-alert.py` | `at-alert.py` | Read a native alert's buttons and message. Only the fallback: the Rust app's questions are in-window notices (`notice-choice-<n>`) read from the ordinary dump |
+| `status-item-click.py` | `tray-menu.py` | The status item. **Different mechanisms**: on macOS a real mouse event for the left click and the double click only, the menu being read and pressed through the accessibility tree (`ax-dump.py --menu-bar`, `ax-press.py --title`); on Linux everything over D-Bus |
+| | `at-clipboard.py` | Puts text on the X clipboard for `04`'s paste check (macOS uses `pbcopy`) |
 
-**On Linux the tray is driven over D-Bus and works while the session is doing something else.** On macOS
-it costs a real mouse event and a frontmost app. That asymmetry is in the protocol, not in the scripts.
+**On Linux the tray is driven over D-Bus and works while the session is doing something else.** On macOS only
+the left click and the double click cost a real mouse event and a frontmost app; menu items take a press by label
+with the menu closed. That asymmetry is in the protocol, not in the scripts.
 
 ---
 

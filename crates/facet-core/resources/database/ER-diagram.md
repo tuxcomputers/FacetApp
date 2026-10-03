@@ -18,8 +18,12 @@ Foreign keys (referencing → referenced):
 - `time_entry.start_timezone_id` → `timezone`
 - `time_entry.end_timezone_id` → `timezone`
 - `debug_log.timezone_id` → `timezone`
+- `timezone_alias.timezone_id` → `timezone`
 
-`setting` is the one table with no foreign keys, so it is shown but unconnected.
+`setting` is the one table with no relationship to any other, so it is shown but unconnected. `timezone_lookup` is
+a view over `timezone` and `timezone_alias` and is not drawn. `debug_log` lives in `debug.sqlite`, which holds its
+own copy of `timezone`, `timezone_alias` and `timezone_lookup` (`500`, `502`, `503`); the diagram draws one
+`timezone` for both databases, which may never be joined.
 
 ```mermaid
 erDiagram
@@ -35,6 +39,7 @@ erDiagram
     timezone ||--o{ device_notification : "captured in"
     timezone ||--o{ time_entry : "captured in"
     timezone ||--o{ debug_log : "captured in"
+    timezone ||--o{ timezone_alias : "names"
 
     event_type {
         INTEGER event_type_id PK
@@ -84,6 +89,7 @@ erDiagram
         INTEGER project_id FK
         INTEGER daily_limit
         INTEGER cost
+        INTEGER active
     }
 
     face {
@@ -130,5 +136,11 @@ erDiagram
         TEXT    timezone_name
         TEXT    display_name
         INTEGER active
+    }
+
+    timezone_alias {
+        INTEGER timezone_alias_id PK
+        TEXT    timezone_alias_name
+        INTEGER timezone_id FK
     }
 ```

@@ -80,8 +80,11 @@ software they are bundled with, so Facet's own code stays under Apache 2.0.
 
 ## 4. Rust dependencies
 
-Everything else Facet links is permissively licensed, overwhelmingly
-"MIT OR Apache-2.0". For the licence of every crate in a given build:
+Everything else Facet links is overwhelmingly permissively licensed, mostly
+"MIT OR Apache-2.0". The one exception found is option-ext (MPL-2.0), pulled
+in by dirs. Facet uses it unmodified, and its source is on crates.io.
+vendor/ksni is a modified copy of ksni 0.3.6 under the Unlicense, and its
+UNLICENSE ships with it. For the licence of every crate in a given build:
 
     cargo metadata --format-version 1 \
       | python3 -c "import json,sys; [print(p['name'], p.get('license')) for p in json.load(sys.stdin)['packages']]"

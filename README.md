@@ -4,9 +4,13 @@
 that face is recorded against the category assigned to it. It lives in the menu bar, keeps everything in a
 local SQLite database, and can push recorded time to a Google Calendar it owns.
 
-**This repository is the Rust rewrite, and it is at the beginning.** The working application is the Swift
-one at [`tuxcomputers/TimeFlipApp`](https://github.com/tuxcomputers/TimeFlipApp), now frozen. What is here
-is the scaffolding and, more importantly, **everything that was measured before the rewrite started**.
+**This repository is the Rust rewrite, and the rewrite is complete.** Facet runs in the menu bar on macOS
+(`facet-mac`) and Linux (`facet-linux`), draws one Settings window on both (`facet-ui`) over a
+platform-blind core (`facet-core`), tracks time from the cube and syncs to Google Calendar. It has parity
+with the Swift app at [`tuxcomputers/TimeFlipApp`](https://github.com/tuxcomputers/TimeFlipApp), which is
+now frozen. The scripted suite passes in full on both machines (stamps in
+[`Tests/Scripted/`](Tests/Scripted/)). Windows is a stub (`facet-windows`) and comes much later. The docs
+also carry **everything that was measured before the rewrite started**.
 
 ---
 
@@ -27,10 +31,12 @@ app needs. Every other concern has many cross-platform answers; the radio has al
 | | |
 |---|---|
 | [`docs/`](docs/) | The vendor protocol, what the hardware actually does, the schema, the architecture, and what the Swift port measured |
-| [`crates/`](crates/) | `facet-core`, the shared `facet-ui`, and one composition root per platform |
+| [`crates/`](crates/) | `facet-core`, the shared `facet-ui`, the shared `facet-adapters`, and one composition root per platform: `facet-mac`, `facet-linux` and a `facet-windows` stub |
+| [`vendor/`](vendor/) | `ksni` 0.3.6 with the Ayatana label added, patched in for the Linux tray |
 | [`probe/`](probe/) | Three Rust programs that answered a question and can be re-run |
 | [`scripts/`](scripts/) | The accessibility drivers for both platforms, the BLE probe, and the database tooling |
 | [`Tests/Scripted/`](Tests/Scripted/) | The harness that drives a running app against a real cube |
+| [`.github/workflows/`](.github/workflows/) | CI on pushes to main and pull requests: build, test and format on macOS and Linux, and a check that both machines' scripted-suite stamps cover the branch |
 
 ### The documentation, in reading order
 
@@ -65,7 +71,7 @@ app needs. Every other concern has many cross-platform answers; the radio has al
 
 **Everything else.**
 
-- [`scripted-suite.md`](docs/scripted-suite.md): the 32 checks, and what converts
+- [`scripted-suite.md`](docs/scripted-suite.md): the 35 numbered checks, and how the Swift ones converted
 - [`google-oauth-setup.md`](docs/google-oauth-setup.md): the Cloud project, and what the app must do
 - [`about-tab.md`](docs/about-tab.md): the one piece of UI the licence requires, and the open
   questions on the update check
@@ -73,6 +79,8 @@ app needs. Every other concern has many cross-platform answers; the radio has al
   on it
 - [`system-linux.md`](docs/system-linux.md): the Linux box, and everything needed to build and
   drive Facet on it
+- [`settings-tabs/`](docs/settings-tabs/): the Settings window drawn on each machine from one command, so
+  the shared UI is compared rather than asserted
 - [`handover-mac.md`](docs/handover-mac.md) and [`handover-linux.md`](docs/handover-linux.md): what
   each machine is asking the other for. Each is written by one machine and acted on by the other, and
   both are meant to empty
@@ -83,11 +91,12 @@ app needs. Every other concern has many cross-platform answers; the radio has al
 
 | | | |
 |---|---|---|
-| Radio | `btleplug` 0.13.1 | **Measured** against the cube, macOS, 2026-09-20 |
-| UI | `slint` 1.18.0, one style on all platforms | **Measured**: a five-tab prototype, and an editable table driven by the suite's own scripts |
-| Database | `rusqlite` 0.32.1, `bundled` | **Compiles**, with SQLite built in. The schema carries over unchanged |
-| Menu bar | `tray-icon` 0.25.1, `ksni` 0.3.6 on Linux | Untested from Rust; the MATE click behaviour was measured 2026-09-18 |
-| Secrets | `keyring` 4.2.0 | Untested |
+| Radio | `btleplug` 0.13 (0.13.2 locked) | **Measured** against the cube on macOS 2026-09-20; `BtleplugRadio` in `facet-adapters` drives it on macOS and Linux, and the scripted device checks pass on both |
+| UI | `slint` 1.18.0, the `cupertino` style on all platforms | **Built**: six tabs in `facet-ui`, one drawing for every platform |
+| Database | `rusqlite` 0.32.1, `bundled` | **In use**, with SQLite built in; the schema carried over unchanged |
+| Menu bar | `tray-icon` 0.24.2 on macOS, `ksni` 0.3.6 on Linux (a patched copy in `vendor/ksni`) | **Built** on both; the MATE click behaviour was measured 2026-09-18 |
+| Secrets | `keyring` 4.2.0, with a `config.json` fallback for the cube PIN | **In use**; the Secret Service round trip was measured 2026-09-22 |
+| Everything else portable | `ureq` 3.4.2, `rfd` 0.17.2, `iana-time-zone` 0.1 | In `facet-adapters`, behind the `Http`, `FileChooser` and `Zone` ports |
 
 **One self-contained binary per platform.** The user installs no runtime and no toolkit. Build-time
 dependencies are unconstrained.
@@ -110,18 +119,26 @@ not found* even though the toolchain is fine. Measured 2026-09-20: cargo 1.98.1,
 . "$HOME/.cargo/env"        # or: export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-**A bare build builds the two crates that compile anywhere.** The three platform crates are each buildable
-on exactly one machine, so `default-members` is `facet-core` and `facet-ui`, and the native one is named
-explicitly:
+**A bare build builds the three crates that compile anywhere.** The platform crates are each buildable
+on exactly one machine, so `default-members` is `facet-core`, `facet-ui` and `facet-adapters`, and the
+native one is named explicitly:
 
 ```sh
-cargo build                 # facet-core and facet-ui
+cargo build                 # facet-core, facet-ui and facet-adapters
 cargo test                  # the hermetic suite
 cargo build -p facet-mac    # or facet-linux, or facet-windows, on that machine
 ```
 
 `facet-ui` is in the default set on purpose: it is the one Settings window all three platforms draw, so a
 broken `.slint` file breaks everywhere, and a bare build on any machine should be what catches it.
+
+**On Linux** the build also needs `libdbus-1-dev` (BlueZ through `btleplug`) and `libfontconfig1-dev`
+(Slint's font discovery).
+
+**To run the app, use `scripts/run.sh`.** On macOS it signs the binary with the Apple Development identity
+that `scripts/codesign-identity.sh` finds, so the Keychain asks once per item and the answer holds across
+rebuilds (observed 2026-10-03). A plain `cargo build` leaves an ad-hoc signature, and each rebuild then
+asks again.
 
 **The probes are excluded from the workspace on purpose** and resolve their own dependencies, so
 re-running one reproduces the transcript in its README rather than whatever the app is pinned to today.
@@ -133,7 +150,8 @@ All three build; the first two as of 2026-09-20 and the third 2026-09-22:
 (cd probe/keyring-secret-service && cargo run) # writes to the keyring, and cleans up after itself
 ```
 
-They are the evidence behind the largest decisions and are worth running first.
+They are the evidence behind the largest decisions and are worth reading before changing the radio, the
+Settings window or the secret store.
 
 ---
 
@@ -149,7 +167,7 @@ Claude, and the design decisions are mine (Harry Phillips), for better or worse.
 **`~/harry.git/TimeFlipLinux` is the reference tree**: a worktree of it pinned to `feature/linuxPort`,
 which is the furthest state of the app and the Linux port, checked out as ordinary files so it can be
 read and searched directly. Docs here cite paths inside it. The other branches are reachable from
-`~/harry.git/TimeFlipApp`, which sits on `main`.
+`~/harry.git/TimeFlipApp`, which sits on `renameToTimeFlip`.
 
 **Anything found over there that turns out to matter gets written into `docs/` in the same change.** A
 fact that only exists in a frozen tree is a fact somebody pays for twice.
@@ -158,8 +176,8 @@ fact that only exists in a frozen tree is a fact somebody pays for twice.
 
 [Apache License 2.0](LICENSE.md). Copyright 2026 Harry Phillips.
 
-**[`NOTICE.md`](NOTICE.md) is part of the licence, not decoration.** Two things shipped with Facet are not
-covered by Apache-2.0, and anyone redistributing it has to satisfy both.
+**[`NOTICE.md`](NOTICE.md) is part of the licence, not decoration.** Three things shipped with Facet are not
+covered by Apache-2.0, and anyone redistributing it has to satisfy all three.
 
 **Slint is tri-licensed** (`GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR
 LicenseRef-Slint-Software-3.0`) and Facet takes the royalty-free option, which requires attribution.
@@ -171,3 +189,7 @@ tab unreachable, puts a build out of compliance.
 specifically and **does not transfer with the code**. Apache-2.0 covers Facet's own code, not the
 icons. If you fork this and want to distribute it with them, get your own permission from TimeFlip
 first; without it, remove or replace them before sharing it on.
+
+**The Inter typeface** is under the SIL Open Font License 1.1. Its text
+([`OFL.txt`](crates/facet-ui/ui/fonts/OFL.txt)) has to accompany the font files wherever they are
+redistributed, and the fonts cannot be sold on their own. It places no conditions on Facet's own code.

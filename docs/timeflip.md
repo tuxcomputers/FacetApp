@@ -3,7 +3,7 @@
 [← Back to README](../README.md) · [Firmware observations →](timeflip2-firmware-observations.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Operation spec →](operation-spec.md)
 
 **How the cube exposes itself over BLE, and what this app does with each part of it.** This is the
-architectural source for writing the radio half or a test double against it.
+reference for changing the radio half or a test double against it.
 
 **Where it sits in the hierarchy set out in `CLAUDE.md`:**
 [`TimeFlip2 BLE Protocol v4.3.md`](TimeFlip2%20BLE%20Protocol%20v4.3.md) is authoritative,
@@ -12,9 +12,11 @@ architectural source for writing the radio half or a test double against it.
 actually does where the two disagree. **The hardware wins**, and where it does, this file says so and
 cites the finding.
 
-**Carried over from the Swift implementation and rewritten to name mechanisms rather than types.** Where
-a behaviour needs its implementation read, it is in the reference tree at `~/harry.git/TimeFlipLinux`; the
-corresponding tests are in [behaviour-inventory.md](behaviour-inventory.md).
+**Written from the Rust implementation and naming mechanisms rather than types.** Where a behaviour needs
+its implementation read, it is in `crates/facet-core/src/device/` (the rules, against the `Link` port),
+`crates/facet-ui/src/device.rs` (the Device tab and the held link) and `crates/facet-adapters/src/radio.rs`
+(btleplug); `crates/facet-core/src/device/fake.rs` is the test double. The tests that pin it down are in
+[behaviour-inventory.md](behaviour-inventory.md).
 
 ---
 
@@ -57,8 +59,10 @@ a backend that only reaches already-paired devices; see [rust-port.md](rust-port
 
 ## 3. The command channel (`...54`)
 
-Write, then read the same characteristic back. `[cmd, 0x02]` is success in the vendor format, and a lone
-`0x02` is tolerated because some firmware builds send it.
+Write the command to `...54`, then read the answer from the command result characteristic (`...53`).
+`[cmd, 0x02]` is success in the vendor format, and some firmware builds send a lone `0x02`, but this app does
+not judge either: the write's acknowledgement and the answer are traced, and only a read-back, where one
+exists, is believed.
 
 | Op | Meaning |
 |---|---|
@@ -74,12 +78,12 @@ Write, then read the same characteristic back. `[cmd, 0x02]` is success in the v
 | `0x13` | Set task parameters: face, mode (0 simple, 1 pomodoro), pomodoro seconds (u32) |
 | `0x14` | Read task parameters: face, mode, limit, elapsed seconds |
 | `0x15` | Set device name: length, then ASCII |
-| `0x16` / `0x17` | Read / write accelerometer double-tap registers |
+| `0x16` / `0x17` | Write / read accelerometer double-tap registers |
 | `0x30` | Set new password, 6 bytes |
 | `0xFE` / `0xFF` | Reset task info / factory reset |
 
-The app issues `0x05`, `0x06`, `0x08`, `0x10`, `0x11`, `0x14`, `0x15`, `0x17`, `0x30`, `0xFF`. The rest
-are understood and unexercised.
+The app issues `0x04`, `0x05`, `0x06`, `0x07`, `0x08`, `0x09`, `0x0A`, `0x10`, `0x11`, `0x15`, `0x16`, `0x17`,
+`0x30` and `0xFF`. The rest (`0x13`, `0x14`, `0xFE`) are understood and unexercised.
 
 ### Confirming a command took effect
 
@@ -87,15 +91,16 @@ are understood and unexercised.
 protocol never pushes an unsolicited notification when a command changes something. There is no single
 confirmation mechanism, so there are three cases.
 
-- **A dedicated read-back exists**: `0x10` (lock, pause, auto-pause), `0x14` (task parameters), `0x17`
-  (double-tap registers), `0x07` (the clock). **Write, read back, compare, and only then believe it.**
+- **A dedicated read-back exists**: `0x10` (lock, pause, auto-pause), `0x17` (double-tap registers), `0x07`
+  (the clock). **Write, read back, compare, and only then believe it.**
   This is a standing rule in `CLAUDE.md`, not a per-command choice.
 - **`0xFF` is confirmed by logging in**: the cube keeps the link up through the wipe and goes on taking its old PIN
   for several seconds (finding 6), so the app lets go and presents `000000` every 3 seconds, for up to 120, on
   connections of its own. Only an accepted vendor PIN counts as the reset having happened.
 - **No read-back is defined**: `0x09`, `0x0A` (LED), `0x11` (face colour), `0x15` (name). For the first
-  three the app is the system of record: what it last sent is the only account of what the cube holds,
-  and the cube asks for a value back through the system-state sync-required codes when it has lost one.
+  three the table is the account: LED brightness and blink are sent on every connect and again when the
+  cube asks for them through the system-state sync-required codes, and face colours are sent on every
+  connect (see Face colours).
   **`0x15` is the measured one and it is worse than absent from the spec**: the cube never updates the
   command result characteristic for it at all (finding 2), so even `[cmd, 0x02]` never arrives. A rename
   is confirmed by the *next connection* reporting the GAP name, which is a different mechanism and cannot
@@ -111,32 +116,30 @@ clock.
 
 ### Debouncing live-edited settings
 
-Auto-pause, LED brightness and blink interval are edited live, through press-and-hold steppers, which fire
-many intermediate values in quick succession. In the Rust app every change does two things:
+Auto-pause, LED brightness and blink interval are edited live, through steppers whose arrows can be clicked
+several times in quick succession, firing several intermediate values. Every change does two things:
 
 1. **Logs the edit and restarts a debounce of 0.5 s for that setting.** Only the value still current when it
-   runs out reaches the cube, once. 0.5 s is `EDIT_QUIET_FOR` in `facet-ui`'s `device.rs`, and the Swift app's
-   `WriteDebounce.interval` is the same figure; this section said 2 s before, which neither app uses. Each
+   runs out reaches the cube, once. 0.5 s is `EDIT_QUIET_FOR` in `facet-ui`'s `device.rs`. Each
    setting has its own debounce, so editing one does not cancel another's pending write.
 2. **Holds the field at the edited value** until the send has ended. The tab redraws after every outcome, and
    it does not read these three fields back from the table while an edit is unsent or out with the cube. When
    the cube has taken the value the table is written, and the field then shows the table again. A refusal
    puts the table's value back and says so in a notice.
 
-The Swift app wrote the table at the first step and the cube at the second; the Rust app writes the table only
-once the cube has the value, which is what the read-back rule asks of a device setting.
+The table is written only once the cube has the value, which is what the read-back rule asks of a device
+setting.
 
 **Writes that are not a settling value are not debounced, and must not be**: lock and pause (a click that
 must act at once, including the pause-and-lock-before-quit sequence), the clock, the password, the name,
 and the colours pushed on connect or in answer to the cube's own resync request. Delaying any of those
 either makes the UI feel broken or races a teardown.
 
-**Booleans are in that group**, a checkbox having no intermediate values to wait out. The double-tap
-*disable* control is the one that reaches the cube and it shares its path with the register values
-(disabling is faked by sending a window of 0), so that path takes an *immediately* flag: the checkbox
-passes true, the steppers pass false. **An immediate write cancels any pending register write first**,
-because that one carries parameters worked out before the flag flipped and letting it land afterwards
-would undo the toggle.
+**Booleans are in that group**, a checkbox having no intermediate values to wait out: Pause on lock is
+written to the table as it is pressed. There is no double-tap control. At every login the app reads the
+cube's registers with `0x17` and, unless the window is already 0, sends `0x16` with the cube's own
+threshold, limit and latency and a window of 0, then reads them back (`session::turn_double_tap_off`).
+Disabling is faked this way because no command disables the gesture (finding 11).
 
 ### Face colours
 
@@ -145,31 +148,27 @@ them is assigning a face a different category or recolouring a category. All twe
 the category's colour row to a device RGB. **A face with no category, or a category with no colour,
 resolves to black, which is the protocol's only way to say "off".**
 
-Everything is logged under the `sync-colour` tag: one line per face actually written, naming the face, its
-category, the colour, the hex **and** the 16-bit values `0x11` carries, because hex is 8 bits per channel
-and the command takes 16, so a scaling problem shows up rather than having to be inferred. Then a closing
-line with the count and the reason.
+Everything is logged under the `colour` tag: one line per face written, naming the face, its category, the
+colour (`off` for black) and the 16-bit values `0x11` carries, because hex is 8 bits per channel and the
+command takes 16, so a scaling problem shows up rather than having to be inferred. Each line says why it
+went and that there is no read-back to confirm it.
 
-**Because `0x11` has no read-back, the app's record of what it last sent decides what goes out:**
+**Because `0x11` has no read-back, the app keeps no record of what it last sent.** The faces and their
+colours are read from the table at the moment of sending (`Device::send_face_colours`), and which faces go
+depends on what asked:
 
-- **A category edit** writes only the faces whose colour changed.
-- **The first connect of a run, and any fresh pairing, write all twelve.** Until something has actually
-  been sent, the record is an assumption seeded from the database and is no evidence at all. A cube that
-  was factory reset, re-paired or coloured by another app would otherwise be left wrong indefinitely.
-- **Later reconnects in the same run** write only what drifted, which in practice means a face reassigned
-  while the cube was away. By then the record is real, and **the cube keeps its colours across a dropped
-  link**, which is why the record deliberately survives a disconnect.
-- **A cube request** (system state `0x02 0x02`) writes all twelve regardless, because the cube is saying
-  it no longer has them.
+- **A face given a category, or a category recoloured, retired or reassigned** sends only the faces it
+  touched.
+- **Every connection** sends all twelve, after the login's own questions, so a cube that was factory reset,
+  re-paired or coloured by another app is corrected on its next connect.
+- **A cube request** (system state `0x02 0x02`) and **a factory reset report** (`0x01 0x00`) send all
+  twelve.
 
-**Those requests are collapsed, not answered one for one.** The first schedules a resync one debounce
-delay later; anything arriving while one is pending, running, or inside a **30 s cooldown** is counted and
-dropped, with the count logged. The cube repeats itself freely, once per notification, again per
-post-reconcile re-read, and again on every reconnect while it is unhappy. **Answering each one measurably
-made things worse**: each answer is twelve flash writes that also light the LED, and with flat batteries
-the cube was rebooting, so 8 requests in one second became 96 colour writes that helped brown it out
-further. A new connection clears the cooldown, so a cube that really has lost its colours is still
-answered promptly.
+**Cube requests are answered once and then held off for 30 seconds.** The cube repeats itself freely, once
+per notification, again per post-reconcile re-read, and again on every reconnect while it is unhappy.
+**Answering each one measurably made things worse**: each answer is twelve flash writes that also light the
+LED, and with flat batteries the cube was rebooting, so 8 requests in one second became 96 colour writes
+that helped brown it out further. A request inside the 30 seconds is logged and dropped.
 
 ## 4. Notification semantics
 
@@ -220,8 +219,10 @@ the authority here.
 at least 5 s, so a quick flip, or a flip a few seconds after an unlock, leaves nothing to fetch. **An
 empty answer is an ordinary state and not evidence of a fault.**
 
-A fetch writes `0x02`, increments the event number per frame, caps at 2048 frames, and stops on the
-sentinel or on a parse failure.
+A fetch first reads the cube's latest event (`0x01 FFFFFFFF`). When that is the row on record, it writes
+that one event again for its duration and asks for nothing more. Otherwise it writes `0x02 <event#>` once and
+reads the frames the cube sends as notifications, stopping at the sentinel, at a frame it cannot read, after
+6 seconds with no frame, or at 2048 frames.
 
 ### What the live record does
 
@@ -237,8 +238,10 @@ sentinel or on a parse failure.
 **There is no cursor, stored or in memory.** The resume position is a query, re-read on every refresh:
 
 ```sql
-SELECT event_number, start_epoch FROM device_event ORDER BY start_epoch DESC, device_event_id DESC LIMIT 1;
+SELECT event_number, start_epoch FROM device_event WHERE device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC, event_number DESC, device_event_id DESC LIMIT 1;
 ```
+
+Rows on the app's own faces (13 and 14) are not the cube's and are left out.
 
 **Start *at* that number, not past it.** The newest row is normally the cube's still-open segment, and
 asking for it again is how its finished duration comes back.
@@ -295,16 +298,16 @@ limit is set on. See [Operation Spec § 6](operation-spec.md).
 
 ## 6. The connection sequence
 
-**What the app does, in order.** The archived predecessor's version of this sequence, and the rebuild's,
-are both in the reference tree at `~/harry.git/TimeFlipLinux`; the differences below are the ones that
-were paid for.
+**What the app does, in order.**
 
 1. **Wait for the radio.**
 2. **Scan unfiltered and match on service or name.** A service-filtered scan finds nothing (finding 12).
 3. **Connect, discover services, discover every characteristic in §2.**
-4. **Write the password.** **The vendor default and the stored PIN, and no guess beyond them**, **each on a
-   connection of its own**. There is no "fall back to the default if the user's fails", because there is no
-   user-supplied PIN. A second attempt on the same peripheral must let the first one go.
+4. **Write the password.** **Pairing presents the vendor PIN first and then each stored PIN; reconnecting
+   presents each stored PIN first and then the vendor PIN** (`login::pairing_candidates`,
+   `login::reconnect_candidates`), **each on a connection of its own** and no guess beyond them. A cube
+   accepted on the vendor PIN is moved onto a PIN of the app's own with `0x30` and proved by a login on it.
+   A second attempt on the same peripheral must let the first one go.
 
    **The stored PIN has two homes.** The secret store is where it belongs. `config.json` beside the databases,
    under the key `PIN`, holds it only when the store refused a write, so that a cube moved onto a PIN of the app's
@@ -312,17 +315,20 @@ were paid for.
    are read at the moment they are wanted. The file's PIN is presented first, being the newer, and a PIN both hold
    is presented once. The file is cleared as soon as it is redundant: when the store holds the same PIN, or once a
    login has proved the PIN and the store has taken it. A file that is not a JSON object is never overwritten, and
-   the file's other keys, such as the Google client credentials, are left alone. A secret store that will not
+   the file's other keys are left alone. A secret store that will not
    answer, with nothing in the file, still stops the login before any PIN is presented.
 5. **Subscribe by property, not by list.** Subscribe to every characteristic whose properties say it can
    notify, so nothing the cube can push is silently unsubscribed and therefore never sent. The archived
    driver named five characteristics and that is how a notification goes missing.
-6. **Initialise**: set the clock (`0x08`), read the status (`0x10`) and the system state, normalise
-   auto-pause to the preference, read the Device Information strings.
-7. **Steady state**: translate characteristic updates into events. **Nothing accumulates a picture of the
-   cube in memory.** Each question is asked when its answer is wanted, and what is durable is a row (see
-   [database-design.md](database-design.md), `device_info`). The archived driver kept a snapshot object
-   and the rebuild deliberately does not.
+6. **Initialise**: set the clock (`0x08`, read back with `0x07`), read the GAP name, the Device Information
+   strings and the battery, subscribe, read the face and the status (`0x10`). Then record the login, fetch
+   history, arm the history timer, send all twelve face colours, send LED brightness and blink, check the
+   double-tap registers, set auto-pause only when the cube's `0x10` answer differs from the table, and read
+   the system state.
+7. **Steady state**: translate characteristic updates into events. What is durable is a row (see
+   [database-design.md](database-design.md), `device_info`). The Device holds only what is true of the link
+   and is the cube's to say, and drops it when the link goes: the face last reported, the last `0x10` answer
+   (the lock is in no table), the charge, and the pause claim.
 8. **Every command with a read-back defined is read back before it is believed.**
 
 **The Device Information strings are read after a login and only after one**, they are exact length rather
@@ -332,15 +338,16 @@ than padded to 20 bytes, and all four answer quickly (finding 5).
 
 - **Write the password immediately after connecting.** Many commands silently fail otherwise, and face
   notifications return `0`.
-- **After a factory reset (system state `0x0100`), run the full sync**: set the clock, push the face
-  colours and LED settings, task parameters, auto-pause. **A factory reset does not clear the auto-pause
+- **After a factory reset (system state `0x0100`), run the full sync**: set the clock, push all twelve face
+  colours, LED brightness and blink, check the double-tap registers, set auto-pause when the cube's differs
+  from the table, and fetch history. Task parameters are not part of it: the app never sets them. **A factory reset does not clear the auto-pause
   delay** (finding 10) and **does not drop the connection** (finding 6): the command is acknowledged, the
   cube is genuinely erased, and the link carries on as though nothing happened. Anything waiting for the
   cube to react is waiting for something that never comes.
 - **Treat face `66` as a hard fault** and surface it.
 - **Enforce a frame cap on history dumps** (2048) and stop on the sentinel, to avoid a hang.
-- **The double-tap registers survive a factory reset** (finding 11a), and **no command disables double tap**
- , sensitivity is the only lever (finding 11).
+- **The double-tap registers survive a factory reset** (finding 11a), and **no command disables double tap**:
+  a window of 0 is the only lever, and the app sets it at every login (finding 11).
 
 ## 8. Where the spec is wrong
 
@@ -354,6 +361,6 @@ the evidence.
 | An empty history answer is all zeros | **Bytes 13–16 carry the cube's clock** (finding 14) |
 | Nothing about the advertisement | **It carries no service UUID** (finding 12) |
 
-Two more where the spec is merely silent and the app has to choose: `0x11` takes 16 bits per channel in
-practice where the examples imply 8, and `0x14`'s elapsed-seconds endianness varies, so take the smaller
-non-zero reading of the two.
+One more where the spec is merely silent and the app has to choose: `0x11` takes 16 bits per channel in
+practice where the examples imply 8. `0x14`'s elapsed-seconds endianness varies too, so the smaller non-zero
+reading of the two is the safe one, but the app never sends `0x14`.

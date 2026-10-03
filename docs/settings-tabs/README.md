@@ -1,9 +1,9 @@
 # The Settings window, drawn on each machine
 
 **One folder per machine, the same six tabs, from the same command**, so the shared window can be
-compared rather than asserted. This answers item 7 of
-[`handover-linux.md`](../handover-linux.md): `facet-ui` makes a single shared UI *structurally* true, and
-structurally true is not the same as true.
+compared rather than asserted. This answered item 7 of
+the Linux handover ([`handover-linux.md`](../handover-linux.md)), since done and deleted: `facet-ui` makes a
+single shared UI *structurally* true, and structurally true is not the same as true.
 
 ```sh
 scripts/switch-database.sh test -clean

@@ -8,10 +8,13 @@ That is five steps of setup before the app does anything, and every one of them 
 This is what replaced it: **one project, owned by you, whose client ID ships inside the app.**
 
 **Part 1 is about Google and is entirely language-independent.** It was done once, it is done now, and
-none of it has to be repeated for the Rust build. **Part 2 is what the app has to do**, restated as
-requirements rather than as the Swift implementation that satisfied them; the Swift version is in the
-reference tree at `~/harry.git/TimeFlipLinux/docs/google-oauth-setup.md`, alongside
-`GoogleOAuthRules` and `GoogleOAuthClient`.
+none of it has to be repeated for the Rust build. **Part 2 is what the app does and must keep doing**, as
+requirements with where each lives: `crates/facet-core/src/google.rs` (credentials, PKCE, the authorization
+URL, reading Google's replies), `google_flow.rs` (the redirect, the token exchange and refresh, the calendar
+calls), `google_events.rs` (the events), `crates/facet-ui/src/google.rs` (the App tab's Google section) and
+`crates/facet-adapters` (`loopback.rs`, `secrets.rs`, `http.rs`). The Swift version is in the reference tree
+at `~/harry.git/TimeFlipLinux/docs/google-oauth-setup.md`, alongside `GoogleOAuthRules` and
+`GoogleOAuthClient`.
 
 **Google's console moves.** The tabs have been reorganised at least twice and scope classifications
 change. Where this names a click path, trust the intent over the wording, and trust **the tier the console
@@ -32,7 +35,8 @@ shows against a scope** over anything written here. That instruction has already
 
 **Two scopes were deliberately dropped, and both are sensitive**: `calendar.events` and
 `calendar.readonly`. They exist for one feature, **choosing an existing calendar to sync into**. Dropping
-it, and always creating and owning a "Facet" calendar, is what keeps the whole app in the non-sensitive
+it, and always making and owning a calendar of its own (named Facet by default, and made, renamed and
+deleted from the App tab's Calendar row), is what keeps the whole app in the non-sensitive
 tier. It costs the user the ability to put Facet events on a calendar they already share.
 
 **That single trade is worth more than everything else here**, because it is the difference between
@@ -148,19 +152,22 @@ are Gmail and full Drive.
 
 ## Part 2: what the app must do
 
-**Requirements, with the reasoning that was paid for.** The Swift implementation satisfied all of them and
-had run against a real account.
+**Requirements, with the reasoning that was paid for.** The Rust implementation satisfies all of them and is
+run against a real account by `10-google-calendar.sh` and `11-google-reconnect.sh`.
 
 ### Ship the client ID and secret with the build
 
-**Three sources, in order: an environment variable, then `~/.config/facet/google-client.json`, then what
-the build put in.** The first two are files on one machine; **only the third travels with the binary**,
-which is why it exists. The override earns its place twice over: it allows testing against a second
-project without a release build, and it is a way out if the bundled project is ever suspended.
+**Three sources, in order: the file named by `FACET_GOOGLE_CLIENT_JSON`, then
+`~/.config/facet/google-client.json`, then what the build put in.** The first two are files on one machine;
+**only the third travels with the binary**, which is why it exists. The override earns its place twice
+over: it allows testing against a second project without a release build, and it is a way out if the
+bundled project is ever suspended.
 
-`scripts/generate-credentials.sh` is what fills the bundled copy, and it carries over. **It copies the
-console's download verbatim rather than rewriting it**, so the bundled copy and the two overrides are one
-format read by one parser rather than two that can drift.
+`scripts/generate-credentials.sh` is what fills the bundled copy,
+`crates/facet-core/resources/google-client.json` (gitignored), which `crates/facet-core/build.rs` compiles
+in when it exists (`google::bundled_credentials`). **It copies the console's download verbatim rather than
+rewriting it**, so the bundled copy and the two overrides are one format read by one parser rather than
+two that can drift.
 
 **No credentials is not an error.** A fork with no Google project must build and run everything else, with
 the App tab saying *"This copy of Facet was built without Google credentials, so it cannot sign in."* That
@@ -172,10 +179,14 @@ is also CI's case, so a plain build needs no secret.
   manifest checking whether it existed and defining a flag when it did. **The manifest was cached**, so the
   check did not re-run after the generator created the file: generator ran, build succeeded, flag absent,
   credentials quietly not in the binary, nothing anywhere saying so. In Rust the equivalent hazard is a
-  `build.rs` whose rerun conditions do not name the generated file. **Declare the dependency explicitly.**
+  `build.rs` whose rerun conditions do not name the generated file. **Declare the dependency explicitly**:
+  `crates/facet-core/build.rs` names the file in `rerun-if-changed` and sets the `facet_bundled_google` cfg
+  only when it exists, so a build neither keeps a client that has been taken away nor misses one that has
+  been added.
 - **Removing credentials did not prune the build.** Deleting the source file left the copy in the build
   directory, so a build went on carrying a client somebody had just taken away. **The generator clears
-  them itself** rather than trusting the build system to notice.
+  them itself** rather than trusting the build system to notice: `scripts/generate-credentials.sh` removes
+  the file when it has no source.
 
 ### No paste-in fields
 
@@ -185,11 +196,12 @@ There are no Client ID or Client Secret fields anywhere in the app. That was the
 
 The client is a Desktop one, so the redirect is `http://127.0.0.1:<port>`. No custom URI scheme anywhere.
 
-**Write the listener rather than depending on an OAuth framework.** The Swift app did, and the reasoning
-holds in Rust: the flow for an installed app is small enough that owning it is cheaper than depending on
-something built around a different platform's idioms, and it makes every decision in it ordinary code with
-tests on it. The listener is a **port**, because it is the one part that touches the platform's
-networking.
+**The app owns the listener rather than depending on an OAuth framework.** The flow for an installed app is
+small enough that owning it is cheaper than depending on something built around a different platform's
+idioms, and it makes every decision in it ordinary code with tests on it. The listener is a **port**,
+because it is the one part that touches the platform's networking: `port::LoopbackListener` is the port,
+`facet_adapters::loopback::StdLoopbackListener` binds `127.0.0.1` on a port the system gives, and
+`google::redirect` and `google_flow::wait_for_code` hold the decisions.
 
 **The port is whatever the system gives, never fixed.** A hardcoded port is a sign-in that fails whenever
 something else already holds it, and Google accepts any port on the loopback address precisely so it does
@@ -200,15 +212,17 @@ allows, with its S256 challenge. It is what actually protects the exchange, give
 in the binary. **A `state` value is echoed and checked too**, so a redirect that did not come from this
 process's own request can be told apart from one that did.
 
-`sha2` replaces the hand-written SHA-256 the Swift version needed because CryptoKit is not portable.
+`google::Pkce` takes its S256 challenge from the `sha2` crate and its 32 bytes from `getrandom`.
 
 ### One item in the secret store
 
 **The refresh token, and nothing else.** The client secret is configuration, not a stored credential, so
 there is no second store to keep. This goes through the secrets port: Keychain, Secret Service, Credential
-Manager.
+Manager (`facet_adapters::secrets::KeyringSecretStore`, service `au.com.tux.facet.google-refresh`, account
+`refresh-token`).
 
-**On macOS, codesigning is what makes it survive a rebuild**, and this cost a real debugging session. See
+**On macOS, codesigning is what lets the Keychain's answer survive a rebuild.** A signed build asks once and
+keeps the answer; an unsigned one asks again after each rebuild, and that cost a real debugging session. See
 the last section.
 
 ### Fail honestly when the project is the problem
@@ -224,26 +238,31 @@ sign in again. It matters less than it did, the list having been stable since 20
 
 ---
 
-## Why macOS asks for Keychain access after every rebuild
+## Why macOS keeps asking for Keychain access on an unsigned build
 
-**Not specific to any language, and it will happen again the first time a Rust build writes a token.**
+**Not specific to any language.** A signed build asks once for each Keychain item the app uses, the Google
+refresh token and the cube's PIN, and the answer then holds across rebuilds. `scripts/codesign-identity.sh`
+finds the Apple Development identity, and `scripts/run.sh` signs each build with it, as
+`Tests/Scripted/platform.sh` does for the scripted suite. A plain `cargo build` binary is not signed that
+way, and asks again.
 
 The Keychain grants access to *an application*, identified by its code signature. **For an ad-hoc signed
-build that identity is the cdhash of the binary**, so every rebuild is a different application as far as
-the Keychain is concerned. Clicking **Always Allow** works exactly as advertised; it records permission for
-a binary that no longer exists after the next build.
+build, which is what a plain cargo build gives, that identity is the cdhash of the binary**, so every
+rebuild is a different application as far as the Keychain is concerned. Clicking **Always Allow** works
+exactly as advertised; it records permission for a binary that no longer exists after the next build.
 
 A real certificate changes what the permission is recorded against. The designated requirement becomes
 an identifier and an anchor with **no hash in it**, so it is the same for every build and the answer
-holds.
+holds. **The first signed launch asks once** for each item, because the identity has changed from the
+binary's cdhash to the certificate; after that it does not ask again.
 
 **The setup, once:**
 
 1. Xcode → Settings → Accounts → add an Apple ID (a free account is enough) → **Manage Certificates…** →
    **+** → **Apple Development**.
 2. Check it is usable: `security find-identity -v -p codesigning` must list it.
-3. Sign the run with that identity. Answer **Always Allow** to the one prompt that follows, because the
-   identity has changed one last time.
+3. Sign the run with that identity (`scripts/run.sh` does). Answer **Always Allow** to the prompt that
+   follows for each item, because the identity has changed one last time.
 
 **If step 2 says `0 valid identities found` while Xcode clearly shows the certificate**, the chain cannot
 be built and the certificate is therefore not a usable identity. Measured 2026-08-15: the only WWDR

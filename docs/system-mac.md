@@ -95,12 +95,13 @@ rendering quality.
 ### The commands
 
 ```sh
-cargo build                 # facet-core and facet-ui, by default-members
+cargo build                 # facet-core, facet-ui and facet-adapters, by default-members
 cargo test                  # the hermetic suite
 cargo build -p facet-mac    # the native binary
+cargo test -p facet-mac     # the native crate's tests, as CI runs them
 ```
 
-**A bare build is the two crates that compile anywhere**, because the three platform crates are each
+**A bare build is the three crates that compile anywhere**, because the three platform crates are each
 buildable on exactly one machine and this one cannot compile the BlueZ or WinRT adapters.
 
 **The probes are excluded from the workspace** and resolve their own dependencies:
@@ -142,6 +143,18 @@ the other one. See
 **`security show-keychain-info` is not a safe way to check the lock state**, which cost one invalid
 measurement here: against a locked keychain it raises a password dialog of its own, and answering that
 unlocks the keychain. Watch for the `SecurityAgent` process instead.
+
+**An item rewritten by the `security` tool prompts the app's next read.** Measured 2026-10-01, converting
+`58-wrong-pin`: `security add-generic-password -U` over the app's PIN item, and the app's next read of it raised a
+Keychain prompt. The app gives a secret store read up after 30 seconds (`timed::look_up`, `STORE_TIMEOUT` in
+`crates/facet-ui/src/timed.rs`) and logs `The stored PIN could not be read`. **An Always Allow clicked after the
+asking process has gone applies to nothing**, the prompt belonging to the read that raised it. So `58-wrong-pin` is
+not run on macOS.
+
+**`scripts/run.sh` signs each build with the Apple Development identity** from `scripts/codesign-identity.sh`, and
+the Keychain then asks once per item, the answer holding across rebuilds (observed 2026-10-03). A plain
+`cargo build` leaves an ad-hoc signature, which is a different application to the Keychain each time, so it asks
+again after each one. [google-oauth-setup.md](google-oauth-setup.md) has the setup.
 
 ---
 
@@ -186,7 +199,9 @@ Nothing here is written for it and nothing needs to be. Agent sessions are pinne
 
 **The same zone as the Linux box**, so the hazard of two machines in different zones writing local times
 into one shared schema is not live today. It is not fixed either: nothing pins a zone, so moving either
-machine would make it real without anything failing.
+machine would make it real without anything failing. Every row now carries the zone it was written in, named from
+the operating system at the moment of the write (2026-10-01), so a mixed set of zones would be recorded rather than
+silent.
 
 **A double-clicked app gets no `LANG` at all.** It is started by `launchd`, and `launchctl getenv`
 answers empty for `LANG`, `LC_ALL`, `LC_CTYPE` and `LC_TIME`. A terminal launch does carry the shell's
@@ -202,9 +217,10 @@ one date error:
   why the schema seeds `timezone` and reads it through `timezone_lookup` rather than filling it
   get-or-create, and why the alias tables exist.
 
-**That second point was measured against Swift's Foundation and must be re-measured against whatever
-date library Rust uses.** The behaviour is the library's, not the operating system's. The schema
-decision stands on its own regardless, being the conservative choice either way.
+**That second point was measured against Swift's Foundation.** The behaviour is the library's, not the
+operating system's. The Rust app reads the zone through the `Zone` port (`SystemZone`, on the `iana-time-zone`
+crate) and files it through `timezone_lookup`; what that crate answers for a legacy name has not been measured.
+The schema decision stands on its own regardless, being the conservative choice either way.
 
 ---
 
@@ -232,30 +248,31 @@ case-wise with one already in the tree.**
 | Git identity | Harry Phillips `<harry@tux.com.au>` |
 | App data directory | `~/Library/Application Support/Facet` |
 | Google credentials | `~/.config/facet/google-client.json`, outside every repository |
+| Cube PIN | Keychain item with service `au.com.tux.facet.cube`, account `pin`; `config.json` in the data directory, key `PIN`, is its fallback |
+| Google refresh token | Keychain item with service `au.com.tux.facet.google-refresh`, account `refresh-token` |
 | Swift reference tree | `~/harry.git/TimeFlipLinux`, a git worktree pinned to `feature/linuxPort`. **Read, do not run** |
-| The working Swift app | `~/harry.git/TimeFlipApp`, on `main`. **Built and run as the day-to-day app** |
+| The working Swift app | `~/harry.git/TimeFlipApp`, on `renameToTimeFlip`. **Built and run as the day-to-day app** |
 
 **The remote is HTTPS deliberately.** `gh auth switch` does not change which SSH key is offered, so an
 SSH remote authenticates as the wrong GitHub account for this repo.
 
 ### Three folders, three jobs
 
-The Rust app cannot track time yet, so the Swift one stays in service while it is built. That wants the
-two checkouts kept apart, because each is useless for the other's purpose.
+The three checkouts are kept apart, because each is useless for the others' purpose.
 
 | Folder | Branch | What it is for |
 |---|---|---|
-| `FacetApp` | `feature/rustPort` | The Rust rewrite. Where the work happens |
+| `FacetApp` | `main`, with a branch per piece of work | Facet, the Rust app. Where the work happens |
 | `TimeFlipApp` | `renameToTimeFlip` | **The working app, called TimeFlip.** `scripts/run.sh` there, and it is the copy actually used to record time |
 | `TimeFlipLinux` | `feature/linuxPort` | **The reference.** Read it, search it, do not run it and do not commit in it |
 
-**`main` is the right branch for the working copy** because it is the last released state, rather than
-`feature/linuxPort`, which is mid-port and carries a half-built second platform. Measured 2026-09-21:
-`swift build` on `main` completes with one warning and no errors.
+**The working copy was first put on `main`**, the last released state, rather than `feature/linuxPort`, which was
+mid-port and carried a half-built second platform. Measured 2026-09-21: `swift build` on `main` completes with
+one warning and no errors. It is on `renameToTimeFlip` now, the branch the table above names.
 
 **The reference is a worktree, not a clone**, so it costs no second copy of the history and cannot drift
 from its branch. `TimeFlipApp` had to come off `feature/linuxPort` to give it up, git allowing one
-worktree per branch, and `main` is where a working copy wanted to be anyway. Undo the arrangement with
+worktree per branch, and `main` was where a working copy wanted to be at the time. Undo the arrangement with
 `git worktree remove ../TimeFlipLinux` from `TimeFlipApp`.
 
 **Nothing should be committed in the reference tree.** It is checked out on a real branch, so a commit
@@ -270,8 +287,8 @@ recorded time.
 
 **No environment variable names the data directory, and none is standard here.** `XDG_DATA_HOME`,
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` are all unset; macOS has no equivalent. The
-answer comes from the platform's own application-support lookup, which resolves to
-`~/.local/share/Facet` on Linux from the same call.
+answer is built from `$HOME` in each composition root (`data_directory()` in `facet-mac` and `facet-linux`), so
+the scripts, which resolve it the same way through `Tests/Scripted/platform.sh`, agree with the app.
 
 ---
 
@@ -310,6 +327,10 @@ things follow, all of them behaviour the app needs anyway:
 - **The receiving machine pays for a resync.** A reset restarts the event counter and drops the clock,
   the face colours, the LED and blink settings and the task parameters. All of those are asked for on
   connect regardless, so a handover exercises existing mechanisms rather than needing a new one.
+
+**A cube that is connected to this Mac does not advertise.** Observed 2026-10-01: with the cube connected to
+this Mac, the tower cannot hear it, so it cannot pair it and `00-setup` fails at pairing there. Quit the app here
+first.
 
 **Unknown**: whether this Mac's per-host identifier for the cube survives a reset. If it does not,
 `device_uuid` is stale after every handover on this side too.

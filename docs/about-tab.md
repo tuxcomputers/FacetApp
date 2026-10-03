@@ -30,12 +30,14 @@ the download page at `facet.tux.com.au` satisfies the attribution on its own, wh
 costs nothing on a site that is already owned. Doing both means compliance never depends on how anyone
 reads clause 2(a). **Not done yet.**
 
-The rest of the tab is ordinary: version, licence, a link to the source, acknowledgements. The
-acknowledgements are not decoration either. The icon permission is per-project and does not transfer,
-and [`NOTICE.md`](../NOTICE.md) records that.
+The rest of the tab is ordinary: the app's name and version, a line saying what it is, the Slint
+attribution, the licence, the icon permission note and the repository address as text. The icon
+permission is per-project and does not transfer, and [`NOTICE.md`](../NOTICE.md) records that; the fork
+acknowledgement and the Inter licence are in `NOTICE.md` only.
 
 **A scripted check should assert the widget is present.** A licence condition nothing verifies is a
-licence condition that quietly lapses across a refactor.
+licence condition that quietly lapses across a refactor. Today `02-menu-bar.sh` asserts the menu item and
+`03-settings-window.sh` the tab; nothing yet asserts the widget.
 
 ---
 
