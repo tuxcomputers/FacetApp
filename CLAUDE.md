@@ -50,13 +50,13 @@ outright rather than carry a transitional one.
 half is why two strings in the Swift app still say Facet: the calendar's name and the text written into
 each event. Renaming those would orphan the calendar that account already has.
 
-**On the Mac, `~/harry.git/TimeFlipApp` sits on `renameToTimeFlip` and is the working app**, built and run day to day.
-**Do not switch its branch: somebody is using it.** Other branches
+**On the Mac, `~/harry.git/TimeFlipApp` sits on `renameToTimeFlip` and was the working app until 2026-10-03**,
+when Facet became the app used day to day. **Do not switch its branch.** Other branches
 are still reachable there with `git show feature/rustPort:<path>`, which in practice is only wanted for
 the two probes, and those are already in `probe/` here.
 
-**Both want the menu bar.** TimeFlip owns the real recorded time, so only one runs at a time and
-`facet-mac` must not be left running after a verification.
+**Both want the menu bar**, so only one runs at a time. Facet holds the real recorded time from 2026-10-03,
+so TimeFlip is not left running.
 
 **The Swift app's original Keychain items still exist** at `au.com.tux.facet.device` and `.google`. They
 were copied rather than moved during the rename and are its fallback until the migration is confirmed

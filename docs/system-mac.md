@@ -251,7 +251,7 @@ case-wise with one already in the tree.**
 | Cube PIN | Keychain item with service `au.com.tux.facet.cube`, account `pin`; `config.json` in the data directory, key `PIN`, is its fallback |
 | Google refresh token | Keychain item with service `au.com.tux.facet.google-refresh`, account `refresh-token` |
 | Swift reference tree | `~/harry.git/TimeFlipLinux`, a git worktree pinned to `feature/linuxPort`. **Read, do not run** |
-| The working Swift app | `~/harry.git/TimeFlipApp`, on `renameToTimeFlip`. **Built and run as the day-to-day app** |
+| The Swift app, TimeFlip | `~/harry.git/TimeFlipApp`, on `renameToTimeFlip`. **The day-to-day app until 2026-10-03, when Facet took over** |
 
 **The remote is HTTPS deliberately.** `gh auth switch` does not change which SSH key is offered, so an
 SSH remote authenticates as the wrong GitHub account for this repo.
@@ -263,7 +263,7 @@ The three checkouts are kept apart, because each is useless for the others' purp
 | Folder | Branch | What it is for |
 |---|---|---|
 | `FacetApp` | `main`, with a branch per piece of work | Facet, the Rust app. Where the work happens |
-| `TimeFlipApp` | `renameToTimeFlip` | **The working app, called TimeFlip.** `scripts/run.sh` there, and it is the copy actually used to record time |
+| `TimeFlipApp` | `renameToTimeFlip` | **The Swift app, called TimeFlip.** It recorded the time until 2026-10-03; `scripts/run.sh` there builds and runs it |
 | `TimeFlipLinux` | `feature/linuxPort` | **The reference.** Read it, search it, do not run it and do not commit in it |
 
 **The working copy was first put on `main`**, the last released state, rather than `feature/linuxPort`, which was
@@ -282,8 +282,8 @@ there lands on `feature/linuxPort` in a repository that is meant to be frozen.
 data in `~/Library/Application Support/TimeFlip`; Facet is the Rust one and owns the Facet name, that
 identifier and that directory. Nothing is shared but the codesigning identity and the Google project.
 
-**Both still want the menu bar**, so only one runs at a time, and TimeFlip is the one holding real
-recorded time.
+**Both still want the menu bar**, so only one runs at a time, and since 2026-10-03 Facet is the one holding
+real recorded time.
 
 **No environment variable names the data directory, and none is standard here.** `XDG_DATA_HOME`,
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` are all unset; macOS has no equivalent. The

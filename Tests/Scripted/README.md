@@ -365,8 +365,9 @@ it requires all of:
 - the tree was **clean** when it ran, since a run against uncommitted changes is not evidence about the
   commit it names;
 - the commit it names is **in this branch's history**, and nothing under `crates/` (the DDL included),
-  `Tests/Scripted/`, `Cargo.toml` or `Cargo.lock` has changed since. The stamps and the other Markdown in
-  `Tests/Scripted/` are left out of that, so committing one machine's stamp does not make the other's stale.
+  `scripts/`, `Tests/Scripted/`, `Cargo.toml` or `Cargo.lock`
+  has changed since. Markdown is left out of that wherever it is, the stamps included, so committing one machine's
+  stamp does not make the other's stale and a change to the documentation does not make either one stale.
 
 That last one is why the stamp carries a commit rather than a date. The old checklists recorded a date and
 a branch, so a run from before the last five commits looked exactly like one from after them. Editing a

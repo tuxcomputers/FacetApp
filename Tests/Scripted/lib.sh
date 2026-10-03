@@ -1367,9 +1367,6 @@ press_title() {
 # rather than on a button (Tests/Methods.md Method 10). The field being typed into holds focus, so there
 # is nowhere else for the key to land.
 #
-# **Escape is never posted, here or anywhere.** It reaches whatever has focus, and what has focus is
-# often the terminal session driving the app.
-#
 # **The app is brought to the front first.** A posted key event goes to whoever is frontmost, not to
 # whoever the script last addressed -- every other helper here works through accessibility, which does not
 # care about that, so this is the one place where being in front matters at all. Without it a Return can

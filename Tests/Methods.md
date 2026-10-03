@@ -6,7 +6,8 @@ Reusable techniques for checking this app against a running copy of itself. A sc
 **Numbers are permanent.** Once a script or a driver cites one, renumbering silently repoints that citation at
 another method, which is the same class of fault as addressing a tab by index -- the check goes on
 passing while testing something else. A new method takes the next unused number and goes at the end,
-however tidy it would be to slot it in beside a related one.
+however tidy it would be to slot it in beside a related one. A method that is removed leaves its number unused:
+there is no Method 16.
 
 Everything here has been done, not guessed. When you discover something new, add the fact and the
 command, not the story of finding it. Keep entries short: a rule buried in prose is a rule nobody
@@ -229,8 +230,7 @@ for down in (True, False):
 ```
 
 One of the few places a synthetic keystroke is right: the field being typed into holds focus, so there is nowhere
-else for the key to land. **Escape is still never posted** -- it reaches whatever has focus and the session driving
-the app is often what that is.
+else for the key to land.
 
 Confirmed on the rename: `ax-press.py category-name-11`, `ax-set.py category-name-11-field "Admin work"`, Return,
 then the notice's own buttons are ordinary named elements (`notice-choice-<n>`, [Method 12](#method-12)).
@@ -261,7 +261,7 @@ field in the app, through a full hermetic suite and 32 scripted checks. `MainMen
 `04-categories.sh` is where it is checked, on the create control's field -- which makes itself first responder
 when it opens, so nothing has to click into it first.
 
-Same caveats as Method 10: the app is activated first (`ax-key.py` does it), and Escape is never posted.
+Same caveats as Method 10: the app is activated first (`ax-key.py` does it).
 
 <a id="method-11"></a>
 ## Method 11: Open a collapsible section
@@ -417,30 +417,6 @@ accessible name, which is the label; GTK had the name as the identifier and put 
 Slint does not, [port-findings.md](../docs/port-findings.md) Linux fact 1), `disabled`, `pos=` and `size=`. There is
 no `desc=`, and printing the value twice under two names would give a check asserting *absence* a question with two
 answers.
-
-
-<a id="method-16"></a>
-## Method 16: Make a paired cube refuse the login, with the cube on the desk
-
-`58-wrong-pin` does this unattended on Linux and is the reference. It reads the PIN the cube is on out of the
-trace, writes a wrong one over the app's own PIN item with the app shut, launches, and puts the real one back by a
-trap on any way out.
-
-**Read the real PIN first.** It is the write just before the newest `PIN accepted` row,
-`password withResponse: <hex> (<pin>)`. The PIN is not a secret, and a stranded one is a battery pull.
-
-**The item is `au.com.tux.facet.cube`, account `pin`, and it is overwritten, never deleted.** On macOS
-`security add-generic-password -U` keeps the item's access list; an item `security` creates afresh trusts only
-`security`, and the app's next read raises a Keychain prompt nothing unattended can answer, which is why `58`
-declares no checks on macOS. **Do not touch `au.com.tux.facet.device` or `.google`**: they are the Swift app's
-items, kept as its fallback.
-
-**The refusal is the notice `The TimeFlip was not found`**, and the row that tells it from a cube out of range is
-`Not the paired cube: <label> refused the PIN`. The vendor PIN `000000` is tried after the stored one, so a cube
-whose batteries have been out logs straight in on it and the arrangement is gone.
-
-**The PIN also has a fallback in `config.json`** beside the databases, used when the secret store refuses or will
-not answer (commit 7274bc8, 2026-10-01). `58` writes only the secret store.
 
 <a id="method-17"></a>
 ## Method 17: Measure a window, and see a layout fault `swift test` cannot
@@ -779,9 +755,6 @@ line and the pipeline's exit code is never read.
   as blank space rather than as a fault. `PanelSection` swaps the constraint pinning its bottom edge instead.
   Measure a fold by the section's own `frame.height`, open against shut, not by `isHidden`.
 
-- **Never post Escape (key code 53) while driving this app.** It reaches whatever has focus, and if that
-  is not the app it interrupts the session driving it. There is nothing in this app that needs it: the
-  Settings window closes with `ax-press.py close-settings`, and menus close by pressing an item.
 - **Synthetic keystrokes are a last resort generally.** They go wherever focus is, which is not
   necessarily the app; a named press cannot miss.
 - **`open` on an already-running app activates it; it does not launch the new build.** So the change under

@@ -12,7 +12,8 @@
 #   - ran every numbered script present, and in each one exactly the checks it declares;
 #   - ran on a clean tree;
 #   - with --branch: ran on that branch, at a commit in this branch's history, after which nothing under
-#     crates/, Tests/Scripted/ (stamps and other Markdown aside), Cargo.toml or Cargo.lock has changed.
+#     crates/, scripts/, Tests/Scripted/, Cargo.toml or Cargo.lock has changed. Markdown anywhere is left out, the
+#     stamps included, so documentation never makes a run stale.
 #
 # Without --branch (a push to main) the branch, history and staleness rules are skipped. Staleness needs the
 # full history, so the workflow checks out with fetch-depth: 0. Exits 1 when any rule fails, 2 on bad usage.
@@ -28,7 +29,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-WATCHED=(crates Tests/Scripted Cargo.toml Cargo.lock ":!Tests/Scripted/*.md")
+WATCHED=(crates scripts Tests/Scripted Cargo.toml Cargo.lock ":!*.md")
 
 stamp_field() {
     sed -n "s/^ *$1: *//p" "$STAMP" | head -1
