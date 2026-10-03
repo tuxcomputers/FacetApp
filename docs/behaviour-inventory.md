@@ -2,12 +2,13 @@
 
 [← Back to README](../README.md) · [Architecture →](architecture.md) · [Scripted suite →](scripted-suite.md) · [Operation spec →](operation-spec.md)
 
-**A map of the rules the Rust port has to reproduce, and where to read each one in full.**
+**A map of the rules the Rust port reproduces, and where to read each one in full.** The port is complete: Facet has
+feature parity with the Swift app.
 
 The Swift app was covered by **134 test files carrying 2,063 test declarations**, measured on
 `feature/linuxPort` at `6dd0045`. Almost none of that is about Swift. It is rounding, ordering, range
 arithmetic, retry sequencing, what a wrong PIN does, what happens when a face changes during a pause: the
-product, written down as assertions. **Re-deriving it from the app's behaviour would be the single largest
+product, written down as assertions. **Re-deriving it from the app's behaviour was the single largest
 avoidable cost of the rewrite.**
 
 **How to use this file.** Before writing a core module, find its row. Then read the named test file in
@@ -30,8 +31,9 @@ cases, which is why the suite reported 1,718 running tests against 2,063 declara
 **What is not in this table**: eleven files that are test doubles and helpers rather than behaviour
 (`InMemoryCubeRadio`, `InMemoryGatt`, `InMemorySecretStore`, `FakeBlueZLink`, `FakeBlueZTransport`,
 `HandDrivenScheduler`, `ManualClock`'s driver, `TemporaryDatabase`, `OffscreenWindow`,
-`RecordingDialogues`, `ColourSamples`, `ApproximateEquality`). Read those too: they are the shape the Rust
-test doubles want, and they encode which seams the design actually needed.
+`RecordingDialogues`, `ColourSamples`, `ApproximateEquality`). Read those too: the Rust doubles descend from
+them (`FakeCube` in `crates/facet-core/src/device/fake.rs` stands in for the radio and the link), and they encode
+which seams the design actually needed.
 
 ---
 
@@ -63,7 +65,8 @@ of them.
 
 **The BlueZ adapter's own tests** (27 `BlueZCubeRadio`, 22 `BlueZCubeGatt`, 9 `BlueZObjectTree`, 7
 `SystemBus`) do not port: `btleplug` replaces all of it. Read them anyway for the *sequence* they drive,
-which is the same sequence `facet-core` will drive through the radio port, and read
+which is the same sequence `facet-core` drives through the radio port (`BtleplugRadio` in
+`crates/facet-adapters/src/radio.rs`), and read
 [`linux-bluez-port-notes.md`](linux-bluez-port-notes.md) for the traps they were written around.
 
 ---
@@ -121,7 +124,7 @@ are also the specification for what each platform gives up.
 
 | Tests | Subject |
 |---:|---|
-| 52 | `StatusItemTitle`: what the text beside the icon says. Unavailable on Windows in any language |
+| 52 | `StatusItemTitle`: what the status item says. On macOS the item is the icon alone and these words are its tooltip; on Linux the host draws them beside the icon as the title, with the tooltip. Unavailable on Windows in any language |
 | 9 | `StatusItemReadout`: the readout the Linux tray label is asserted against |
 | 19 | `StatusItemMenu`: the item list, including an optional Settings line (`None` means the line is not offered) |
 | 15 | `StatusItemClickRouter`, 9 `StatusItemGesture`: left click, and what it is an accelerator *for* |
@@ -138,7 +141,7 @@ are also the specification for what each platform gives up.
 | 49 | `AppSettingsPane`, 18 `AppSettingsRules`, 6 `AppSettingWrite` |
 | 48 | `TimingReadout`, 45 `TimingView` |
 | 19 | `SettingStore`: the `setting` table |
-| 14 | `SteppedNumberField`, 7 `StepperHoldRules`: press-and-hold acceleration |
+| 14 | `SteppedNumberField`, 7 `StepperHoldRules`: press-and-hold acceleration. **Not built in Rust**: Slint's `SpinBox` cannot hold-to-repeat, so there is no acceleration (the stepper edits are debounced instead, `EDIT_QUIET_FOR`) |
 | 7 | `SettingsMetrics`: every dimension in the window. **Portable and already proven to transfer**: the Slint prototype read its metrics from here rather than choosing them |
 | 7 | `SettingsWindowController`, 4 `SettingsTab`, 6 `CollapsibleSection`, 9 `Dialogue` |
 | 7 | `WriteDebounce`: debouncing a live-edited setting before it reaches the cube |
@@ -170,9 +173,9 @@ about the Google Cloud project rather than about code.
 | 13 | `DebugTraceRules`, 13 `DebugTraceFile` |
 | 11 | `DeveloperConfigFile` |
 | 12 | `SecretStore`: the port, exercised against an in-memory double |
-| 4 | `InstanceLock`: refusing a second copy. A port for Windows |
+| 4 | `InstanceLock`: refusing a second copy. A port for Windows. In Rust it is `facet_core::instance::claim`, a lock on `singleinstance.lock` in the core, not a port |
 | 13 | `QuitSequence` |
-| 9 | `GLibScheduler`: the Linux clock slot |
+| 9 | `GLibScheduler`: the Linux clock slot (Swift only; Rust uses `slint::Timer`) |
 
 ---
 

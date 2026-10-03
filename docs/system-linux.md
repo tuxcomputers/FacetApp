@@ -2,13 +2,14 @@
 
 [← Back to README](../README.md) · [The Mac →](system-mac.md) · [What is being asked of this machine →](handover-linux.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Port findings →](port-findings.md)
 
-**What the Linux machines are, and everything needed to build and drive Facet on them.** This is the second
-platform. There are two boxes, the tower and the laptop, each in its own section below.
+**What the Linux machine is, and everything needed to build and drive Facet on it.** This is the second
+platform. The machine is the tower; the laptop it replaced is retired and off, and its section is kept as the
+record of what was measured on it.
 
-**Since 2026-09-28 the laptop is the Linux machine again, until the tower's Bluetooth antenna is delivered.**
-The tower replaced it on 2026-09-27 and is the faster box by a wide margin, but radio work needs a cube in range
-of a working antenna, and until one is fitted that is the laptop. Once it is, the tower is the Linux machine
-again. **Most of the sections after these two were measured on the laptop**, and say so where it matters.
+**The tower has been the Linux machine since 2026-09-27, and has reached the cube since its antennas were fitted
+on 2026-09-29.** The laptop was brought back for radio work on 2026-09-28 only until then. **The sections after
+these two were measured on the laptop**, and have not been re-measured on the tower unless they say so. Where a
+row names the laptop's hardware, the tower's own values are in its table above.
 
 **Every line is either measured, with the date, or it is marked unknown.** Nothing in between, and
 nothing inferred from what should be the case. A guess written into a facts file is worse than no line
@@ -18,8 +19,8 @@ at all, because the next reader cannot tell it from a measurement.
 
 ## The tower
 
-**The faster of the two, and the Linux machine whenever radio work is not needed.** Linux stamps came from here
-from 2026-09-27. The sections after the laptop's have not been re-measured here unless they say so.
+**The Linux machine.** Linux stamps have come from here since 2026-09-27. The sections after the laptop's have not
+been re-measured here unless they say so.
 
 | | |
 |---|---|
@@ -27,9 +28,9 @@ from 2026-09-27. The sections after the laptop's have not been re-measured here 
 | Host name | `tower.home` |
 | Chip | AMD Ryzen 7 5700X, 8 cores / 16 threads |
 | Memory | 62 GiB |
-| Distribution | Linux Mint 22.3, kernel 6.8.0-142-generic |
-| Desktop | **Cinnamon 6.6.9 on X11** |
-| Tray host | `xapp-sn-watcher` |
+| Distribution | **Linux Mint 22.3 "Zena"**, kernel 6.8.0-142-generic, the same release as the laptop |
+| Desktop | **MATE on X11**: `mate-session-manager` 1.26.1, `mate-panel` 1.27.1, `marco` 1.26.2. Cinnamon 6.6.9 is installed and not in use |
+| Tray host | `xapp-sn-watcher` (`libxapp1`), shown by `mate-xapp-status-applet` (`xapps-common`), with `xapp-status` beside `notification-area` on the panel and `enable-sni-support` **false**: the laptop's arrangement |
 | Secret store | `gnome-keyring`, unlocked at login |
 | File dialogs | `xdg-desktop-portal` 1.20.0, `default=gtk` with `xdg-desktop-portal-gtk` 1.15.1 |
 | Accessibility | `at-spi2-core` 2.52.0, `python3-pyatspi` 2.46.1; `toolkit-accessibility` **false** by default |
@@ -40,9 +41,15 @@ from 2026-09-27. The sections after the laptop's have not been re-measured here 
 | Bluetooth | Intel AX200 (`8087:0029`), controller `hci0`, `48:68:4A:4C:6B:B0`. Antennas fitted 2026-09-29. Reaches the cube; see the signal levels below |
 | `libdbus-1-dev` | 1.14.10-4ubuntu4.1, installed |
 
-`/etc/os-release`, `lscpu`, `free`, `cinnamon --version`, `xrandr`, `dpkg -l`, `timedatectl`. Measured 2026-09-27;
-the distribution, kernel, desktop, Bluetooth and `libdbus-1-dev` rows re-measured 2026-09-28, the box having moved
-from Mint 22.2 and Cinnamon 6.4.14 in between.
+`/etc/os-release`, `lscpu`, `free`, `dpkg -l`, `gsettings`, `xrandr`, `timedatectl`. Measured 2026-09-27, after the
+upgrade to 22.3 and the switch to MATE; it came as Mint 22.2 with Cinnamon 6.4.14. The distribution, kernel,
+Bluetooth and `libdbus-1-dev` rows were re-measured 2026-09-28. `cinnamon --version` answers 6.6.9 because the
+package is installed; the desktop in use is MATE, with `marco` and `mate-panel` running.
+
+**Driving the tower from the Mac over ssh needs four variables set**, because an ssh shell is not in the desktop
+session: `DISPLAY=:0`, `XAUTHORITY=$HOME/.Xauthority`, `XDG_RUNTIME_DIR=/run/user/1000` and
+`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus`. Without them `wmctrl` and the tray driver report no
+display. Observed 2026-10-01.
 
 ### The tower's Bluetooth, and the cube's signal level
 
@@ -51,6 +58,9 @@ which is airplane mode; `rfkill unblock bluetooth` cleared Bluetooth and left Wi
 on` then worked where it had failed with `org.bluez.Error.Failed`. Readings are the cube's RSSI from `bluetoothctl info`
 after a 12 to 22 second LE scan (`bluetoothctl scan le`), and the Mac's from the scan in
 `cargo run -p facet-adapters --example radio-check`, which then logs in on the vendor PIN and changes nothing.
+
+**The block comes back.** Observed 2026-10-01: the tower's Bluetooth was soft blocked by rfkill again after a
+reboot or a login, and needed `rfkill unblock bluetooth` and then `bluetoothctl power on` each time.
 
 | Time | Where the cube was | Tower | Devices the tower heard | Mac | Connected from the tower |
 |---|---|---|---|---|---|
@@ -62,6 +72,8 @@ after a 12 to 22 second LE scan (`bluetoothctl scan le`), and the Mac's from the
 cube 20 to 40 dB weaker. At -100 dBm it was heard in some scans and not others, and a connection still succeeded; at
 -74 to -83 dBm every scan heard it. Where the cube sat and how far from each machine was not measured, so these
 compare the machines only at the same moment.
+
+**Measured again 2026-10-01**: the cube at about -65 to -69 dBm, with 21 to 26 devices heard in a scan.
 
 **What a fresh Mint needed, beyond its defaults**: rustup, and
 `sudo apt install libfontconfig-dev x11vnc libsecret-tools gh`. `build-essential`, `pkg-config`, `wmctrl` and
@@ -85,18 +97,22 @@ the same stack (X11, AT-SPI over D-Bus, XTEST typing) two to two and a half time
 the tower and the Mac, about 10 to 40 percent per script and most in the scripts that read the tree hardest, is
 the AT-SPI round trips.
 
+**A full run at the current stamps, 2026-10-03**: the tower 865 checks at `518b1cb`, 21m 47s plus 23m 57s waiting for
+a person; the Mac 833 checks at `f0525f2`, 20m 10s plus 26m 48s waiting for a person. Both from
+`Tests/Scripted/last-run-linux.md` and `last-run-mac.md`.
+
 ---
 
 ## The laptop
 
-**The Linux machine for radio work until the tower has its antenna.** Retired on 2026-09-27 and brought back
-on 2026-09-28. It is CPU-starved: during a full scripted run its load average reached 8.7 on 4 threads, and a
-full run takes nearly twice as long as on the tower. **Its Bluetooth is the one that has reached the cube**, as
-the Bluetooth section below records.
+**Retired and off.** It was the Linux machine until 2026-09-27, and again for radio work from 2026-09-28 until
+the tower's antennas were fitted on 2026-09-29. It is CPU-starved: during a full scripted run its load average
+reached 8.7 on 4 threads, and a full run took nearly twice as long as on the tower. **Its Bluetooth was the first
+to reach the cube**, as the Bluetooth section below records.
 
 | | |
 |---|---|
-| Reached as | `ssh harry@192.168.0.112`, at home |
+| Reached as | `ssh harry@192.168.0.112`, at home. **Off** |
 | Model | **A MacBook Pro running Linux**, `MacBookPro14,2`, host name `harry-MacBookPro` |
 | Chip | Intel Core i7-7567U @ 3.50GHz, 2 cores / 4 threads |
 | Memory | 15 GiB |
@@ -194,7 +210,7 @@ it is load-bearing.
 
 ### What the UI needs, and what it does not
 
-**No cmake, no ninja, and neither is installed** — the same answer as the Mac, and it was worth
+**No cmake, no ninja, and neither is installed**: the same answer as the Mac, and it was worth
 measuring separately because this is a different Slint backend. C++ Skia is **never compiled**: it is an
 unenabled optional dependency. What actually builds on this box is
 
@@ -248,12 +264,12 @@ installed and is not load-bearing**; `libdbus-1-dev` is.
 ### The commands, and what they cost cold
 
 ```sh
-cargo build                   # facet-core alone, by default-members
+cargo build                   # facet-core, facet-ui and facet-adapters, by default-members
 cargo test                    # the hermetic suite
 cargo build -p facet-linux    # the native binary
 ```
 
-**A bare build is the core only**, because the other three crates are each buildable on exactly one
+**A bare build is those three crates**, because the three platform crates are each buildable on exactly one
 platform and this machine cannot compile the CoreBluetooth or WinRT adapters.
 
 | Command | Cold | Notes |
@@ -309,7 +325,7 @@ Mac formatted that crate without being able to compile it.
 **`cargo clippy` is the gate that is already green**: exit 0 across `facet-core`, `facet-ui` and
 `facet-linux` with all targets, carrying two warnings, both `manual Range::contains` in
 `facet-ui/src/status_icon.rs`. Re-measured 2026-09-25 on `main`: still exit 0, and still those two. **Both
-were fixed on the Mac on 2026-09-28** (`d8bde5a`, on `feature/deviceTab`), where clippy is now clean; not yet
+were fixed on the Mac on 2026-09-28** (`d8bde5a`, now on `main`), where clippy is now clean; not yet
 re-run here.
 **CI gates on formatting and not on clippy.**
 
@@ -318,6 +334,7 @@ re-run here.
 ```sh
 (cd probe/timeflip-btleplug && cargo build)     # running it needs the cube
 (cd probe/slint-editable-table && cargo build)  # running it opens a window
+(cd probe/keyring-secret-service && cargo build) # running it touches the secret store, and cleans up
 ```
 
 | Probe | Cold build | `target/` |
@@ -404,11 +421,14 @@ costs nothing to build.
 | App data directory | `/home/harry/.local/share/Facet` |
 | Databases | `production.sqlite` and `test.sqlite`, with `appdata.sqlite` a symlink to whichever is live |
 | Google credentials | `~/.config/facet/google-client.json`, outside every repository |
+| Cube PIN | Secret Service item with attributes `service` = `au.com.tux.facet.cube` and `username` = `pin`; `config.json` in the data directory, key `PIN`, is its fallback |
+| Google refresh token | Secret Service item with attributes `service` = `au.com.tux.facet.google-refresh` and `username` = `refresh-token` |
 
 **No XDG variable is set.** `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`
-are all unset, so the XDG default of `$HOME/.local/share` is what produces the path above. The
-platform-aware answer needs no variable to be set to be right. The Mac reaches
-`~/Library/Application Support/Facet` from the same call.
+are all unset, so the XDG default of `$HOME/.local/share` is what produces the path above. **The app builds
+`$HOME/.local/share/Facet` itself**, in `data_directory()` in `facet-linux`, and does not read
+`$XDG_DATA_HOME`; the two agree here because no XDG variable is set. The Mac builds
+`$HOME/Library/Application Support/Facet` the same way.
 
 **The Google credentials live at the same path as the Mac's**, `~/.config/facet/`, which on that
 machine is a non-standard location and on this one is the XDG default. `scripted-seed.json` sits beside
@@ -448,7 +468,8 @@ thing that should; `setting.db_type` is how a launch reports which one it landed
 
 **The same zone as the Mac**, so the two-zones hazard is not live between these machines today and is
 not fixed either: nothing pins a zone, so moving either machine would make it real without anything
-failing.
+failing. Every row now carries the zone it was written in, named from the operating system at the moment of the
+write (2026-10-01), so a mixed set of zones would be recorded rather than silent.
 
 **This box has a `LANG` where a double-clicked Mac app has none.** That asymmetry is itself the reason
 for the discipline: **never make an environment variable the primary source of anything**, because what
@@ -459,9 +480,14 @@ than taking the machine's.
 through `timezone_lookup`. Measured here against Swift's Foundation: a legacy IANA name such as `Cuba`,
 a `backward` link to `America/Havana`, came back verbatim and uncanonicalised, and an unusable `TZ` fell
 back silently to the system zone rather than erroring. **Both behaviours are the date library's, not
-the operating system's, so both must be re-measured against whatever Rust uses.** Nothing in the
-workspace parses a date yet, so that re-measurement has not happened. The schema decision is the
-conservative one either way.
+the operating system's.**
+
+**The Rust app names the machine's zone through the `Zone` port.** `SystemZone` in `facet-adapters` asks the
+`iana-time-zone` crate, and `facet_core::timezone::current_id` files the answer through `timezone_lookup` at the
+moment of each write, adding a row for a zone the seed lacks (2026-10-01). `14-time-zone` checks an entry's zone
+against the operating system's own on both machines, both on `Australia/Brisbane`. **Not measured**: what
+`iana-time-zone` answers for a machine set to a legacy name such as `Cuba`, or for an unusable `TZ`. The schema
+decision is the conservative one either way.
 
 ---
 
@@ -469,7 +495,7 @@ conservative one either way.
 
 | | |
 |---|---|
-| Daemon | **`gnome-keyring-daemon` 46.1, running** with `--components=pkcs11,secrets` |
+| Daemon (on the laptop) | **`gnome-keyring-daemon` 46.1, running** with `--components=pkcs11,secrets` |
 | D-Bus name | `org.freedesktop.secrets`, present on the session bus |
 | Collections | `login` and `session` |
 | `libsecret-1-0` / `-dev` | 0.21.4 |
@@ -493,9 +519,8 @@ from *the store is broken*, because the first is an ordinary first run.
 **It reaches the service in pure Rust and links no system library**, so `libsecret-1-dev` is not
 load-bearing for it. Keeping the package costs nothing; believing it was required would have.
 
-**The Mac half is still unmeasured.** The same `v1` default selects `apple-native-keyring-store/keychain`
-there, target-gated, so the Keychain *should* come from the same dependency line. That is
-[handover-mac.md](handover-mac.md) item 3.
+**The Mac half has been measured**: the same dependency line selected `apple-native-keyring-store` there and
+passed the same round trip on 2026-09-22. See [system-mac.md](system-mac.md).
 
 **Measured 2026-09-22, and the answer is neither of the two this file expected.** A locked keyring does
 not prompt-and-continue and does not return an error: **the read blocks, for as long as it is given**.
@@ -515,6 +540,10 @@ its own fallback**, and must not sit on the launch path. See
 [port-findings.md](port-findings.md); the constraint belongs to the secret store port rather than to this
 machine.
 
+**The app now does both.** Every secret store call goes through `crates/facet-ui/src/timed.rs`, which gives up after
+30 seconds, and the cube's PIN has `config.json` in the data directory as a second home, `FileSecretStore`
+(2026-10-01).
+
 **Done with the owner present, and it is not a thing to repeat casually**: locking `login` takes the `gh`
 token with it and puts a password dialog in front of whoever is at the screen.
 
@@ -524,33 +553,37 @@ token with it and puts a password dialog in front of whoever is at the screen.
 
 | | |
 |---|---|
-| Adapter | `hci0`, `88:E9:FE:5F:1B:52`, named `harry-MacBookPro` |
+| Adapter (the laptop's) | `hci0`, `88:E9:FE:5F:1B:52`, named `harry-MacBookPro` |
 | Adapter provenance | **built in**, on `dw-apb-uart` rather than USB, Broadcom. Not a dongle |
 | BlueZ | **5.72** |
 | Cube, as this box names it | `E8:DB:D8:CF:F9:0F`, address type **random** |
 | Cube name | `TimeFlip v2.0`, the same string the Mac sees |
 | As the app's own identifier | `FACE7000-0000-0000-0000-E8DBD8CFF90F`, derived from the address |
-| As btleplug names it | `hci0/dev_E8_DB_D8_CF_F9_0F`, the BlueZ object path under the adapter. It is the handle a pairing here would store in `device_uuid`; no pairing has been made on Linux yet, so no such row has been seen. Its adverts carry **no RSSI** |
+| As btleplug names it | `hci0/dev_E8_DB_D8_CF_F9_0F`, the BlueZ object path under the adapter. It is the handle a pairing here stores in `device_uuid`; `51-device-connect` and `53-device-reconnect` pair and reconnect by it on this stack. Its adverts carry **no RSSI** |
 | Paired / Bonded / Trusted | **no / no / no**, and that is correct here |
 
 Adapter and BlueZ measured 2026-09-07; the cube rows re-confirmed 2026-09-20 with `bluetoothctl info`
 against the cube in range. The btleplug row measured 2026-09-28 on the laptop by `cargo run -p facet-adapters --example
 radio-check`, which connected, read battery and Device Information, and had the vendor PIN refused as expected.
 
-**The address is random rather than public, so durability could not be assumed — but it has now been
+**The address is random rather than public, so durability could not be assumed, but it has now been
 measured.** `E8:DB:D8:CF:F9:0F` was the same before and after a factory reset
 ([linux-bluez-port-notes.md](linux-bluez-port-notes.md), 2026-09-07), which this file previously
 recorded as untested. **Whether it survives a battery change is still untested**, and the specification
 still allows a random address to change, so the finding is one data point and not a guarantee.
 
 **It changes nothing about the shared schema.** Neither machine's name for this cube can be written into
-a shared table and trusted on the other — the Mac sees `FA1DDE60-5DBB-D5E9-B53C-881E16916B5E` for the
-same hardware — so `device_uuid` remains a platform-specific value in a shared table, and a database
+a shared table and trusted on the other (the Mac sees `FA1DDE60-5DBB-D5E9-B53C-881E16916B5E` for the
+same hardware), so `device_uuid` remains a platform-specific value in a shared table, and a database
 moved between the machines carries a pairing only one of them can act on.
 
 **BlueZ forgets the cube across a boot.** `bluetoothctl info` answers `not available` until a scan
 rediscovers it, there being no bond to persist. **So on this platform, finding the cube is always a
 scan**, the same lesson the device rename cost on the Mac, arrived at from the other direction.
+
+**A cube that is connected to another machine does not advertise.** Observed 2026-10-01: with the cube connected
+to the Mac, the tower's scan does not hear it, so it cannot be paired and `00-setup` fails at pairing. Quit the
+app on the other machine first.
 
 **There is no OS-level bond and there cannot be one**, which the Mac reached from its own side: it lists
 no TimeFlip in `system_profiler` either. The cube runs no pairing agent and the PIN is the whole of the
@@ -574,7 +607,7 @@ connect regardless, so a handover exercises existing mechanisms rather than need
 
 | | |
 |---|---|
-| Display | `eDP-1`, 2560x1600 at 60Hz, 286mm x 179mm, the only one |
+| Display (the laptop's) | `eDP-1`, 2560x1600 at 60Hz, 286mm x 179mm, the only one |
 | Automation stack | AT-SPI: `at-spi2-core` 2.52.0, `libatk-adaptor` 2.52.0, `python3-pyatspi` 2.46.1 |
 | Registry | **running**: `at-spi-bus-launcher`, `at-spi2-registryd` and the AT-SPI `dbus-daemon` all up |
 | `toolkit-accessibility` | **false** |
@@ -602,6 +635,11 @@ immediately with no restart. See [port-findings.md](port-findings.md).
 **So anything driving this app through AT-SPI has to set that first and put it back after.** A run that
 forgets finds no application, and every check then fails exactly as it would against a window that never
 opened.
+
+**`Tests/Scripted/run.sh` does this**: `lib.sh` turns `toolkit-accessibility` on for the run and `run.sh` puts back
+what it found. Observed 2026-10-01: **without the session bus the put-back silently does not take effect**. For a
+run started over ssh set `DBUS_SESSION_BUS_ADDRESS` (see the tower's section above), and check
+`gsettings get org.gnome.desktop.interface toolkit-accessibility` afterwards.
 
 **Slint ships its own AT-SPI bridge, and it is in the graph.** Measured 2026-09-20 from the Slint
 probe's build: `accesskit` 0.24.1, `accesskit_unix` 0.22.1, `accesskit_atspi_common` 0.19.1 and

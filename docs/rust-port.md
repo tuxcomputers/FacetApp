@@ -2,17 +2,20 @@
 
 [← Back to README](../README.md) · [Port findings →](port-findings.md) · [BlueZ notes →](linux-bluez-port-notes.md) · [Architecture →](architecture.md) · [The Mac →](system-mac.md) · [The Linux box →](system-linux.md) · [TimeFlip BLE →](timeflip.md)
 
-**The evaluation that decided Facet will be rewritten in Rust, and the requirements it was judged against.**
-Written 2026-09-18. Nothing here has been built into the app: this is the record of a decision and of what was
-established while making it, so that the work is not re-done when somebody picks it up.
+**The evaluation that decided Facet would be rewritten in Rust, and the requirements it was judged against.**
+Written 2026-09-18 and added to as each question was measured. **The rewrite is complete (2026-10-03):** Facet
+runs on macOS and Linux with parity with the Swift app, `crates/facet-windows` is a stub, and the scripted suite
+passes in full on both machines. This file is the record of a decision and of what was established while making
+it, and it is left as written: a claim marked untested was untested on the date it was made, and where the app
+has since built or measured it a line beginning *Since* says so.
 
 **Every claim below is marked measured or untested.** Measured means it was run on this machine on the date
 given. Untested means it comes from a vendor document, a crate's own platform notes or reasoning, and is
 therefore a thing to confirm rather than a thing to build on. The distinction is the whole value of this file.
 
-**The sequence is settled and the rewrite is not in flight.** The Linux port finishes in Swift first. The
-conversion to Rust begins after it. That is a deliberate ordering, not a default: the Linux port is what
-establishes the second platform's behaviour, and that knowledge is what the rewrite is then written against.
+**The sequence was** the Linux port finishing in Swift first and the conversion to Rust after it. That was a
+deliberate ordering, not a default: the Linux port is what established the second platform's behaviour, and that
+knowledge is what the rewrite was written against. Both steps are done.
 
 ---
 
@@ -20,8 +23,9 @@ establishes the second platform's behaviour, and that knowledge is what the rewr
 
 Stated by the owner, 2026-09-17 and 2026-09-18, and the thing every finding below is measured against.
 
-1. **Three platforms**: macOS, Linux, and Windows. Windows is not yet started and is described as probable
-   rather than certain, but it is a requirement of the language choice.
+1. **Three platforms**: macOS, Linux, and Windows. Windows was described as probable rather than certain, but
+   it is a requirement of the language choice. *Since:* `crates/facet-windows` is a stub and Windows comes much
+   later.
 2. **The shipped app is completely self-contained.** The user installs no external programs, no runtime, no
    toolkit. **Build-time dependencies are unconstrained**: what it takes to develop the app does not matter.
 3. **It looks, feels and operates the same on all three platforms, including the menu bar.**
@@ -50,11 +54,14 @@ host/central role only, no Bluetooth Classic, which is exactly this app's use. *
 2026-09-20 and it does all of it**, which is the section below. It was the deciding factor and the single
 largest unverified claim in this document, and it is neither of those any more.
 
-The rest of the stack follows without difficulty, all **untested**:
+The rest of the stack was chosen untested. *Since:* all of it is built and in use, and `keyring` was measured on
+both machines 2026-09-22:
 
 - `rusqlite` with the `bundled` feature compiles SQLite into the binary, so the schema and DDL carry over
   unchanged and nothing is installed on the user's machine.
-- `tray-icon` gives a real `NSStatusItem`, `Shell_NotifyIcon` and StatusNotifierItem respectively.
+- `tray-icon` gives a real `NSStatusItem` on macOS and `Shell_NotifyIcon` on Windows. *Since:* its Linux
+  backend is AppIndicator, which emits no click events, so `facet-linux` drives `ksni` (StatusNotifierItem)
+  directly; see *The menu bar* below.
 - `keyring` covers Keychain, Windows Credential Manager and Secret Service.
 - One self-contained binary per platform.
 
@@ -69,8 +76,8 @@ that alone, without reaching the UI question. **Untested**, from
 **Staying in Swift.** More viable than it was: a [Swift Windows workgroup formed in January
 2026](https://www.swift.org/blog/announcing-windows-workgroup/) and Swift 6.3 expanded Windows support. But
 there is no cross-platform BLE library and no cross-platform UI in that ecosystem, so Windows costs a third
-radio and a third UI. It is the largest total effort of the options considered, and it is the path the project
-is currently on.
+radio and a third UI. It is the largest total effort of the options considered, and it was the path the project
+was on when this was written. The project has since left it.
 
 **Python and Go.** `bleak` is a genuinely good cross-platform BLE library, but Python's self-contained
 packaging conflicts with requirement 2 and its desktop UI story is weak. Go's BLE libraries are markedly less
@@ -101,7 +108,7 @@ nothing: this cube does not advertise its 128-bit UUID at all, which is why `Blu
 advertised name and services, so the app's own eligibility rule ports across unchanged. A backend that can
 only reach already-paired devices, which is Qt on Windows, could not do this at all.
 
-**Two firmware facts came out of the run** and are findings 12 and 13 of
+**Two firmware facts came out of the run** and are findings 13 and 14 of
 [`timeflip2-firmware-observations.md`](timeflip2-firmware-observations.md): a factory-reset cube reports a
 stale clock rather than an unset one, and the trailing bytes of an empty history frame carry that clock rather
 than a duration. Both would have cost a session to rediscover, and the second was caught by this probe
@@ -111,6 +118,11 @@ misreading it first.
 and BlueZ and WinRT have not. That is a much smaller question than the one just closed -- the API is the same
 and the Linux port has already proved the protocol works over BlueZ from Swift -- but it is not nothing, and
 the honest statement is that one of three platforms is measured.
+
+*Since:* the Linux box has driven the same cube through `BtleplugRadio` over BlueZ, and the scripted device
+checks pass there (865 of 865 at 518b1cb, see
+[`Tests/Scripted/last-run-linux.md`](../Tests/Scripted/last-run-linux.md)). Two of three platforms are measured;
+WinRT is not.
 
 ---
 
@@ -144,7 +156,10 @@ and that has been accepted.
 
 ### Styling is chosen at build time
 
-**Untested**, from [Slint's documentation](https://docs.slint.dev/latest/docs/slint/reference/std-widgets/style/).
+**Built since:** `crates/facet-ui/build.rs` compiles the window with `with_style("cupertino")`, so one build looks
+the same everywhere and `native` never decides. Linux pins `cupertino` rather than `fluent` or `cosmic`. The rest
+of this section is from [Slint's documentation](https://docs.slint.dev/latest/docs/slint/reference/std-widgets/style/),
+which was **untested** when it was written.
 The widget style is fixed at compile time, not runtime. One build therefore looks identical on all three
 platforms, which serves requirement 3 directly.
 
@@ -235,7 +250,8 @@ about. A guard belongs in that script when the conversion happens.
 
 **Two tooling changes, both one-liners.** `ax-set.py` hardcodes `pgrep -x Facet` and `ax-key.py` refuses to run
 unless Facet is running, so neither takes `--app` the way `ax-press.py` does. Their mechanisms were reproduced
-inline to measure this.
+inline to measure this. *Since:* both are done. `ax-set.py` reads `FACET_APP_NAME` rather than hardcoding the
+name, and `ax-key.py` takes `--app` or `FACET_APP_NAME`, as `ax-press.py` does.
 
 **What was not tested**: the status item, which is open question 4 and a different tree, and any of this on
 Linux or Windows.
@@ -320,7 +336,7 @@ for the menu. macOS and Windows give the app both clicks; MATE gives it the left
 one itself, which amounts to the same behaviour by a different route.
 
 **Which applet it ran in is now answered, and it is neither of the two this section had been weighing.**
-Measured on the Linux box 2026-09-22: **`xapp-sn-watcher`**, from `libxapp1`, forwarding to the
+Measured on the laptop, then the only Linux box (MATE 1.26.1), 2026-09-22: **`xapp-sn-watcher`**, from `libxapp1`, forwarding to the
 **`mate-xapp-status-applet`** on the panel. Not the Notification Area applet and not the Indicator Applet.
 
 **The route is forced rather than chosen, which is what makes the answer solid.** `ksni` publishes a
@@ -374,12 +390,12 @@ that has no menu equivalent, or Linux users lose a feature rather than a conveni
 
 ---
 
-## A finding that affects the current Swift Linux port
+## A finding that affected the Swift Linux port
 
-**This one matters before the rewrite, not after it**, which is why it is called out separately.
+**This one mattered before the rewrite, not after it**, which is why it was called out separately.
 
 The Ayatana AppIndicator model is menu-only: it takes a menu and provides no click callbacks. **So the Linux
-port as currently designed has the same left-click limitation described above**, and the divergence from the
+port as it was designed had the same left-click limitation described above**, and the divergence from the
 macOS menu bar is already present rather than being something Rust would introduce. `linux-port.md` on `feature/linuxPort` records
 the tray as a D-Bus object driven through `com.canonical.dbusmenu`, which is the menu, not the icon: **no
 click behaviour has been measured on Linux at all**, and nothing in that file claims otherwise.
@@ -392,8 +408,8 @@ and it sidesteps the reason Rust cannot take the same route, which is that the *
 rather than the C API being gone. `GtkStatusIcon` is deprecated in GTK3 and absent from GTK4, but MATE 1.26.1
 is a GTK3 desktop.
 
-**This is reasoning, not a measurement: it has not been tried, and the deprecation makes it a route with a
-known end date.** It is recorded here because the option is open now and closes when the app leaves Swift.
+**This was reasoning, not a measurement, and it was not acted on.** The rewrite is complete and the Swift tree
+is frozen, so the route is closed. Facet's Linux tray is `ksni`, not `GtkStatusIcon`.
 
 ---
 
@@ -427,7 +443,8 @@ Each of these is a thing to run, not a thing to think about further.
    the real menu bar.
 
 5. ~~**Editable tables in Slint.**~~ **Answered 2026-09-20: they work.** See *The tables, measured* below.
-   What is still untested is sorting, a row leaving the list mid-edit, and the icon grid.
+   What was left untested was sorting, a row leaving the list mid-edit, and the icon grid. *Since:* the icon
+   grid (`04-categories`) and the Report sort columns (`09-report`) are built and scripted.
 
 6. **Whether the secret store should go through `keyring` or through `keyring-core` and one store per
    platform.** `keyring` 4.2.0 is what the workspace pins and it works on both machines, measured
@@ -437,17 +454,20 @@ Each of these is a thing to run, not a thing to think about further.
    says an application choosing its store per platform *"should not be linking to this library at all"*
    and should take `keyring-core` plus the store it wants, and that describes this app: the core states a
    port and each composition root injects the thing that performs it, which is the same shape by another
-   name. Deciding it needs the port to exist first, so it is recorded rather than acted on.
+   name. Deciding it needs the port to exist first, so it is recorded rather than acted on. *Since:* the port
+   exists (`facet_core::port::SecretStore`, with `KeyringSecretStore` and a `FileSecretStore` fallback for the
+   cube PIN in `facet-adapters`) and the workspace still pins `keyring` 4.2.0.
 
 ---
 
 ## The scratch work
 
-**Two are committed**, being the ones that answered something:
+**Three are committed**, being the ones that answered something:
 
 - [`probe/timeflip-btleplug`](../probe/timeflip-btleplug/) -- the radio, open question 2.
 - [`probe/slint-editable-table`](../probe/slint-editable-table/) -- the tables and the scripting, open
   questions 3 and 5.
+- [`probe/keyring-secret-service`](../probe/keyring-secret-service/) -- the secret store, open question 6.
 
 **Two are not**, and were built on 2026-09-18 outside this repository:
 
@@ -457,5 +477,5 @@ Each of these is a thing to run, not a thing to think about further.
   and the transcript is in *The menu bar on MATE, measured*.
 
 **The two uncommitted ones are throwaways and what they established is recorded above**, which is the part
-that has to survive them. The two committed ones are kept because a measurement is worth more with the thing
-that produced it beside it, and because both can be re-run.
+that has to survive them. The three committed ones are kept because a measurement is worth more with the thing
+that produced it beside it, and because all of them can be re-run.

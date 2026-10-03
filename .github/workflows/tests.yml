@@ -123,8 +123,8 @@ jobs:
         run: cargo fmt --check
 
   # CI cannot run the scripted suite, so it checks the record of it: both machines' stamps must show a
-  # passing run of this branch with nothing under crates/, Tests/Scripted/, Cargo.toml or Cargo.lock changed
-  # since. The branch tip rather than the merge preview, with full history, because the stamps name commits
+  # passing run of this branch with nothing under crates/, scripts/, Tests/Scripted/, Cargo.toml or Cargo.lock
+  # changed since, Markdown aside. The branch tip rather than the merge preview, with full history, because the stamps name commits
   # on the branch. Pull requests only: a push to main has no branch to compare against.
   scripted-stamps:
     name: Scripted suite run on both machines

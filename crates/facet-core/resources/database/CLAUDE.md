@@ -29,7 +29,7 @@ and don't count it when reasoning about the schema.
 
 ## Table naming
 
-- Every table name is **singular** — `device_event`, not `device_events`; `device_notification`,
+- Every table name is **singular**: `device_event`, not `device_events`; `device_notification`,
   not `device_notifications`. The singular form flows through to every derived identifier: the
   primary key column (`device_event_id`), the constraint name (`PK_device_event`), and index names
   (`IN1_device_event`, `UN1_device_event`).
@@ -41,7 +41,7 @@ and don't count it when reasoning about the schema.
 
 ## Column naming
 
-- No column may be called just `name` — use `<tablename>_name` instead (e.g. the `icon` table's
+- No column may be called just `name`: use `<tablename>_name` instead (e.g. the `icon` table's
   name column is `icon_name`, not `name`).
 
 ## Date/time storage
@@ -50,22 +50,24 @@ and don't count it when reasoning about the schema.
 - Every table with a date/time column must also record the IANA time zone (e.g.
   `America/New_York`) the local time was captured in, so the stored value can be unambiguously
   converted to UTC or any other zone later. This is a **foreign key to the `timezone` table**
-  (`002_timezone.sql`), not an inline text column — the zone identifier is stored once in `timezone`
+  (`002_timezone.sql`), not an inline text column: the zone identifier is stored once in `timezone`
   and referenced by id. The app resolves the current zone's id by get-or-create
-  (`TimezoneStore.currentID()`), read at the point of use like everything else.
+  (`facet_core::timezone::current_id`, which asks the `Zone` port for the machine's IANA name), read
+  at the point of use like everything else.
 - Naming: when a table has a **single** timestamp/zone, name the FK column simply `timezone_id`
-  (referencing `timezone(timezone_id)`) — e.g. `device_event.timezone_id`. When a table has
+  (referencing `timezone(timezone_id)`), e.g. `device_event.timezone_id`. When a table has
   **more than one** timestamp that each need a zone, disambiguate per timestamp with a short
-  `<prefix>_timezone_id` column — e.g. `time_entry.start_timezone_id` / `end_timezone_id` for its
+  `<prefix>_timezone_id` column, e.g. `time_entry.start_timezone_id` / `end_timezone_id` for its
   `started_at` / `ended_at` timestamps.
-- Every `timezone_id` / `<prefix>_timezone_id` column is `NOT NULL DEFAULT 0` — id `0` is the
+- Every `timezone_id` / `<prefix>_timezone_id` column is `NOT NULL DEFAULT 0`: id `0` is the
   seeded `Unknown` sentinel row in `timezone` (see `002_timezone.sql`), so a row can always satisfy
-  the FK even before a real zone has been resolved. `TimezoneStore` likewise falls
-  back to `0` when a lookup fails.
-- Store local time as ISO 8601 text without a UTC offset/`Z` suffix (e.g. `2026-07-16T09:30:00`) —
-  the offset is recoverable via the referenced `timezone` row, not the timestamp itself.
+  the FK even before a real zone has been resolved. `current_id` likewise answers `0`
+  (`timezone::UNKNOWN`) when the machine cannot name its zone or the name cannot be filed, and the
+  trace says which.
+- Store local time as ISO 8601 text without a UTC offset/`Z` suffix (e.g. `2026-07-16T09:30:00`).
+  The offset is recoverable via the referenced `timezone` row, not the timestamp itself.
 - Whole seconds, with one exception: `debug_log.logged_at` records milliseconds
-  (`2026-07-16T09:30:00.123`, see `DebugLog.rowTime`). It is the diagnostic record a
+  (`2026-07-16T09:30:00.123`, stamped in `DebugLog::write_row`). It is the diagnostic record a
   test session is reconstructed from, and every BLE round trip this app makes is sub-second, so at
   second resolution a duration can only be recovered statistically rather than measured. The columns
   that sit beside an `<name>_epoch` INTEGER stay at whole seconds so the text can't disagree with the
@@ -74,24 +76,24 @@ and don't count it when reasoning about the schema.
   an indexed `<name>_epoch` INTEGER column (Unix epoch seconds, same moment as `<name>`) and
   compare/sort on that instead of the text column or any device-supplied sequence number. A
   device-side counter (e.g. an event number) can reset independently of wall-clock time, so it
-  isn't safe to use for ordering — see `device_event`/`device_notification` (`start_time` /
+  isn't safe to use for ordering. See `device_event`/`device_notification` (`start_time` /
   `timezone_id` / `start_epoch`) for the pattern.
 
 ## Naming: primary keys, indexes, and unique constraints
 
 - Primary key: `PK_<tablename>` (e.g. `CONSTRAINT PK_device_event PRIMARY KEY AUTOINCREMENT`).
-  This is part of the column/table definition inside `CREATE TABLE` — SQLite requires
+  This is part of the column/table definition inside `CREATE TABLE`: SQLite requires
   `PRIMARY KEY AUTOINCREMENT` to be declared on the column itself for rowid-aliasing to work, so
   it can't be split into a separate statement the way indexes and unique constraints are below.
 - Non-unique index: `IN<n>_<tablename>` (e.g. `IN1_device_event`), as a separate `CREATE INDEX`
   statement after the `CREATE TABLE`.
 - Unique constraint: `UN<n>_<tablename>` (e.g. `UN1_setting`), as a separate
-  `CREATE UNIQUE INDEX` statement after the `CREATE TABLE` — not an inline `UNIQUE` column
+  `CREATE UNIQUE INDEX` statement after the `CREATE TABLE`, not an inline `UNIQUE` column
   constraint. SQLite has no `ALTER TABLE ADD CONSTRAINT`, so a named unique index is the
   idiomatic equivalent.
 - `<n>` starts at `1` for each table and increases per additional index/unique constraint on that
   same table (e.g. a table's second index is `IN2_<tablename>`, regardless of how many unique
-  constraints it also has — the two sequences are independent).
+  constraints it also has; the two sequences are independent).
 - Always add `IF NOT EXISTS` to these `CREATE INDEX`/`CREATE UNIQUE INDEX` statements, matching
   every other DDL statement in this folder.
 
@@ -99,30 +101,29 @@ and don't count it when reasoning about the schema.
 
 - Every seed `INSERT` must be idempotent via the guarded pattern in `007_category.sql`:
   `INSERT INTO <table> (<columns>) SELECT <values> WHERE NOT EXISTS (SELECT 1 FROM <table> WHERE
-  <uniqueness condition>);` — never `INSERT ... VALUES (...) ON CONFLICT DO NOTHING`.
+  <uniqueness condition>);`, never `INSERT ... VALUES (...) ON CONFLICT DO NOTHING`.
 - Each seed row is its own separate guarded `INSERT` statement (see `001_event_type.sql`,
-  `004_icon.sql`, `005_colour.sql`, `011_setting.sql`) — do not combine multiple rows into one
+  `004_icon.sql`, `005_colour.sql`, `011_setting.sql`); do not combine multiple rows into one
   statement with `UNION ALL`. This keeps each row's existence check self-contained, so a DDL file
   that adds a new seed row to an otherwise-already-seeded table still inserts just the new row.
 - `001_event_type.sql`'s seeded ids are grouped by which table an event of that type lands in
-  (`device_event` for timing segments, `device_notification` for point-in-time ones — see
+  (`device_event` for timing segments, `device_notification` for point-in-time ones; see
   `docs/operation-spec.md` § 1), with a blank line between the groups. Append a new event type
   within its matching group rather than interleaving.
 
 ## File numbering and dependency order
 
 - **The number also says which database the file belongs to: below `500` the app's `appdata.sqlite`, `500`
-  and above the trace's `debug.sqlite`.** One directory holds both because `Package.swift` processes
-  `Resources` and SwiftPM flattens what it processes, so a real subdirectory would be folded back in and
-  applied to whichever database asked first. `DatabaseBootstrap.firstDebugDDLNumber` is where the line is
-  drawn, and the gap from `011` to `500` is room for both schemas to grow without either renumbering the
-  other. A table needed by both is defined **once and symlinked into the other range** -- `timezone` is the
-  only one, `500_timezone.sql` is a relative symlink to `002_timezone.sql`, and
+  and above the trace's `debug.sqlite`.** One directory holds both, and which database a file is applied
+  to is decided by which list in `crates/facet-core/src/database.rs` names it: `APPDATA_DDL` for the files
+  below `500`, `DEBUG_DDL` for the rest. `scripts/switch-database.sh` builds a test database from the files
+  below `500` by glob. The gap from `011` to `500` is room for both schemas to grow without either
+  renumbering the other. A table needed by both is defined **once and symlinked into the other range** --
+  `timezone` is the first, `500_timezone.sql` is a relative symlink to `002_timezone.sql`, and
   `docs/database-design.md` says why the two *tables* may never be joined even though the file is now one.
   **The link is relative and points at a file in the same directory, and it has to stay that way**:
-  SwiftPM copies it into the bundle as a link rather than following it, and `.process` flattens
-  everything to the bundle root, so the target sits beside it and resolves. An absolute link, or one
-  reaching into a subdirectory, would arrive dangling.
+  the files are compiled in with `include_str!`, which follows the link at build time, so an absolute
+  link would build on the machine that made it and fail on any checkout somewhere else.
   A second table wanted by both databases follows the same pattern rather than being typed twice --
   `502_timezone_alias.sql` and `503_timezone_lookup.sql` are the next two, links to `012` and `013`.
 - **A view is a file like any other**, named for the view it creates (`013_timezone_lookup.sql`) and
@@ -138,17 +139,19 @@ and don't count it when reasoning about the schema.
   given its own `timezone_id` could be referenced by `device_event.timezone_id` and satisfy the
   foreign key, which would be two ids for one zone -- `docs/database-design.md` says why that shape was
   refused.
-- DDL files are named `<NNN>_<tablename>.sql` and applied in ascending filename order (see
-  `DatabaseBootstrap.ensureDatabase`). Foreign keys are **enforced** (`PRAGMA foreign_keys = ON`), so a
-  table must be numbered **after every table it references** — a parent is created and seeded before
+- DDL files are named `<NNN>_<tablename>.sql` and applied in the order of the lists in
+  `crates/facet-core/src/database.rs` (`APPDATA_DDL`, `DEBUG_DDL`), which is ascending filename order, by
+  `facet_core::database::open`. Foreign keys are **enforced** (`PRAGMA foreign_keys = ON`), so a
+  table must be numbered **after every table it references**: a parent is created and seeded before
   any child that points at it, otherwise the child's seed insert fails on a missing parent row. For
   example `004_icon`, `005_colour`, and `006_project` all precede `007_category`, which references
   all three.
 - To insert a new table at a given position: rename every file numbered `>=` the target position up
   by one (highest number first, so no rename overwrites another), add the new file at that number,
-  then grep for and fix **every** reference to the old filenames — DDL files, `docs/`, code comments
-  (`Sources/`), and the test checklists (`Tests/`) all cite them by name. The previous test suite carried the same rule for
-  renumbering its checklists, and for the same reason: a number that appears in prose as well as in a
+  add it to its list in `crates/facet-core/src/database.rs` (the lists are written out by hand, so a file
+  left out of them is never applied by the app), then grep for and fix **every** reference to the old
+  filenames: DDL files, `docs/`, code comments and `include_str!` paths (`crates/`), and the scripted
+  checks (`Tests/Scripted/`) all cite them by name. A number that appears in prose as well as in a
   filename is renamed in both places or in neither.
 - Renumbering also **moves that table's section in [`docs/database-design.md`](../../../../docs/database-design.md)**,
   whose sections are ordered by DDL number so every foreign key points at a table described above it.
@@ -180,8 +183,7 @@ Every schema change follows the same four steps, in order:
 
    Foreign keys have to come off around it (`PRAGMA foreign_keys = OFF`) or dropping the old table takes
    its children's references with it, and `PRAGMA foreign_key_check` afterwards is what confirms they all
-   still land. `003_device_event.sql` carries a worked example, from when `device_face`'s `CHECK` was
-   raised to include the app's own face.
+   still land. No DDL file carries a worked example.
 
 Two shortcuts, both allowed for as long as this section is in force:
 
@@ -199,7 +201,7 @@ Two shortcuts, both allowed for as long as this section is in force:
   gets it at creation.
 - **Write the migration for an existing database as a commented-out `ALTER TABLE`**, directly under
   that `CREATE TABLE`, and never as a live statement. It is a record of the change, not something
-  the app or any script runs. See `white_lines` in `005_colour.sql` for the shape:
+  the app or any script runs. The shape (no DDL file carries one at present):
   ```sql
   -- Migration (run by hand against a database that predates this column):
   -- ALTER TABLE colour ADD COLUMN white_lines INTEGER NOT NULL DEFAULT 0 CHECK (white_lines IN (0,1));
@@ -230,9 +232,10 @@ Two shortcuts, both allowed for as long as this section is in force:
   failed statement abandons the rest of the file, taking that table's indexes and seed rows with
   it. An unconditional `ALTER` therefore breaks every **fresh** database, because the `CREATE TABLE`
   above has already added the column and sqlite reports `duplicate column name`. That is not
-  hypothetical: it silently emptied `colour` on a fresh database (the app logs the error and carries
-  on, so it self-heals on the second launch) and hard-failed `switch-database.sh test` under `set -e`.
-- `DatabaseBootstrap` still carries `skipSatisfiedColumnAdditions`, which comments out a
-  live `ALTER ... ADD COLUMN` whose column already exists. With this rule in force nothing reaches
-  it, and it cannot help the fresh-database case anyway (it checks the live database, which has no
-  such table yet when the file that creates it runs). Leave it until the migration feature lands.
+  hypothetical: it silently emptied `colour` on a fresh database (the Swift app logged the error and
+  carried on, so it healed on the second launch; the Rust app refuses to launch and names the file) and
+  hard-failed `switch-database.sh test` under `set -e`.
+- `facet_core::database::open` applies each file with `execute_batch` and stops at the first one that
+  fails, returning `Error::Ddl` with the file's name, which fails the launch. It has no step that skips
+  an `ALTER`, so a live `ALTER ... ADD COLUMN` breaks a fresh database at launch as well as in
+  `switch-database.sh`.

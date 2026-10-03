@@ -4,24 +4,40 @@ Checks that drive the real app and read the real database. `cargo test` is herme
 window or touches a radio, so a feature can be entirely green there and broken the moment it runs.
 These are what say it works.
 
-They need no AI, no Claude, and nothing installed beyond what building the app already needs.
+They need no AI and no Claude. They do need the tools the drivers use: on the Mac, pyobjc
+([`system-mac.md`](../../docs/system-mac.md)); on Linux, `wmctrl`, `python3-pyatspi`, `python3-dbus`, `python3-gi`,
+`secret-tool` and `bluetoothctl` ([`system-linux.md`](../../docs/system-linux.md)).
 
 ---
 
-**Status, 2026-09-27: ten checks are back.** `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11` and `12` pass on both
-machines, 293 checks, with each machine's latest run in `last-run-mac.md` and `last-run-linux.md`;
-`13-device-tab` passes its 37 on both, run on its own (on Linux on 2026-09-28, with the radio) and not yet in a stamped full run. **The device range passed on the Mac on 2026-09-28**: `50`, `51`, `53`, `54`, `63`, `65`, `67` and `68`. `52`, `66` and `99` passed on both machines that day. **The time-tracking range, `55`, `57`, `61`, `62` and `64`, came with `feature/timeTracking` on 2026-09-29**; `57`, `61` and `64` have passed on the laptop run on their own, and `55` and `62` need hands for their turns. **`11-google-reconnect` needs a person**: it opens the browser for a Google sign-in and
-waits four minutes for it, so a full run wants somebody near the screen. The rest of the 32 numbered checks
-are still missing, because a check for a feature the Rust app does not have yet cannot pass. [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists all 32 with
-what each proved, and each goes back as its feature lands.
+**Status, 2026-10-03: every script is back.** All 35 numbered scripts pass in full on both machines. On that date
+the Linux run was 865 checks and the Mac run 833; the stamps are the source of those numbers, each machine's latest
+run being in `last-run-mac.md` and `last-run-linux.md`. `58-wrong-pin` is not run on macOS: it rewrites the app's
+Keychain item with the `security` tool, and the app's next read of it raises a Keychain prompt that an unattended
+run cannot answer. It declares no checks there and the Mac stamp shows it as 0 of 0; it runs in full on Linux.
+Every Swift script has a Rust counterpart, and [`docs/scripted-suite.md`](../../docs/scripted-suite.md) lists them
+all with what each proves.
 
-**So read this for how the suite works and why.** Where a numbered script named below is one of the
-missing ones, or a file is gone rather than merely unwritten, the text says so.
+**A full run needs somebody there.** `00-setup` asks whether the run may use your TimeFlip and, on a yes, for the
+cube to be on Break (Return is waited for and trusted) before it factory resets it; it also asks for a Google sign-in
+when the run has no account. `11` asks for a Google sign-in every run (the browser opens on that machine's screen
+and the run waits four minutes). `55`, `62` and `65` ask for turns of the cube, `56`, `60` and `68` for Bluetooth
+off and on. Everything else runs unattended.
+
+**Only the first question wants a `y` or an `n`**: whether the run may use your TimeFlip, which factory resets it
+three times. Every other prompt has nothing to decide and waits for Return, so a stray key cannot choose anything.
+A prompt for something a script can detect afterwards, such as a turn of the cube, does not wait for a key at all.
+
+**So read this for how the suite works and why.**
 
 **On Linux a run needs `wmctrl`, and it types real keystrokes.** A Slint text field cannot be written
 over AT-SPI, so `at-set.py` focuses it and types into it (see
 [`port-findings.md`](../../docs/port-findings.md)). `run.sh` turns `toolkit-accessibility` on for the run,
 because a Slint window is not on the bus without it, and puts back whatever it found.
+
+**A disabled Slint element never reaches AT-SPI**, so on Linux a check that asks whether a control is dead reads
+the trace row the app writes for it (the Faces tab's `Category rows are live` and `Category rows are dead`), where
+on macOS the dump carries `disabled` ([`port-findings.md`](../../docs/port-findings.md), Linux fact 4).
 
 ---
 
@@ -55,13 +71,16 @@ Tests/Scripted/run.sh --keep      # against the database as it stands
 
 ## The Google account, across a rebuild
 
-A rebuilt database has no `google_account` row, so `03` and `11` would fail on every clean run. The
+A rebuilt database has no `google_account` row, so `03`, `10` and `11` would fail on every clean run. The
 refresh token survives -- it is in the platform secret store, which no rebuild touches -- but the identity
 and calendar the app reads are rows, and they do not.
 
 **Connect an account once**, on Settings -> App. From then on `run.sh` captures that row *before* each
 rebuild and `00-setup` writes it back afterwards, so `03` finds an account on every run. `11` still asks for
 a sign-in each time, because signing back in is what it tests.
+
+When a run has no account, or has one whose sign-in is missing from the secret store, `00-setup` opens Settings on
+the App tab and asks for the sign-in; answering n carries on and lets those scripts fail.
 
 The captured file is `~/.config/facet/scripted-seed.json`, **outside the repository** and beside the
 OAuth client credentials it belongs with. It holds a real email address and a real calendar id, and this
@@ -71,7 +90,8 @@ checkout.
 ## A new calendar every run
 
 `03-settings-window` **deletes** the calendar the last run made, presses Create, and renames the fresh
-one to `Facet-test`. All three go through the app's own controls.
+one to the app's process name, `facet-mac` or `facet-linux`, so the two machines' test calendars in one Google
+account can be told apart. All three go through the app's own controls.
 
 **It happens there, before anything records an entry, so the run's events survive the run.** Recording
 an entry sweeps every unsynced row into whatever calendar the app currently holds. Replacing the
@@ -91,7 +111,7 @@ the Keychain item, so macOS asked permission -- and because signing in again cre
 "Always Allow" was thrown away and it asked again after every run that exercised `11`. The app holds that
 token already and never has to ask.
 
-**You will not end up with a pile of `Facet-test` calendars.** Steady state is one: each run deletes the
+**You will not end up with a pile of test calendars.** Steady state is one per machine: each run deletes the
 previous before making its own. If a delete fails the id stays in the row, so the next capture picks it
 up and the next run tries again -- which matters because `calendarList.list` returns nothing usable under
 the `calendar.app.created` scope, so a calendar that escapes cleanup is invisible from then on and can
@@ -112,21 +132,42 @@ guard is the only thing standing between the two, which is why every script chec
 **Take your hands off.** These drive the real cursor and the real window on your real screen. A click
 you make while a script is running lands in whatever the script just opened.
 
+## Driving the Linux box over ssh
+
+An ssh shell lacks the desktop session's environment, and the drivers need it:
+
+```sh
+export DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority XDG_RUNTIME_DIR=/run/user/1000 \
+       DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+```
+
+The tower's other details are in [`system-linux.md`](../../docs/system-linux.md).
+
 ## Running some of them
 
 ```sh
-Tests/Scripted/run.sh 04              # scripts whose name contains "04"
+Tests/Scripted/run.sh 04              # scripts whose path contains "04"
 Tests/Scripted/run.sh categories      # or a word from the name
 Tests/Scripted/run.sh --keep-running  # leave the app up afterwards, to look at a failure
 Tests/Scripted/run.sh --keep 09       # one script, against the database as it stands
+Tests/Scripted/run.sh --keep-going    # a failed check no longer stops its script
 ```
+
+**There is one filter, and the last argument that is not a flag wins.** It is a substring of the script's path, so
+`5` runs `05` and every script from `50` to `59`. **A filtered run still writes the machine's stamp**, with a
+`filter:` line, and the CI gate refuses it, so restore the committed stamp from git or finish with a full run
+before pushing.
+
+**The device range cannot be run from a filter alone.** `50-device-scan` reads the answer `00-setup` records in
+`logs/device-gate`, which `run.sh` deletes at the start of every run, so it passes only in a full run. `51` pairs
+the cube, and `52` and above need one already paired and connected and stop at once without one.
 
 **`00-setup` is a prerequisite and not merely the first script**, and skipping it fails in a way that
 points at the app. A rebuilt database has `debug` off -- `crates/facet-core/resources/database/011_setting.sql` seeds
 `{"enabled":false,"directory":""}` -- and `00-setup` is what turns it on. So an app launched without it
 has no logger at all, by design, and every check polling the trace reports something like
 
-    FAIL  no debug_log row matching 'Launch mode:%' within 20s
+    FAIL  no debug_log row matching 'Facet is in the % Right click the icon for the menu' within 20s
 
 which reads as a launch that went wrong rather than as a trace nobody enabled. `Tests/Scripted/run.sh 01`
 on its own does exactly this (measured 2026-09-20). Run `00` first, then the subset with `--keep`.
@@ -152,22 +193,20 @@ cube to make itself work.
 forgets it and pairs again to be sure of what it is starting from -- the run is a sequence, and a cube
 sitting there connected is exactly as good as one paired thirty seconds ago.
 
-`51` ends by restarting the app, which is the other half of what it hands on. Not for the mode -- since
-2026-08-29 the app reads `paired` when it is asked, so a pairing on its own is enough to make it follow
-the cube -- but for the link: what the range inherits is a cube the app has reached, with a face, a
-charge and a status behind it.
+`51` leaves the link up with the Settings window shut, and asks for the cube to be put down on Break if it is on
+another face, since a face with no category has the app pause the cube as soon as it counts there. What the range
+inherits is a paired cube the app has reached, with a face, a charge and a status behind it. (Since 2026-08-29 the
+app reads `paired` when it is asked, so a pairing on its own is enough to make it follow the cube.)
 
-A script whose subject *is* giving a cube up puts it back before it finishes: the wipe in `52`, and the
-checked forgets in `53`, `54`, `55` and `56`. That is `restore_the_pairing`, and it is not a check --
-whether a cube can be paired again is not what any of those scripts is about -- but it does stop the run
-if it cannot, because everything after it would otherwise fail at a cube that is not there.
+A script whose subject *is* giving a cube up puts it back before it finishes: the wipe in `52` and the forget in
+`53`. That is `restore_the_pairing`, and it is not a check, but it does stop the run if it cannot, because
+everything after it would otherwise fail at a cube that is not there.
 
-**Three of them still take the link down and let it back up**, which is a different thing from pairing:
-`54`, `55` and `57` each assert on what the app does *as a link comes up* -- the charge pulled on
-connecting, the face read as the link opens, the clock set after the login -- and a connection that is
-already up wrote those rows before the script could mark anything. `relink_a_cube` quits and relaunches,
-and the app reconnects to the cube it already has. No scan, no pairing. It is the same call `51` ends
-with.
+**Seven scripts take the link down and let it back up instead**, which is a different thing from pairing: `54`,
+`55`, `57`, `59`, `64` and `66` call `relink_a_cube` to assert on what the app does *as a link comes up*, and `56`
+ends with it. It quits and relaunches, the app reconnects to the cube it already has, and `free_the_cube` then
+frees what the quit left paused and locked: Unlock, then Resume (Unlock never changes whether the cube is
+paused), and a wait for the table to show the cube running. No scan, no pairing.
 
 ## What a failure looks like
 
@@ -192,7 +231,8 @@ wrong place.
 Each script depends on what the ones above it proved, so they read top to bottom as the app coming up
 and then being used.
 
-**Below `50` needs no TimeFlip; `50` and above needs one.** The number says what a script requires
+**Below `50` needs no TimeFlip; `50` and above needs one.** `00-setup` is the one exception: it is not a check,
+it asks whether the run may use the cube, and on a yes sets it up for `50`. The number says what a script requires
 before anybody opens it, and that is the whole of the rule: a check that does not touch the device is
 written somewhere in `01`-`49`, and a check that does is written at `50` or above. Both ranges have
 room, so a new script takes the next free number in its own half and nothing is renumbered to make
@@ -217,9 +257,12 @@ What this does *not* cover is a device legitimately having nothing to say -- a c
 this Mac its name, say. That is not a check failing to run, it is the app handling a real case
 correctly, so it passes and the line says which case it met.
 
+**A script that cannot run on a platform declares `EXPECTED_CHECKS=0` there and is not counted as short**:
+`58-wrong-pin` on macOS, shown in the stamp as 0 of 0. That is a declared difference between platforms, not a skip.
+
 | | |
 |---|---|
-| `00-setup` | seeds what a rebuilt database cannot have: the Google account, and history with fractional durations |
+| `00-setup` | puts the app and the database into the state a run starts from: debug logging on, the connected Google account written back, and, when the run may use the cube, the cube paired, put on Break and factory reset (**asks whether it may use your TimeFlip, for a Google sign-in if the run has no account, and for Return once the cube is on Break**) |
 | `01-launch` | the launch reaches the status item, the debug log records, and a second copy stands down before opening either database |
 | `02-menu-bar` | the status item, the idle line reading Facet, its menu, and Settings from the menu |
 | `03-settings-window` | the window opens, the tabs switch, it closes by the window manager, its Close button and Escape, and the run's calendar is made |
@@ -234,16 +277,16 @@ correctly, so it passes and the line says which case it met.
 | `13-device-tab` | the Device tab's two sections folding, including a fold inside a fold, and every Settings control dead with no cube |
 | `14-time-zone` | a time entry, its segment and the trace filed under this machine's own zone, read from the operating system, with its local time beside it |
 | `50-device-scan` | the scan lists the cube, stops when pressed, ends by itself after fifteen seconds, and All Devices widens it |
-| `51-device-connect` | pairing: every step of the login, the PIN rotated or kept, what the table and the tab say afterwards, and Reset offered and called off |
+| `51-device-connect` | pairing: every step of the login, the PIN rotated or kept, what the table and the tab say afterwards, and Reset offered and called off (**asks you to put the cube on Break if it is not**) |
 | `52-device-reset` | the factory reset: asked, called off, then sent, proved on the vendor PIN, and forgotten, and the wiped cube paired onto a new PIN |
 | `53-device-reconnect` | a quit closing the link, a paired app reaching its own cube at launch with the window shut and the menu bar saying Connecting..., Forget, and a launch with nothing paired |
 | `54-device-battery` | the charge read as the link comes up, followed from then on, and shown on the tab, and the battery warning row |
 | `55-device-face` | the login's clock and face, history filed into `device_event` and growing in place, the Faces tab following the cube, and a turn opening a new segment (**asks you to turn the cube**) |
 | `56-manual-mode` | a paired app that cannot find its cube: what a click refuses, and what taking manual mode stops (**asks you to switch Bluetooth off and on**) |
 | `57-cube-pause` | the menu's Pause, Resume, Lock and Unlock on the cube, each read back, the pause before the lock, a left click pausing and a double click locking, and the quit leaving it paused and locked, from the menu and on a SIGTERM |
-| `58-wrong-pin` | a cube that refuses this app's PIN: the offer, Retry, and taking manual mode (**asks you to answer a dialog twice**). Not run on macOS, where the Keychain prompts after the PIN item is rewritten |
-| `59-double-tap` | the four registers: stepped, sent, read back off the cube, then written down, and dead while the gesture is off |
-| `60-device-backlog` | a cube out of range: what the app shows, what it refuses to write, and what the cube backfills when it returns (**asks you to switch Bluetooth off and on, and to turn the cube in between**) |
+| `58-wrong-pin` | a cube that refuses this app's PIN: the not-found notice, Rescan with the PIN still wrong, Time by Hand, then the real PIN put back and a fresh launch reaching the cube. Asks for nothing. **Not run on macOS** (declares no checks there), where the Keychain prompts after the PIN item is rewritten |
+| `59-double-tap` | the cube's double tap kept off: its registers read at every login with the window at 0, and nothing sent to change them |
+| `60-device-backlog` | a cube out of range: what the app shows, what it refuses to write, and what the cube backfills when it returns (**asks you to switch Bluetooth off, turn the cube onto Meeting, switch Bluetooth on, and turn the cube back onto Break**) |
 | `61-lock-without-pause` | locking the cube from the menu with `pause_on_lock` off |
 | `62-forced-pause` | the app stopping the cube itself: a face with no category, lifted once the face is given one, and a category that has spent its `daily_limit` (**asks you to turn the cube twice**) |
 | `63-led-settings` | the cube LED: brightness and blink period stepped, sent to the cube, then written down |
@@ -251,7 +294,7 @@ correctly, so it passes and the line says which case it met.
 | `65-auto-pause` | the cube auto-pause delay: stepped, sent as `0x05`, read back with `0x10`, then written down, and the cube stopping itself on it (**asks you to turn the cube, then to leave it alone for a minute**) |
 | `66-device-rename` | the cube renamed from the Device tab: `0x15` to the hardware, the row written only after it, and the cube still found afterwards |
 | `67-pause-on-lock` | the pause-on-lock row: written to the table and sent nowhere |
-| `68-device-link-lost` | the link dropping is noticed and recorded, the pairing kept, and a relaunch reaching the cube again (**asks you to switch Bluetooth off and on**) |
+| `68-device-link-lost` | the link dropping is noticed and recorded, the pairing kept, and, once Bluetooth is back, the app reaching the cube again by itself with no relaunch (**asks you to switch Bluetooth off and on**) |
 | `69-history-timer` | the history timer firing on the interval the table holds, and a changed interval read at the next arming with no relaunch |
 | `99-quit` | the cube factory reset, so it is left on the vendor PIN, and the app quitting |
 
@@ -275,6 +318,7 @@ and a script that tidied up would be deleting the thing somebody wants to look a
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
+EXPECTED_CHECKS=2
 start "what this script checks"
 
 since=$(mark)
@@ -285,6 +329,10 @@ check "the table agrees" "1" "$(sql 'SELECT ...;')"
 
 finish
 ```
+
+**`EXPECTED_CHECKS` is how many checks the script passes when everything works**, a bare number at the start of a
+line. `finish` fails a script that passes any other number, and `scripts/check-scripted-stamps.sh` refuses a
+script without one.
 
 ## CI checks that you ran them
 
@@ -307,20 +355,23 @@ scripts/check-scripted-stamps.sh --branch "$(git branch --show-current)"
 ```
 
 First it checks every numbered script is runnable: it parses, is executable, calls `finish`, guards the
-database with `require_test_database` and declares `EXPECTED_CHECKS`. Then, **for each of the two stamps**,
+database with `require_test_database` and declares `EXPECTED_CHECKS` (and that `platform.sh`, `lib.sh` and
+`run.sh` parse and are executable). Then, **for each of the two stamps**,
 it requires all of:
 
 - the run was on **this** branch;
 - it **passed**, with zero failing checks;
 - **every numbered script ran, and each passed exactly the checks it declares.** This suite has no skip
   verdict, so a check that could not answer shows here as a script short of its `EXPECTED_CHECKS`. In
-  practice a run meant for a pull request needs the cube in reach, an account connected and every prompt
-  answered, once there are checks that want them. The failure names each short script;
+  practice a run meant for a pull request needs the cube in reach, a Google account connected and every prompt
+  answered. `58-wrong-pin` on macOS declares no checks and is not counted as short. The failure names each short
+  script;
 - the tree was **clean** when it ran, since a run against uncommitted changes is not evidence about the
   commit it names;
 - the commit it names is **in this branch's history**, and nothing under `crates/` (the DDL included),
-  `Tests/Scripted/`, `Cargo.toml` or `Cargo.lock` has changed since. The stamps and the other Markdown in
-  `Tests/Scripted/` are left out of that, so committing one machine's stamp does not make the other's stale.
+  `scripts/`, `Tests/Scripted/`, `Cargo.toml` or `Cargo.lock`
+  has changed since. Markdown is left out of that wherever it is, the stamps included, so committing one machine's
+  stamp does not make the other's stale and a change to the documentation does not make either one stale.
 
 That last one is why the stamp carries a commit rather than a date. The old checklists recorded a date and
 a branch, so a run from before the last five commits looked exactly like one from after them. Editing a
@@ -372,7 +423,9 @@ source Tests/Scripted/platform.sh
 sqlite3 "$DEBUG_DB" \
   "SELECT logged_at, tag, message FROM debug_log ORDER BY debug_log_id DESC LIMIT 40;"
 
-python3 scripts/ax-dump.py --app facet-mac   # what the script can see and press
+python3 scripts/ax-dump.py --app facet-mac      # macOS: what the script can see and press
+python3 scripts/at-dump.py --app facet-linux    # Linux
+tail -40 logs/app.log                           # what the app printed itself; a crash on the way up lands only here
 ```
 
 [`Tests/Methods.md`](../Methods.md) is the reference for both, and for the traps that have already cost

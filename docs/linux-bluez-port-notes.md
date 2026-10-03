@@ -5,13 +5,14 @@
 **Host-stack notes, not firmware.** What the *cube* does is
 [`timeflip2-firmware-observations.md`](timeflip2-firmware-observations.md), and a fact belongs there only if it is
 about the hardware. This file is the other half: what **BlueZ** does, where it differs from CoreBluetooth, and which
-of those differences will cost somebody an afternoon. It exists because the Linux port has to rebuild the four files
-that `import CoreBluetooth` -- `BluetoothRadio`, `DeviceLogin`, `TimeFlipUUIDs`, `BLETrace` -- against a stack whose
-shape is not the same.
+of those differences will cost somebody an afternoon. It was written for the Swift port, which rebuilt the four
+files that `import CoreBluetooth` (`BluetoothRadio`, `DeviceLogin`, `TimeFlipUUIDs`, `BLETrace`) against BlueZ.
+**The Rust app reaches BlueZ through `btleplug` (`crates/facet-adapters/src/radio.rs`) and does not call D-Bus
+itself**; the traps below are the ones that adapter had to meet.
 
-Everything here was measured on **Linux Mint 22.3, BlueZ 5.72, adapter `hci0`, 2026-09-06**, against the cube
-described in the observations file. `scripts/linux-ble-probe.py` is the run: it walks the same sequence
-`DeviceLogin` does and prints what came back, and it is the reference implementation for the D-Bus calls below.
+Everything here was measured on **Linux Mint 22.3, BlueZ 5.72, adapter `hci0`, 2026-09-06**, except where a section
+gives its own date, against the cube described in the observations file. `scripts/linux-ble-probe.py` is the run:
+it walks the same sequence `DeviceLogin` does and prints what came back, and it is the reference implementation for the D-Bus calls below.
 
 ## It works
 
@@ -52,23 +53,25 @@ arriving as a `PropertiesChanged` carrying `ay` and read as `[UInt8]`. The `0x10
 sent and its answer parsed by the app's own `DeviceCommandRules`: **not locked, paused, auto-pause 5
 minutes**, off a fresh factory reset.
 
-**Still not written: anything but the PIN and `0x10`.** No pause, no lock, no colour, no task parameters.
-The write path is proven for six bytes to the password characteristic and one command byte, and no
-further.
+**Not written as at 2026-09-07: anything but the PIN and `0x10`.** No pause, no lock, no colour, no task
+parameters. The write path was proven for six bytes to the password characteristic and one command byte, and no
+further. The Rust app has since written pause, lock, colours, LED and task parameters over this stack, with `55`,
+`57`, `63`, `64` and `65` passing on Linux.
 
-### Three things measured while doing it that are not in the traps above
+### Four things measured while doing it that are not in the traps below
 
-**6. A `ReadValue` publishes a `PropertiesChanged` of its own**, so a read and a device push are
+**A. A `ReadValue` publishes a `PropertiesChanged` of its own**, so a read and a device push are
 indistinguishable at the signal level. Measured the hard way: a probe polling `faces` once a second
 produced 39 signals that all looked like notifications and were its own doing. Anything counting pushes
 must not be reading the same characteristic while it counts.
 
-**7. `le-connection-abort-by-local` is a transient rather than a refusal.** A `Connect` made a few
+**B. `le-connection-abort-by-local` is a transient rather than a refusal.** A `Connect` made a few
 seconds after disconnecting the same cube is refused with it, because BlueZ is still tidying up the
-previous link, and the next attempt succeeds. `BlueZRadio.attemptConnect` retries it four times over six
-seconds and throws everything else -- which matters because a reconnect is exactly when it happens.
+previous link, and the next attempt succeeds. The Swift app's `BlueZRadio.attemptConnect` retries it four times
+over six seconds and throws everything else -- which matters because a reconnect is exactly when it happens.
+The Rust adapter's retry is in trap 6 below.
 
-**8. Two strings on the events data characteristic that the ASCII table does not have.**
+**C. Two strings on the events data characteristic that the ASCII table does not have.**
 
 **Not that it carries ASCII**, which the vendor spec says outright -- *"Notifications about events in
 TimeFlip, saved to events log. Sent in ASCI text format"* -- and which
@@ -97,7 +100,7 @@ evidence file the same way rows 20001 to 20051 were, since a probe prints rather
 rows. That file is where a reader looks for what the hardware does; this one is where the BlueZ mechanics
 live, and the strings belong in the first.
 
-**9. Three existing findings confirmed through a second stack**, all now noted in their own place in
+**D. Three existing findings confirmed through a second stack**, all now noted in their own place in
 `timeflip2-firmware-observations.md` rather than argued here:
 
 - **Finding 4**, the inverted password byte: `0x02` on a correct PIN, not the `0x01` the spec promises.
@@ -210,4 +213,5 @@ python3 scripts/linux-ble-probe.py --watch-seconds 0   # skip the stage that nee
 
 Needs `python3-dbus` and `python3-gi`, both of which are on a stock Mint desktop. It exits non-zero if any stage
 failed, and it names the stage. **The cube holds one connection at a time**, so quit Facet on the Mac first --
-that is the likeliest way to waste a run.
+that is the likeliest way to waste a run. **A cube that is connected to another machine does not advertise**
+(observed 2026-10-01), so a scan here does not hear it, and in the scripted suite `00-setup` fails at pairing.

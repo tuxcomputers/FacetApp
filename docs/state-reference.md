@@ -4,8 +4,10 @@ The name of every state in this app. **One state, one name, used everywhere.**
 
 A second spelling of a state listed here is not an alternative, it is a rename waiting to happen.
 
-Its companion is `docs/state-audit.md`: the snapshot of what the code calls these things today, and the sweep
-list that maps every current spelling onto the name given here. Section numbers match between the two files.
+Its companion, `docs/state-audit.md`, is the Swift tree's snapshot of what that code called these things and the
+sweep list that mapped every spelling onto the name given here. It stayed in the reference tree
+(`~/harry.git/TimeFlipLinux/docs/state-audit.md`, or `~/harry.git/TimeFlipApp/docs/state-audit.md` on the Linux
+box) and has no counterpart for the Rust code. Section numbers match between the two files.
 
 ## The convention
 
@@ -53,27 +55,27 @@ wanted to work without the cube.
 
 | Name | Values | Truth |
 | --- | --- | --- |
-| `isManualMode` | true / false | `ManualTimerRules.isManualMode(isCubePaired:hasGivenUpOnCube:)`, both read at the point of use |
-| `isTestDatabase` | true / false | `DatabaseEnvironment`, from `setting.db_type.type` |
-| `isQuitting` | true / false | `setting.connection.quit_request`, plus `QuitSequence` progress |
-| `isDebugEnabled` | true / false | `setting.debug.enabled`, read at launch and told to `DebugLog` by the Settings window |
+| `isManualMode` | true / false | `ManualTimerRules.isManualMode(isCubePaired:hasGivenUpOnCube:)`, both read at the point of use; in Rust `timing::is_manual_mode(is_cube_paired, has_given_up_on_cube)` in `facet-core`, called by `Faces::is_manual_mode` with `setting.paired.paired` read at that moment |
+| `isTestDatabase` | true / false | `DatabaseEnvironment`, from `setting.db_type.type`; in Rust `setting::database_type` |
+| `isQuitting` | true / false | `setting.connection.quit_request`, plus `QuitSequence` progress; in Rust a `Cell<bool>` local to `main` in each platform crate guarding a second quit, with `setting.connection.quit_request` written by `device::rows` at a clean quit |
+| `isDebugEnabled` | true / false | `setting.debug.enabled`, read at launch and told to `DebugLog` by the Settings window; in Rust `Trace::is_recording`, built from `setting::debug_trace` at launch and switched by the App tab through `Trace::set_recording` |
 
 ## 2. Pairing and the link
 
 | Name | Values | Truth |
 | --- | --- | --- |
 | `isCubePaired` | true / false | `setting.paired.paired` |
-| `isCubeConnected` | true / false | `BluetoothRadio.connectedDevice != nil` |
-| `isLinkSettled` | true / false | `FaceColourSync.isLinkSettled`, set by `BluetoothRadio.onCubeSettled` |
-| `isScanning` | true / false | `BluetoothRadio.isScanning` |
-| `isScanWanted` | true / false | `BluetoothRadio.wantsToScan` |
-| `isReachingForCube` | true / false | `BluetoothRadio.isReaching` |
-| `isAwaitingAnswer` | true / false | `DeviceReconnector.isAwaitingAnswer` |
+| `isCubeConnected` | true / false | `BluetoothRadio.connectedDevice != nil`; in Rust `Device::is_cube_connected()`, a link is held and no factory reset is running |
+| `isLinkSettled` | true / false | `FaceColourSync.isLinkSettled`, set by `BluetoothRadio.onCubeSettled`; no Rust counterpart |
+| `isScanning` | true / false | `BluetoothRadio.isScanning`; in Rust `Device.is_scanning` (and see *Rust spellings that differ from the register*) |
+| `isScanWanted` | true / false | `BluetoothRadio.wantsToScan`; no Rust counterpart |
+| `isReachingForCube` | true / false | `BluetoothRadio.isReaching`; in Rust `Device.is_reaching_for_cube` |
+| `isAwaitingAnswer` | true / false | `DeviceReconnector.isAwaitingAnswer`; no Rust counterpart |
 | `hasGivenUpOnCube` | true / false | `DeviceReconnector.hasGivenUpOnCube`, per launch and one-way; in Rust `Faces.has_given_up_on_cube`, set by Time by Hand on the not-found notice |
-| `hasReadTheCube` | true / false | `CubeFirstReading`, per launch and one-way |
-| `isConnecting` | true / false | `CubeFirstReading.isConnecting(isManualMode:)` |
-| `isDisconnectingDeliberately` | true / false | `BluetoothRadio.isDisconnectingDeliberately`, and the argument of `BlueZCubeRadio.dropTheLink` |
-| `isFactoryResetRunning` | true / false | today two separate flags; in Rust one, `Device.is_factory_reset_running` in `facet-ui`, from the confirmed `0xFF` until its proof ends |
+| `hasReadTheCube` | true / false | `CubeFirstReading`, per launch and one-way; no Rust counterpart |
+| `isConnecting` | true / false | `CubeFirstReading.isConnecting(isManualMode:)`; in Rust `Device::is_connecting()`, reaching for the cube, not connected, and not in the wait before looking again after a drop |
+| `isDisconnectingDeliberately` | true / false | `BluetoothRadio.isDisconnectingDeliberately`, and the argument of `BlueZCubeRadio.dropTheLink`; no Rust counterpart |
+| `isFactoryResetRunning` | true / false | in Swift two separate flags; in Rust one, `Device.is_factory_reset_running` in `facet-ui`, from the moment the reset is confirmed in the dialog until its proof ends (`reset_ended`) |
 | `isEditingDeviceName` | true / false | `DeviceData.is-editing-device-name`, the Name row's field being open |
 | `renameRefusal` | `notPaired`, `notConnected`, `nameUnknown`, or none | `device::name::rename_refusal`, read from the table at the point of use |
 
@@ -91,6 +93,11 @@ clears the face, the lock and the pause at the radio, so the three facts alone c
 holds `hasReachedCube` for the same reason and is deliberately not the same fact -- that one settles whether the
 not-found dialog may still be raised, and it moves at the earlier moment.
 
+**In Rust there is no `hasReadTheCube`.** `Device::is_connecting()` in `crates/facet-ui/src/device.rs` answers the
+same question as reaching for the cube, not connected, and not in the wait before looking again after a drop; that
+last clause is what keeps `Connecting...` to startup. It feeds `StatusFacts.is_connecting` in
+`crates/facet-core/src/status_line.rs`.
+
 `isLinkSettled` is a third question again, and it is not `isCubeConnected` said later. The connection turns true
 several round trips before the login has finished asking the cube its own questions, and until it has, the command
 channel belongs to the login: the `0x17` read it has outstanding does not set `isCommandInFlight`, so a command sent
@@ -98,8 +105,8 @@ in that window is written over it rather than refused. So `isCubeConnected` is w
 this is whether it may be sent to yet. Measured on 2026-08-28: over 26 connects the cube answered the systemState read
 about 480ms before the login settled, every time.
 
-`isFactoryResetRunning` is one fact currently held as two flags set and cleared independently. The sweep gives
-it one name; whether it should also be one flag is a code question, not a naming one.
+`isFactoryResetRunning` is one fact held in the Swift tree as two flags set and cleared independently (in Rust it
+is one flag). The sweep gives it one name; whether it should also be one flag is a code question, not a naming one.
 
 `isReadingTheValue` is **not** `isReadingBack` said again, and the two being one fact is what a read-back cost on
 Linux (2026-09-13). `isReadingBack` is whether this exchange is going to want an answer, and it is true from the
@@ -109,23 +116,30 @@ reply carries no echoed command byte and the characteristic frequently holds the
 the first of the two had every login on that platform take the duplicate of its own `0x17` answer as the cube's
 state, and had a quit report a command refused that the cube had taken.
 
+The paragraphs above about `isLinkSettled`, `hasReadTheCube`, `isReadingBack` and `isReadingTheValue` describe the
+Swift login, which interleaved reads on one command channel. The Rust login (`facet_core::device::session`) runs
+each exchange in turn on a worker thread and holds none of these as flags. The measurements stand as the reason the
+exchanges are sequenced.
+
 ## 3. In-flight work
 
 | Name | Truth |
 | --- | --- |
-| `isCommandInFlight` | `DeviceLogin.isBusy` |
+| `isCommandInFlight` | `DeviceLogin.isBusy`; no Rust counterpart |
 | `isHistoryFetching` | `HistoryIngestor.isRefreshing`; in Rust `Device.is_history_fetching`, with `is_another_fetch_wanted` holding the one re-run |
 | `isForcedPauseSending` | `ForcedPauseWatch.isSending`; in Rust `Device.is_forced_pause_sending`, held until the fetch that files the decision lands |
-| `isCalendarSweeping` | `CalendarSync.isSweeping` |
-| `isAnotherSweepWanted` | `CalendarSync.wantsAnotherPass` |
-| `isReadingBack` | `DeviceLogin.isReadingBack` |
-| `isReadingTheValue` | `CubeCommandChannel.isReadingTheValue` |
-| `isReadingDeviceInfo` | `DeviceLogin.isReadingInfo` |
-| `isReadingDoubleTap` | `DeviceLogin.isAskingAboutTaps` |
+| `isCalendarSweeping` | `CalendarSync.isSweeping`; in Rust `Google.is_calendar_sweeping` |
+| `isAnotherSweepWanted` | `CalendarSync.wantsAnotherPass`; in Rust `Google.is_another_sweep_wanted` |
+| `isReadingBack` | `DeviceLogin.isReadingBack`; no Rust counterpart |
+| `isReadingTheValue` | `CubeCommandChannel.isReadingTheValue`; no Rust counterpart |
+| `isReadingDeviceInfo` | `DeviceLogin.isReadingInfo`; no Rust counterpart |
+| `isReadingDoubleTap` | `DeviceLogin.isAskingAboutTaps`; no Rust counterpart |
 | `isFollowingBattery` | `DeviceLogin.isFollowingBattery`; in Rust not held, the subscription made at login being the whole of it (`Following the battery`) |
-| `isSigningIn` | `AppSettingsPane.isSigningIn`, both platforms |
+| `isSigningIn` | `AppSettingsPane.isSigningIn`, both platforms; in Rust `Google.is_signing_in` |
 | `isCalendarChanging` | `AppSettingsPane.isCalendarChanging` -- a create, rename or delete is out |
 | `isWriteInFlight` | `DeviceSettingsSync.isWriteInFlight(_:)`, per setting |
+| `hasSaidTaskParameters` | `Device.has_said_task_parameters`, said once per link and cleared at the next login |
+| `hasReportedWaiting` | `Google.has_reported_waiting`, true once entries left waiting with nowhere to go have been said since the last pass that sent any |
 
 ## 4. The cube's own condition
 
@@ -139,13 +153,14 @@ state, and had a quit report a command refused that the cube had taken.
 | `batteryWarningPercent` | 1 to 20 | `setting.low_battery_level.percent` |
 | `isBatteryLow` | true / false | `LowBatteryWatch.isLow`, latched; in Rust `Device.is_battery_low`, decided by `device::info::is_battery_low` |
 | `isBlinkOn` | true / false | `LowBatteryWatch` display phase; in Rust `Device.is_blink_on` |
-| `cubeSyncState` | `ok`, `factoryReset`, `timeRequired`, `faceColoursRequired`, `ledBrightnessRequired`, `blinkIntervalRequired`, `taskParametersRequired`, `autoPauseRequired`, `unknown` | `DeviceSystemStateRules.Sync` |
-| `cubeHardwareState` | `ok`, `accelerometer`, `flash`, `accelerometerAndFlash`, `unknown` | `DeviceSystemStateRules.Hardware` |
-| `isDoubleTapEnabled` | true / false | `setting.double_tap_settings.enabled` |
+| `cubeSyncState` | `ok`, `factoryReset`, `timeRequired`, `faceColoursRequired`, `ledBrightnessRequired`, `blinkIntervalRequired`, `taskParametersRequired`, `autoPauseRequired`, `unknown` | `DeviceSystemStateRules.Sync`; in Rust `device::system_state::CubeSyncState` (same cases) |
+| `cubeHardwareState` | `ok`, `accelerometer`, `flash`, `accelerometerAndFlash`, `unknown` | `DeviceSystemStateRules.Hardware`; in Rust `device::system_state::CubeHardwareState` (same cases) |
+| `isDoubleTapEnabled` | true / false | `setting.double_tap_settings.enabled`; no Rust counterpart |
 
-`cubeLockState` and `cubePauseState` are the two largest changes here. Both are `Bool?` today with `nil`
-meaning nobody has asked, and both are read as `== true`, a comparison that looks like a mistake and is in
-fact the whole "unknown counts as unlocked" decision. As three cases the branch says what it means.
+`cubeLockState` and `cubePauseState` are the two largest changes here. In the Swift tree both were `Bool?` with
+`nil` meaning nobody has asked, and both were read as `== true`, a comparison that looks like a mistake and is in
+fact the whole "unknown counts as unlocked" decision. The Rust app has not made them three cases:
+`Device::is_cube_locked()` returns `Option<bool>` and its callers compare with `== Some(true)`.
 
 `cubePauseState` carries a trap no name can fix: a locked cube reports itself paused whatever its pause byte
 says, so a pause confirmed after a lock proves nothing and pause is confirmed first.
@@ -154,13 +169,13 @@ says, so a pause confirmed after a lock proves nothing and pause is confirmed fi
 
 | Name | Values | Truth |
 | --- | --- | --- |
-| `timingState` | `idle` / `running` / `paused` | `ManualTimerRules.state(categoryID:isRunning:)` |
-| `isCounting` | true / false | `TimingReadout.Reading.isCounting`, answered by `DayTotal` |
-| `isRepaintTicking` | true / false | `tick != nil` on both view controllers |
-| `isSegmentOpen` | true / false | `events.openSegment() != nil`, over `device_event.finalised = 0` |
-| `isAppFace` | true / false | `face > 12` |
+| `timingState` | `idle` / `running` / `paused` | `ManualTimerRules.state(categoryID:isRunning:)`; in Rust `timing::TimingState`, carried by `timing::Reading.timing_state` |
+| `isCounting` | true / false | `TimingReadout.Reading.isCounting`, answered by `DayTotal`; in Rust `timing::Reading.is_counting`, from `timing::is_counting` |
+| `isRepaintTicking` | true / false | `tick != nil` on both view controllers; no Rust counterpart |
+| `isSegmentOpen` | true / false | `events.openSegment() != nil`, over `device_event.finalised = 0`; in Rust `segment::open_segment` returning `Some` |
+| `isAppFace` | true / false | `face > 12`; in Rust `face::is_app_face` |
 | `isHistoryTimerArmed` | true / false | `HistoryTimer.holder.timer != nil`; in Rust `Device.history_timer.running()`, armed while a link is held |
-| `hasSomethingToFollow` | true / false | an open segment or a connected cube |
+| `hasSomethingToFollow` | true / false | an open segment or a connected cube; no Rust counterpart |
 
 `timingState` already has the right name and is the model for the rest. It is also the one most often asked
 wrong: it is `idle` for the whole time a cube is followed, because the app runs no clock of its own then. A
@@ -177,17 +192,19 @@ the app's own whichever mode the launch is in.
 | `isFaceLocked` | true / false | `face.locked` |
 | `isCategoryActive` | true / false | `category.active` |
 | `dailyLimitMinutes` | 0 or more, where 0 is no limit | `category.daily_limit` |
-| `isLimitReached` | true / false | `DailyLimitEnforcement.isReached(totalSeconds:limitMinutes:)` |
-| `isLimitHoldingPause` | true / false | `DailyLimitEnforcement.isPausedByLimit` |
+| `isLimitReached` | true / false | `DailyLimitEnforcement.isReached(totalSeconds:limitMinutes:)`; in Rust `timing::is_limit_reached(total_seconds, daily_limit_minutes)` |
+| `isLimitHoldingPause` | true / false | `DailyLimitEnforcement.isPausedByLimit`; in Rust the cube's is `pauseClaim` of `dailyLimit`, and there is no separate flag |
 
 `isFaceLocked` stays a boolean even though `FaceStore.isLocked(face:)` returns `Bool?`: there `nil` means the
 number is not a face, which is a failed lookup rather than a third answer.
 
 `isLimitReached` was one name for what were four expressions in four files, and this said that naming it did not
 merge them, only made the fact that they had to agree visible. **Merged on 2026-09-10**, candidate 4 of
-`docs/architecture-review-2026-09.md`: `DailyLimitEnforcement.isResumeRefused(isLimitReached:isResuming:)` is the
-one expression, and the five sites that had their own each say only whether they are resuming. There were five
-rather than four, `CubeLock` asking twice.
+`docs/architecture-review-2026-09.md` in the reference tree:
+`DailyLimitEnforcement.isResumeRefused(isLimitReached:isResuming:)` is the one expression (in Rust
+`timing::is_resume_refused`, with `timing::is_limit_reached`, in `crates/facet-core/src/timing.rs`), and the five
+sites that had their own each say only whether they are resuming. There were five rather than four, `CubeLock`
+asking twice.
 
 `isResumeRefused` is a **decision**, not a state, so it takes no `is<Name>`/`<name>State` entry of its own: see
 *What the convention does not govern* below, alongside `ManualTimerRules.isClickable` and
@@ -197,13 +214,13 @@ rather than four, `CubeLock` asking twice.
 
 | Name | Values | Truth |
 | --- | --- | --- |
-| `lastEventNumber` | a number | `MAX(device_event.event_number)`, checked against what the cube can reach |
-| `historyFrameState` | `event` / `noSuchEvent` / `endOfStream` | `DeviceHistoryRules` |
-| `isSingleFrameRequest` | true / false | the request's own shape |
+| `lastEventNumber` | a number | `MAX(device_event.event_number)`, checked against what the cube can reach; no Rust counterpart |
+| `historyFrameState` | `event` / `noSuchEvent` / `endOfStream` | `DeviceHistoryRules`; in Rust `device::history::HistoryFrameState` (`Event`, `NoSuchEvent`, `EndOfStream`) |
+| `isSingleFrameRequest` | true / false | the request's own shape; no Rust counterpart |
 
-`historyFrameState` is three answers currently spread across two booleans, which is the shape the convention
-says is an enum: today `isNoSuchEvent` has to check `!isEndOfStream` first to avoid answering about the wrong
-frame.
+`historyFrameState` was three answers spread across two booleans in the Swift tree, which is the shape the
+convention says is an enum: there `isNoSuchEvent` had to check `!isEndOfStream` first to avoid answering about the
+wrong frame. In Rust it is the enum `HistoryFrameState`.
 
 ## 8. Google and calendar sync
 
@@ -211,14 +228,14 @@ frame.
 | --- | --- | --- |
 | `googleAccountState` | `notConnected`, `checking`, `signedOut`, `unverified`, `connected`, `expired`, `unreachable`, `unreadable` | `GoogleAccountRules.State`; in Rust `google::GoogleAccountState`, where `checking` is an account on record whose saved sign-in the secret store has not answered for yet |
 | `credentialState` | `present`, `missing`, `unavailable` | the secret store, read on a background thread with a timeout because a locked store blocks; `google::CredentialState` |
-| `googleSignInState` | `working`, `notSignedIn`, `storeUnavailable`, `unreachable`, `refused` | `GoogleCalendar.SignInState` -- what asking Google came back with, which `googleAccountState` is then worked out from |
+| `googleSignInState` | `notAsked`, `working`, `unreachable`, `refused` | Swift `GoogleCalendar.SignInState`, which also had `notSignedIn` and `storeUnavailable`; in Rust `google::GoogleSignInState`, held by `Google.sign_in` and never stored, those two being `credentialState` `missing` and `unavailable`. What asking Google came back with, which `googleAccountState` is then worked out from |
 | `hasGoogleCredentials` | true / false | client credentials present |
-| `hasGoogleIdentity` | true / false | `GoogleAccountRules.Account` |
-| `calendarSettlementState` | `check(id)` / `leaveToTheUser` | `GoogleCalendarRules.Settlement` |
+| `hasGoogleIdentity` | true / false | `GoogleAccountRules.Account`; in Rust `google::has_google_identity` |
+| `calendarSettlementState` | `check(id)` / `leaveToTheUser` | `GoogleCalendarRules.Settlement`; no Rust counterpart |
 | `isCalendarGone` | true / false | `CalendarGone` |
 | `hasReportedMissingCalendar` | true / false | `CalendarSync` |
 | `hasReportedWriteFailure` | true / false | `DebugLog` |
-| `hasReachedCube` | true / false | `CubeNotFoundOffer` |
+| `hasReachedCube` | true / false | `CubeNotFoundOffer`; no Rust counterpart |
 
 ## 9. Settings window and list UI
 
@@ -226,7 +243,7 @@ View state. Listed because it appears in branches, not because anything outside 
 
 | Name | Values | Truth |
 | --- | --- | --- |
-| `settingsTabState` | `faces`, `categories`, `report`, `app`, `device` | AppKit's `selectedTabViewItem` and GTK's `GtkNotebook` page; the cases are `SettingsTab` |
+| `settingsTabState` | `faces`, `categories`, `report`, `app`, `device`, `about` | Swift: AppKit's `selectedTabViewItem` and GTK's `GtkNotebook` page, the cases being `SettingsTab`; Rust: `SettingsWindow.active-tab`, 0 to 5, in `crates/facet-ui/ui/settings.slint`, one window on both platforms |
 | `isExpanded` | true / false | `PanelSection` / `DisclosureRow`, both platforms |
 | `isEditing` | true / false | `CategoryCreateControl`, `EditableNameCell` |
 | `isSelected` | true / false | per list |
@@ -242,14 +259,14 @@ to `isEnabled`: they are decisions computed from state, and the last section say
 
 | Name | Values | Truth |
 | --- | --- | --- |
-| `isInMonth` | true / false | `ReportCalendarGrid` |
-| `isRangeStart` | true / false | `ReportCalendarGrid` |
-| `isRangeEnd` | true / false | `ReportCalendarGrid` |
-| `isSameDay` | true / false | `ReportCalendarGrid` |
-| `isSameMonth` | true / false | `ReportCalendarGrid` |
-| `isEmphasised` | true / false | `ReportCalendar` |
-| `isSortAscending` | true / false | `ReportSortRules.Direction` |
-| `sortColumnState` | `category` / `time` | `ReportSortRules.Column` |
+| `isInMonth` | true / false | `ReportCalendarGrid`; in Rust a `ReportDay` field built in `crates/facet-ui/src/report.rs` |
+| `isRangeStart` | true / false | `ReportCalendarGrid`; in Rust a `ReportDay` field built in `crates/facet-ui/src/report.rs` |
+| `isRangeEnd` | true / false | `ReportCalendarGrid`; in Rust a `ReportDay` field built in `crates/facet-ui/src/report.rs` |
+| `isSameDay` | true / false | `ReportCalendarGrid`; no Rust counterpart |
+| `isSameMonth` | true / false | `ReportCalendarGrid`; no Rust counterpart |
+| `isEmphasised` | true / false | `ReportCalendar`; no Rust counterpart |
+| `isSortAscending` | true / false | `ReportSortRules.Direction`; in Rust `report::SortOrder.is_sort_ascending` |
+| `sortColumnState` | `category` / `time` | `ReportSortRules.Column`; in Rust `report::SortColumnState` |
 
 ---
 ## What the convention does not govern
@@ -281,15 +298,30 @@ Naming everything `is` or `State` would take in things that are not state.
 
 ---
 
+## Rust spellings that differ from the register
+
+Each of these is one fact with a second name in the Rust code. Rename the code to the register's name, or where the
+Rust name is the better one change it here; do not leave both.
+
+| Register name | Rust spelling | Where |
+| --- | --- | --- |
+| `isCalendarChanging` | `is_calendar_busy` | `Google`, `crates/facet-ui/src/google.rs` |
+| `isManualMode`, inverted | `is_following_cube` | `Faces::is_following_cube`; `StatusFacts.is_following_cube` in `crates/facet-core/src/status_line.rs` |
+| `isWriteInFlight` | `is_sending` | `EditedSetting`, `crates/facet-ui/src/device.rs` |
+| `isScanning` | `is_radio_scanning`, held beside it | `Device`, `crates/facet-ui/src/device.rs` |
+| `cubeLockState` | `is_cube_locked()` returning `Option<bool>` | `Device`; `StatusFacts.is_cube_locked` is a plain bool |
+| `hasReportedWriteFailure` | `reported_failure` | `DebugLog`, `crates/facet-core/src/debug_log.rs` |
+| `isCalendarGone` | `is_gone()` | `crates/facet-ui/src/google.rs` |
+
 ## Where the rename list lives
 
-What each of these is called in the code today, and the mapping from that to the name above, is the sweep
-list in `docs/state-audit.md`. It belongs there because it is a record of this codebase at this moment,
-while this file is the naming itself.
+The Swift tree's rename list, what each of these was called in that code and the mapping from that to the name
+above, is `docs/state-audit.md` in the reference tree. There is none for the Rust code; the Rust spellings that
+differ from this register are listed in *Rust spellings that differ from the register* above.
 
 ## The second platform has added no state of its own
 
-**Worth saying because it was not obvious it would be true.** `FacetLinux` grew a menu bar, five Settings tabs, a
+**Worth saying because it was not obvious it would be true.** The Swift Linux port (`FacetLinux`) grew a menu bar, five Settings tabs, a
 radio and the Google half, and every fact any of it branches on is already in this register -- the same names, the
 same values, mostly the same owning types, because the decisions are in `FacetCore` and only the drawing is not.
 

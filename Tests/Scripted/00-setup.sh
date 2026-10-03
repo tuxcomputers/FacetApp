@@ -25,7 +25,7 @@
 #   4. **Whether a TimeFlip may be used has been asked**, once, and the answer written for `device_required`. A no is
 #      not a setup failure: it stops the run at `50-device-scan`, after every script that needs no cube.
 #   5. **The cube is resting on Break and has been reset**, when one may be used: paired so the app can reset it, asked
-#      to be on Break, which is taken on trust once a y comes, then factory reset and forgotten, so 50 starts from a
+#      to be on Break, which is taken on trust once Return is pressed, then factory reset and forgotten, so 50 starts from a
 #      factory cube.
 #
 # **This writes straight to the tables**, which every other script in this folder is forbidden from doing.
@@ -88,7 +88,7 @@ if [ -n "$google_trouble" ]; then
     ensure_app_running
     open_settings
     select_tab App
-    if action_required \
+    if hands_required \
         "$google_trouble" \
         "03-settings-window and 11-google-reconnect both fail without a working one, so the" \
         "run cannot clear CI as it stands." \
@@ -96,7 +96,7 @@ if [ -n "$google_trouble" ]; then
         "The Settings window is open on the App tab. Press Sign in with Google (Disconnect" \
         "first if it offers that), consent in the browser, and come back here." \
         "" \
-        "Answer n to carry on without one and let 03 and 11 fail."; then
+        "Press Return once you are signed in. Without a working account 03 and 11 fail."; then
         email=$(setting google_account email)
     fi
     close_settings
@@ -129,17 +129,17 @@ setup_the_cube() {
 
     # **Asked, and taken on trust.** Which face the cube is on is not read: a face with no category has the app pause the
     # cube as soon as it counts there, so every script from 50 would inherit it stopped, and the person is asked to
-    # have it on Break and to say so with a y.
-    if action_required \
+    # have it on Break and to say so by pressing Return.
+    if hands_required \
         "Put the cube down on the Break face, and leave it there" \
         "That is face 8, the one lit red. Every device script starts from wherever the cube is now," \
         "and a face with no category stops the cube by itself." \
         "" \
-        "Answer y once it is on Break."
+        "Press Return once it is on Break."
     then
         step "the cube is on Break, as the person says, which is where the device range starts"
     else
-        trouble "the cube was not confirmed to be on the Break face, so the device scripts would start from an unknown one"
+        trouble "there was no terminal to ask, so the cube was not confirmed to be on the Break face and the device scripts would start from an unknown one"
     fi
 
     since=$(mark)

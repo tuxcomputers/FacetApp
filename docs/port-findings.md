@@ -1,14 +1,15 @@
-# Port findings: what was measured before the rewrite started
+# Port findings: what was measured on the way to the Rust app
 
 [← Back to README](../README.md) · [The Rust port →](rust-port.md) · [Architecture →](architecture.md) · [BlueZ notes →](linux-bluez-port-notes.md)
 
-**Facts established by building a second platform in Swift, kept because they cost real time to find and
-none of them is about Swift.** This file exists so the Rust port does not pay for them twice.
+**Facts established by building a second platform in Swift and then Facet in Rust, kept because they cost
+real time to find.** The earlier sections are mostly about the Swift port and none of them is about Swift; the
+later ones are Rust, Slint and the scripted suite. This file exists so nobody pays for them twice.
 
 **Everything here is measured, with the date and the machine.** Where something was reasoned rather than
 run, it says so. The full originals, including the Swift-specific material and the task lists that are now
 spent, are `docs/linux-port.md` and `docs/architecture-review-2026-09.md` in the reference tree at
-`~/harry.git/TimeFlipLinux/docs/`.
+`~/harry.git/TimeFlipLinux/docs/` (`~/harry.git/TimeFlipApp/docs/` on the Linux box).
 
 **What is deliberately *not* here:** anything about the cube's own behaviour, which is
 [`timeflip2-firmware-observations.md`](timeflip2-firmware-observations.md); anything about BlueZ as a
@@ -27,6 +28,9 @@ BlueZ, with no change to a single core module.
 suite of 1,718 tests was green throughout, and putting the thing in front of real hardware for the first
 time found three real faults in an afternoon. **Budget a hardware session per platform slot**, and do not
 treat a green suite as evidence that a slot is done.
+
+**The Rust app does it too**: pairing, reconnect, history and time entries pass on both machines in the scripted
+suite (35 scripts; Linux 865 checks at `518b1cb`, Mac 833 at `f0525f2`, 2026-10-03).
 
 ---
 
@@ -48,9 +52,15 @@ there, so a check can assert the menu-bar clock directly. **Colour cannot be rea
 being plain text, which is why the readout writes its colour decisions to `debug_log`: that is the only
 way a check sees them on **either** platform.
 
-`scripts/tray-menu.py` is the working implementation of all of the above and carries over unchanged.
+**In Rust, stock `ksni` 0.3.6 publishes only `Title`, and the XApp host draws `XAyatanaLabel` beside the icon.**
+`vendor/ksni` adds the property and its signal (see `vendor/ksni/FACET.md`), and `02` reads the label line itself
+on Linux (2026-09-30). The macOS item is the icon alone with the line as its tooltip (2026-10-01), which
+`ax-dump.py` prints as `help=`.
 
-**This finding applies to `tray-icon` in Rust as much as it did to the Swift adapter**, because it is a
+`scripts/tray-menu.py` is the working implementation of all of the above, and has changed since: it finds the
+item by asking the StatusNotifierWatcher (see "The Linux tray never went deaf" below).
+
+**This finding applies to `ksni` in Rust as much as it did to the Swift adapter**, because it is a
 fact about the StatusNotifierItem protocol rather than about the binding. It is also the answer to open
 question 4 in [rust-port.md](rust-port.md): macOS loses its status-item identifier in the move to
 `tray-icon`, and addressing by label is the pattern that already works.
@@ -245,7 +255,7 @@ an explicit width, and the slack goes to a spacer.
 font rather than to the layout, and at a heading's size it came out as a dot. Drawn as a `Path` with a
 viewbox, it is the size it is asked to be.
 
-**The renderer is the way to look at any of this.** `cargo run -p facet-mac --example draw-settings-tabs`
+**The renderer is the way to look at any of this.** `cargo run -p facet-ui --example draw-settings-tabs`
 draws each tab through Slint's software renderer into `target/settings-tabs/<n>-<tab>.png`, with no window and no
 menu bar, so a layout question does not cost a launch on the owner's screen. It is evidence about arrangement
 rather than about appearance: the fonts are rasterised by Slint and not by the platform.
@@ -317,6 +327,11 @@ both false, and `toolkit-accessibility` is what turns the first of them on.
 that forgets finds no application, and every check that presses a control fails identically to a window
 that never opened, which is the wrong diagnosis for a missing gsetting.
 
+**`Tests/Scripted/run.sh` does this**: `lib.sh` turns `toolkit-accessibility` on for the run and `run.sh` puts back
+what it found. Observed 2026-10-01: **without the session bus the put-back silently does not take effect**, so a
+run started over ssh needs `DBUS_SESSION_BUS_ADDRESS` set and its result checked with `gsettings get`.
+[system-linux.md](system-linux.md) has the four variables the tower needs.
+
 **It is a real press, not just a visible tree.** `scripts/at-press.py --app facet-linux About` reported
 `pressed 'About' (page tab)` and the app recorded `Settings tab selected: About` in `debug_log`. The
 accessibility path is proven end to end rather than inferred from the tree being present.
@@ -379,6 +394,10 @@ is pending there is no error to map, and nothing times out on the app's behalf.
   dismiss and nothing on screen to explain the wait. Anything that reads a secret in a scripted run needs
   the collection unlocked first, the same way the accessibility checks need `toolkit-accessibility`.
 
+**The app now gives the read its own timeout and a fallback.** Every secret store call goes through
+`crates/facet-ui/src/timed.rs`, which gives up after 30 seconds, and the cube's PIN has `config.json` in the data
+directory as a second home, `FileSecretStore` (2026-10-01).
+
 **This is not a fault in `keyring` and would be the same through `keyring-core`**, the blocking being the
 Secret Service's own prompt mechanism rather than a wrapper's choice. It is a property of the platform the
 port has to hold rather than something a different crate avoids.
@@ -409,6 +428,14 @@ one second with the right value. **Two commands that both look like inspection a
 against a locked keychain prompts and can unlock it, so it cannot be used to check the state a test depends
 on. What settled it instead was watching for the `SecurityAgent` process during the read, which needs
 nobody to report what they saw.
+
+**An item rewritten by the `security` tool prompts the app's next read.** Measured 2026-10-01, converting
+`58-wrong-pin`: `security add-generic-password -U` over the app's PIN item, and the app's next read of it raised a
+Keychain prompt. The app gives a secret store read up after 30 seconds (`timed::look_up`) and logs `The stored PIN
+could not be read`. **An Always Allow clicked after the asking process has gone applies to nothing**, the prompt
+belonging to the read that raised it. This is the locked keychain's constraint again: the read blocks until
+somebody answers, and the app's own timeout is what ends the wait. `58-wrong-pin` is not run on macOS.
+[system-mac.md](system-mac.md) has what signing does to the prompts.
 
 ## The shared Settings window renders identically on both platforms, once a font is packaged
 
@@ -503,8 +530,8 @@ first time. The suite passed 71 of 71 once the harness was taught these.
 6. **With no bundle, macOS names the app after the binary**, `facet-mac`, so every script that found the app
    as `Facet` found nothing. The scripts read `FACET_APP_NAME`, which `platform.sh` sets.
 
-**The Linux tray hang below has not been seen on the Mac** in about eight launches that day, which is too few to
-rule out a rate of one in fifteen but is a different tray stack (tray-icon, not ksni) in any case.
+**The Linux tray deafness recorded below was the driver's and not the app's**, so there is nothing for the Mac to
+have not shown; its tray is a different stack (tray-icon, not ksni) in any case.
 
 ## The Linux tray never went deaf: the driver was calling the wrong connection
 
