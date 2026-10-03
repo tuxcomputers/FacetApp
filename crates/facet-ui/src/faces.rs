@@ -284,6 +284,17 @@ impl Faces {
         }
     }
 
+    /// Switches the category rows live or dead, and says so in the trace when that changes them: a row that is dead is
+    /// drawn greyed, and no accessibility tree on Linux can say so.
+    fn show_rows_enabled(&self, data: &FacesData<'_>, enabled: bool) {
+        if data.get_rows_enabled() != enabled {
+            self.log.record(Tag::Timing, || {
+                format!("Category rows are {}", if enabled { "live" } else { "dead" })
+            });
+        }
+        data.set_rows_enabled(enabled);
+    }
+
     fn connect(&self) -> Option<Connection> {
         match database::connect(&self.database) {
             Ok(connection) => Some(connection),
@@ -333,7 +344,7 @@ impl Faces {
         data.set_timing_colour(colour.unwrap_or_default());
         data.set_elapsed(timing::format_duration(reading.seconds, true).into());
         data.set_glyph_enabled(timing::is_clickable(reading.timing_state, reading.is_limit_reached));
-        data.set_rows_enabled(timing::click(is_manual_mode) == timing::Click::StartTiming);
+        self.show_rows_enabled(&data, timing::click(is_manual_mode) == timing::Click::StartTiming);
 
         for changed in self.on_timing_changed.borrow().iter() {
             changed();
@@ -382,7 +393,7 @@ impl Faces {
         data.set_is_following_cube(true);
         data.set_device_face(face.map_or(0, |face| face as i32));
         data.set_is_face_locked(is_face_locked);
-        data.set_rows_enabled(face.is_some() && !is_face_locked);
+        self.show_rows_enabled(&data, face.is_some() && !is_face_locked);
         for changed in self.on_timing_changed.borrow().iter() {
             changed();
         }

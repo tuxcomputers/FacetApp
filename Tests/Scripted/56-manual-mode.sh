@@ -95,7 +95,13 @@ check "and nothing is connected" "0" "$(setting connection connected)"
 # ---------------------------------------------------------------------------- refused before a choice
 
 select_tab Faces
-check_contains "the category rows are drawn dead" "$(element "category-row-$BREAK")" "disabled"
+# AT-SPI does not report a dead row (docs/port-findings.md, Linux fact 4), so on Linux the app's own row says it.
+if [ "$PLATFORM" = "linux" ]; then
+    check "the category rows are drawn dead" "Category rows are dead" \
+        "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Category rows are %' ORDER BY debug_log_id DESC LIMIT 1;")"
+else
+    check_contains "the category rows are drawn dead" "$(element "category-row-$BREAK")" "disabled"
+fi
 since=$(mark)
 press "category-row-$BREAK"
 sleep 1.5
@@ -134,11 +140,15 @@ check "the notice goes" "no" "$(alert_is_open && echo yes || echo no)"
 check "the pairing is kept" "1" "$(setting paired paired)"
 
 select_tab Faces
-case "$(element "category-row-$BREAK")" in
-    "") fail "there is no Break row on the Faces tab" ;;
-    *disabled*) fail "the category rows are still dead after Time by Hand" ;;
-    *) pass "the category rows come alive" ;;
-esac
+if [ "$PLATFORM" = "linux" ]; then
+    expect_log "the category rows come alive" "$since" "Category rows are live" 10
+else
+    case "$(element "category-row-$BREAK")" in
+        "") fail "there is no Break row on the Faces tab" ;;
+        *disabled*) fail "the category rows are still dead after Time by Hand" ;;
+        *) pass "the category rows come alive" ;;
+    esac
+fi
 
 # The line now shows the app's own clock: the category on the app face last timed, in cyan, or the app's name in the
 # ordinary colour when that face holds none.
