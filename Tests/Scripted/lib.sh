@@ -486,19 +486,47 @@ relink_a_cube() {
     free_the_cube
 }
 
-# Unlocks and resumes a cube the quit left paused and locked, through the menu's Unlock. Answers 0 once the cube says
-# it is unlocked and running, and 1 otherwise. A cube resting on a face with no category is paused again straight
-# away by the app, which is why the run keeps it on Break.
+# Unlocks and resumes a cube the quit left paused and locked: the menu's Unlock, and then its Resume, **unlocking
+# leaving the cube paused**. Answers 0 once the cube says it is unlocked and running, and 1 otherwise. A cube resting on
+# a face with no category is paused again straight away by the app, which is why the run keeps it on Break.
 free_the_cube() {
+    free_the_cube_by_command || return 1
+    # **The table as well as the command.** The command's read-back comes before the history fetch that files the
+    # resume, and the next script reads the table first, so a cube resumed a moment ago still showed its paused row.
+    [ "$(wait_sql "0" "SELECT paused FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC, device_event_id DESC LIMIT 1;" 20)" = "0" ]
+}
+
+# The commands half of `free_the_cube`: answers 0 once the cube says it is unlocked and running.
+free_the_cube_by_command() {
     local freeing
     freeing=$(mark)
     wait_for "$freeing" "The cube is %locked and %" 25 >/dev/null
     case "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'The cube is %locked and %' ORDER BY debug_log_id DESC LIMIT 1;")" in
         "The cube is unlocked and running"*) return 0 ;;
+        "The cube is locked"*)
+            menu_press toggle-cube-lock >/dev/null || return 1
+            wait_for "$freeing" "The cube is unlocked" 20 >/dev/null || return 1
+            ;;
     esac
-    menu_press toggle-cube-lock >/dev/null || return 1
-    wait_for "$freeing" "The cube is unlocked" 20 >/dev/null || return 1
+    # The Pause item is dead while the cube is locked and comes back, reading Resume, once the unlock is read back.
+    wait_for_menu_item toggle-pause "'Resume'" || return 1
+    menu_press toggle-pause >/dev/null || return 1
     wait_for "$freeing" "The cube is running" 20 >/dev/null
+}
+
+# Waits up to 10 seconds for the menu item `$1` to read `$2` and not be greyed. Answers 0 when it does.
+wait_for_menu_item() {
+    local line="" waited=0
+    while [ "$waited" -lt 50 ]; do
+        line=$(platform_menu_item "$1")
+        case "$line" in
+            *insensitive*) ;;
+            *"$2"*) return 0 ;;
+        esac
+        sleep 0.2
+        waited=$((waited + 1))
+    done
+    return 1
 }
 
 # Asks for the cube to be put down on `face` and waits until the app says that face is up and it is still there.
@@ -1259,7 +1287,13 @@ activate_status_item() {
     [ "$status" -ne 0 ] && red "  the status item left click failed (exit $status)${output:+: $output}"
     return $status
 }
-double_click_left()  { case "$PLATFORM" in mac) click_status_item --double ;; *) platform_click_right --double ;; esac; }
+double_click_left() {
+    local output status
+    output=$(platform_double_click_left)
+    status=$?
+    [ "$status" -ne 0 ] && red "  the status item double click failed (exit $status)${output:+: $output}"
+    return $status
+}
 double_click_right() { case "$PLATFORM" in mac) click_status_item --right --double ;; *) platform_click_right --double ;; esac; }
 
 # `menu_press <identifier>` -- choose an item of the status item's menu, by the identifier

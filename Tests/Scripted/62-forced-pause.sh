@@ -66,6 +66,9 @@ close_settings
 
 # ---------------------------------------------------------------------------- a spent daily limit
 
+# Marked before the staging, not after it: the app stops the cube as soon as it sees the limit spent, which can be before
+# the last row of the staging is in.
+since=$(mark)
 sql "UPDATE category SET daily_limit = 1 WHERE category_id = $X;"
 started=$(( $(date +%s) - 180 ))
 while [ -n "$(sql "SELECT 1 FROM device_event WHERE event_number = $started AND start_epoch = $started;")" ]; do
@@ -83,19 +86,26 @@ sql "INSERT INTO time_entry (category_id, device_event_id, started_at, start_tim
 check "a minute already spent against a one-minute limit is staged" "1" \
     "$(sql "SELECT COUNT(*) FROM time_entry WHERE device_event_id = ${event:-0};")"
 
-since=$(mark)
 expect_log "the app stops the cube, the category having spent its day" "$since" \
     "Daily limit reached: $X_NAME has spent %m, stopping the clock" 20
 check "and the open segment is a pause" "1" "$(open_paused 1)"
 
+# **The Resume entry is greyed while the limit holds**, so a press reaches nothing and there is no refusal to read.
+greyed=no
+for _ in $(seq 1 25); do
+    case "$(platform_menu_item toggle-pause)" in *insensitive*) greyed=yes; break ;; esac
+    sleep 0.2
+done
+check "Resume is greyed while the limit holds" "yes" "$greyed"
 since=$(mark)
 menu_press toggle-pause
-expect_log "Resume is refused while the limit holds" "$since" \
-    "The cube is left stopped: the category on show has spent its daily limit" 10
-check "and nothing is sent to start it" "0" \
+sleep 1.5
+check "and a press on it sends nothing to start the cube" "0" \
     "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND message = 'Sending 06 02';")"
 
 sql "UPDATE category SET daily_limit = 0 WHERE category_id = $X;"
+# The entry goes live again on the next re-read of the clock, so it is waited for before it is pressed.
+wait_for_menu_item toggle-pause "'Resume'" >/dev/null
 since=$(mark)
 menu_press toggle-pause
 expect_log "with the limit lifted, Resume starts it" "$since" "The cube is running" 15

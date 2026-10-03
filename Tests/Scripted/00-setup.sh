@@ -24,8 +24,9 @@
 #      and reseeded from then on, so this is asked once per machine rather than once per run.
 #   4. **Whether a TimeFlip may be used has been asked**, once, and the answer written for `device_required`. A no is
 #      not a setup failure: it stops the run at `50-device-scan`, after every script that needs no cube.
-#   5. **The cube is resting on Break and has been reset**, when one may be used: paired so its face can be read, asked
-#      to be put on Break only when it is not there, then factory reset and forgotten, so 50 starts from a factory cube.
+#   5. **The cube is resting on Break and has been reset**, when one may be used: paired so the app can reset it, asked
+#      to be on Break, which is taken on trust once a y comes, then factory reset and forgotten, so 50 starts from a
+#      factory cube.
 #
 # **This writes straight to the tables**, which every other script in this folder is forbidden from doing.
 # It is right here for the same reason it is wrong there: the app is not running while the row goes in, so
@@ -107,10 +108,10 @@ if [ -n "$google_trouble" ]; then
     fi
 fi
 
-# **Paired, checked for its face, wiped, and forgotten, in that order**, as the Swift setup did. Reading the face needs a
-# link, and a link needs a pairing, so the cube is paired here and given up again by a factory reset, which hands the
-# rest of the run a factory cube: `51-device-connect` pairs it for real. `52-device-reset` checks every step of a reset;
-# this only needs one to happen. Everything that goes wrong is `trouble`, answered for once at the bottom.
+# **Paired, asked about Break, wiped, and forgotten, in that order.** The app resets only a cube it is paired with, so the
+# cube is paired here and given up again by the factory reset, which hands the rest of the run a factory cube:
+# `51-device-connect` pairs it for real. `52-device-reset` checks every step of a reset; this only needs one to happen.
+# Everything that goes wrong is `trouble`, answered for once at the bottom.
 setup_the_cube() {
     if ! require_bluetooth; then
         trouble "Bluetooth is off, so the cube cannot be set up"
@@ -120,25 +121,25 @@ setup_the_cube() {
     open_settings
     select_tab Device
     local since verdict
-    since=$(mark)
     pair_a_cube
     case $? in
         0) ;;
         *) trouble "the cube could not be paired to set it up: $PAIR_REASON"; close_settings; quit_app; return 1 ;;
     esac
 
-    # **The face the cube is resting on, read on this link**, and asked about only when it is not Break: a face with no
-    # category has the app pause the cube as soon as it counts there, so every script from 50 would inherit it stopped.
-    # The login reads the face, so a cube already on Break satisfies this before anything is shown.
-    if ! ask_and_detect \
-        "SELECT message FROM debug_log WHERE debug_log_id = (SELECT MAX(debug_log_id) FROM debug_log WHERE tag = 'face' AND message LIKE 'Face % is up') AND debug_log_id > $since AND message = 'Face 8 is up';" \
+    # **Asked, and taken on trust.** Which face the cube is on is not read: a face with no category has the app pause the
+    # cube as soon as it counts there, so every script from 50 would inherit it stopped, and the person is asked to
+    # have it on Break and to say so with a y.
+    if action_required \
         "Put the cube down on the Break face, and leave it there" \
         "That is face 8, the one lit red. Every device script starts from wherever the cube is now," \
-        "and a face with no category stops the cube by itself."
+        "and a face with no category stops the cube by itself." \
+        "" \
+        "Answer y once it is on Break."
     then
-        trouble "the cube was never put on the Break face, so the device scripts would start from an unknown one"
+        step "the cube is on Break, as the person says, which is where the device range starts"
     else
-        step "the cube is resting on Break, which is where the device range starts"
+        trouble "the cube was not confirmed to be on the Break face, so the device scripts would start from an unknown one"
     fi
 
     since=$(mark)

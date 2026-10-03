@@ -5,8 +5,8 @@
 # **Last, because it ends the app** and leaves nothing paired. The next run, on either machine, pairs a cube on the
 # factory PIN. `52-device-reset` is what checks the reset itself; this only needs it to have happened.
 #
-# **Converted from the Swift suite 2026-09-28.** The Swift script also paused and locked the cube on the way out,
-# which the Rust app does not do yet.
+# **Converted from the Swift suite 2026-09-28.** The quit has no cube to pause or lock, the reset having let it go,
+# so what is checked is that it quits with no link left to close.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database

@@ -16,6 +16,7 @@
 // **Straight from the library now.** This used to include ../src/status_icon.rs by path, because
 // facet-mac is a binary crate and an example cannot import from one. The drawing has moved to facet-ui,
 // which is a library, so the example takes it the ordinary way and there is no second compilation of it.
+use facet_core::status_line::StatusColour;
 use facet_ui::status_icon::{self, Showing};
 
 const SCALE: usize = 6;
@@ -25,12 +26,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::path::Path::new(&out);
     std::fs::create_dir_all(dir)?;
 
-    for (name, showing) in [
-        ("running-unlocked", Showing { paused: false, locked: false }),
-        ("paused-unlocked", Showing { paused: true, locked: false }),
-        ("running-locked", Showing { paused: false, locked: true }),
-        ("paused-locked", Showing { paused: true, locked: true }),
+    let mut states = Vec::new();
+    for (mode, paused, colour) in [
+        ("by-hand", false, StatusColour::ByHand),
+        ("cube", false, StatusColour::Cube),
+        ("cube-unreachable", false, StatusColour::Unreachable),
+        ("paused", true, StatusColour::Ordinary),
+        ("limit-spent", true, StatusColour::Spent),
     ] {
+        for (lock, locked) in [("unlocked", false), ("locked", true)] {
+            states.push((format!("{mode}-{lock}"), Showing { paused, locked, colour }));
+        }
+    }
+    for (name, showing) in states {
         let path = dir.join(format!("{name}.png"));
         let rendered = status_icon::render(showing);
         write_png(&path, &rendered)?;

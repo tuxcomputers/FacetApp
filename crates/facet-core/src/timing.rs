@@ -7,6 +7,7 @@ use rusqlite::{Connection, params};
 
 use crate::category::{self, Category};
 use crate::debug_log::{Record, Tag, plain};
+use crate::port::Zone;
 use crate::{face, segment, setting, time_entry};
 
 /// What the app's own clock is doing.
@@ -195,6 +196,7 @@ pub enum StartOutcome {
 /// Does nothing when that category is already running.
 pub fn start_timing(
     connection: &Connection,
+    zone: &dyn Zone,
     category_id: i64,
     now: i64,
     log: &impl Record,
@@ -215,7 +217,7 @@ pub fn start_timing(
         log.record_failure(Tag::Timing, || format!("Timing: face {next} refused category_id {category_id}"));
         return Ok(StartOutcome::FaceRefused { face: next });
     }
-    segment::start_segment(connection, next, now, log)?;
+    segment::start_segment(connection, zone, next, now, log)?;
     log.record(Tag::Timing, || format!("Timing: started category_id {category_id} on face {next}"));
     Ok(StartOutcome::Started { face: next })
 }
@@ -227,6 +229,7 @@ pub fn start_timing(
 /// a segment on the same app face without writing the face.
 pub fn toggle_pause(
     connection: &Connection,
+    zone: &dyn Zone,
     now: i64,
     log: &impl Record,
 ) -> Result<Option<Reading>, rusqlite::Error> {
@@ -239,7 +242,7 @@ pub fn toggle_pause(
     if before.timing_state == TimingState::Running {
         segment::close_open_segment(connection, now, log)?;
     } else {
-        segment::start_segment(connection, segment::current_app_face(connection)?, now, log)?;
+        segment::start_segment(connection, zone, segment::current_app_face(connection)?, now, log)?;
     }
     let after = read(connection, now)?;
     log.record(Tag::Timing, || {
@@ -285,6 +288,7 @@ pub fn format_duration(seconds: i64, shows_seconds: bool) -> String {
 mod tests {
     use super::*;
     use crate::testing::seeded;
+    use crate::timezone::SYDNEY;
 
     const NO_LOG: Option<crate::debug_log::DebugLog> = None;
     /// Midday local time is well clear of the 03:00 reset, so the window does not move under the tests.
@@ -317,7 +321,7 @@ mod tests {
         let now = noon(&connection);
         let code = category(&connection, "Code");
         assert_eq!(
-            start_timing(&connection, code, now, &NO_LOG).expect("should start"),
+            start_timing(&connection, &SYDNEY, code, now, &NO_LOG).expect("should start"),
             StartOutcome::Started { face: 13 }
         );
         let reading = read(&connection, now + 90).expect("should read");
@@ -332,9 +336,9 @@ mod tests {
         let connection = seeded();
         let now = noon(&connection);
         let code = category(&connection, "Code");
-        start_timing(&connection, code, now, &NO_LOG).expect("should start");
+        start_timing(&connection, &SYDNEY, code, now, &NO_LOG).expect("should start");
         assert_eq!(
-            start_timing(&connection, code, now + 10, &NO_LOG).expect("should run"),
+            start_timing(&connection, &SYDNEY, code, now + 10, &NO_LOG).expect("should run"),
             StartOutcome::AlreadyTiming
         );
         assert_eq!(segment::open_segment(&connection).expect("should read").map(|s| s.face), Some(13));
@@ -345,9 +349,9 @@ mod tests {
         let connection = seeded();
         let now = noon(&connection);
         let (code, email) = (category(&connection, "Code"), category(&connection, "Email"));
-        start_timing(&connection, code, now, &NO_LOG).expect("should start");
+        start_timing(&connection, &SYDNEY, code, now, &NO_LOG).expect("should start");
         assert_eq!(
-            start_timing(&connection, email, now + 60, &NO_LOG).expect("should start"),
+            start_timing(&connection, &SYDNEY, email, now + 60, &NO_LOG).expect("should start"),
             StartOutcome::Started { face: 14 }
         );
         assert_eq!(day_seconds(&connection, code, now + 120).expect("should sum"), 60);
@@ -360,16 +364,18 @@ mod tests {
         let connection = seeded();
         let now = noon(&connection);
         let code = category(&connection, "Code");
-        start_timing(&connection, code, now, &NO_LOG).expect("should start");
-        let paused = toggle_pause(&connection, now + 30, &NO_LOG).expect("should run").expect("should pause");
+        start_timing(&connection, &SYDNEY, code, now, &NO_LOG).expect("should start");
+        let paused =
+            toggle_pause(&connection, &SYDNEY, now + 30, &NO_LOG).expect("should run").expect("should pause");
         assert_eq!(
             (paused.timing_state, paused.seconds, paused.is_counting),
             (TimingState::Paused, 30, false)
         );
         assert_eq!(read(&connection, now + 500).expect("should read").seconds, 30);
 
-        let resumed =
-            toggle_pause(&connection, now + 500, &NO_LOG).expect("should run").expect("should resume");
+        let resumed = toggle_pause(&connection, &SYDNEY, now + 500, &NO_LOG)
+            .expect("should run")
+            .expect("should resume");
         assert_eq!(resumed.timing_state, TimingState::Running);
         assert_eq!(segment::open_segment(&connection).expect("should read").map(|s| s.face), Some(13));
         assert_eq!(read(&connection, now + 510).expect("should read").seconds, 40);
@@ -378,7 +384,7 @@ mod tests {
     #[test]
     fn toggling_while_idle_does_nothing() {
         let connection = seeded();
-        assert_eq!(toggle_pause(&connection, noon(&connection), &NO_LOG).expect("should run"), None);
+        assert_eq!(toggle_pause(&connection, &SYDNEY, noon(&connection), &NO_LOG).expect("should run"), None);
     }
 
     #[test]
@@ -389,14 +395,14 @@ mod tests {
         connection
             .execute("UPDATE category SET daily_limit = 1 WHERE category_id = ?1", params![code])
             .expect("should write");
-        start_timing(&connection, code, now, &NO_LOG).expect("should start");
+        start_timing(&connection, &SYDNEY, code, now, &NO_LOG).expect("should start");
         assert!(!enforce_daily_limit(&connection, now + 59, &NO_LOG).expect("should run"));
         assert!(enforce_daily_limit(&connection, now + 61, &NO_LOG).expect("should run"));
         let reading = read(&connection, now + 70).expect("should read");
         assert_eq!(reading.timing_state, TimingState::Paused);
         assert!(reading.is_limit_reached);
         assert!(!is_clickable(reading.timing_state, reading.is_limit_reached));
-        assert_eq!(toggle_pause(&connection, now + 70, &NO_LOG).expect("should run"), None);
+        assert_eq!(toggle_pause(&connection, &SYDNEY, now + 70, &NO_LOG).expect("should run"), None);
         assert!(is_clickable(TimingState::Running, true));
     }
 

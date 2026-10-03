@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=29
+EXPECTED_CHECKS=36
 start "the cube's face, followed, and its history filed"
 
 require_a_paired_cube "there is no face to follow"
@@ -47,6 +47,8 @@ expect_log "the fetch finishes" "$since" "History fetch done (the link came up):
 expect_log "and the history timer starts" "$since" "History timer started, asking every %s" 20
 check "a segment is open on face 8" "8" "$(wait_sql 8 "SELECT device_face FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC LIMIT 1;" 30)"
 check "and it is counting, not a pause" "0" "$(open_cube_row paused)"
+check "and it is filed under this machine's zone, not Unknown" "0" \
+    "$(sql "SELECT COUNT(*) FROM device_event WHERE device_face BETWEEN 1 AND 12 AND timezone_id = 0;")"
 
 # ---------------------------------------------------------------------------- the tab and the figure
 
@@ -54,10 +56,20 @@ open_settings
 select_tab Faces
 check_contains "the tab names the face the cube is on" "$(element_eventually timing-device-face "Face 8")" "Face 8"
 check_contains "and the category that face holds" "$(element timing-category-name)" "Break"
+check "the menu bar names it" "Menu bar reads Break" \
+    "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Menu bar reads %' ORDER BY debug_log_id DESC LIMIT 1;")"
+check "in green, the clock being the cube" "Menu bar: name green, figure green" \
+    "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Menu bar: name %' ORDER BY debug_log_id DESC LIMIT 1;")"
+check_contains "and the icon is a green play" \
+    "$(dsql "SELECT message FROM debug_log WHERE message LIKE 'Status icon: %' ORDER BY debug_log_id DESC LIMIT 1;")" \
+    "Status icon: play green"
 check_contains "Break's face is locked, so the button offers to unlock it" "$(element timing-face-lock)" "Unlock face"
-first=$(element timing-elapsed)
+check_contains "the square is the cube, lit for Break" "$(element timing-cube)" "face 8, lit for Break"
+check_contains "with Break's icon on its centre face" "$(element timing-centre-icon)" "Break"
+check_contains "and a glyph beside the figure says it is running" "$(element timing-face-glyph)" "Cube running"
+first=$(element timing-face-elapsed)
 sleep 3
-if [ "$(element timing-elapsed)" != "$first" ]; then
+if [ "$(element timing-face-elapsed)" != "$first" ]; then
     pass "the figure moves between fetches"
 else
     fail "the figure stood still for 3s: $first"

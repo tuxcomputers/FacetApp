@@ -579,6 +579,15 @@ platform_click_left() {
     esac
 }
 
+# **The double left click.** On Linux, two `Activate` calls back to back from one process, well inside the
+# app's 400ms.
+platform_double_click_left() {
+    case "$PLATFORM" in
+        mac)   python3 scripts/status-item-click.py --double 2>&1 ;;
+        linux) python3 scripts/tray-menu.py --activate --twice 2>&1 ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------- accessibility
 
 # **Slint reaches the accessibility bus only while an assistive technology is enabled**, measured
@@ -676,6 +685,18 @@ platform_date_from_epoch() {
     case "$PLATFORM" in
         mac)   date -r "$1" "+$2" ;;
         linux) date -d "@$1" "+$2" ;;
+    esac
+}
+
+# **The zone this machine says it is in, as an IANA name, read from the operating system and not from the app.**
+# A check that asked the app for it would compare the app with itself. Empty when it cannot be read, and the caller
+# says so.
+#
+# macOS keeps it as the target of `/etc/localtime`, under `.../zoneinfo/`. Linux answers it through systemd.
+platform_zone_name() {
+    case "$PLATFORM" in
+        mac)   readlink /etc/localtime | sed 's|.*/zoneinfo/||' ;;
+        linux) timedatectl show -p Timezone --value ;;
     esac
 }
 

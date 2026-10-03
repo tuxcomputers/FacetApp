@@ -26,20 +26,19 @@ pub fn is_pin(pin: &str) -> bool {
     pin.len() == 6 && pin.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-/// The PINs to present when pairing a cube, in order: the vendor PIN, then `stored` when it is a different
-/// valid PIN. Each is presented on its own connection, and there is never a third.
-pub fn pairing_candidates(stored: Option<&str>) -> Vec<String> {
+/// The PINs to present when pairing a cube, in order: the vendor PIN, then each of `stored` that is a valid PIN
+/// other than it. Each is presented on its own connection. `stored` holds two only while the two places a PIN is kept
+/// disagree.
+pub fn pairing_candidates(stored: &[String]) -> Vec<String> {
     let mut pins = vec![VENDOR_PIN.to_string()];
-    if let Some(stored) = stored.filter(|pin| is_pin(pin) && *pin != VENDOR_PIN) {
-        pins.push(stored.to_string());
-    }
+    pins.extend(stored.iter().filter(|pin| is_pin(pin) && *pin != VENDOR_PIN).cloned());
     pins
 }
 
-/// The PINs to present when reconnecting to the paired cube: `stored` when valid, then the vendor PIN.
-pub fn reconnect_candidates(stored: Option<&str>) -> Vec<String> {
+/// The PINs to present when reconnecting to the paired cube: each of `stored` that is valid, then the vendor PIN.
+pub fn reconnect_candidates(stored: &[String]) -> Vec<String> {
     let mut pins: Vec<String> =
-        stored.filter(|pin| is_pin(pin) && *pin != VENDOR_PIN).map(str::to_string).into_iter().collect();
+        stored.iter().filter(|pin| is_pin(pin) && *pin != VENDOR_PIN).cloned().collect();
     pins.push(VENDOR_PIN.to_string());
     pins
 }
@@ -75,13 +74,19 @@ mod tests {
     }
 
     #[test]
-    fn at_most_two_pins_and_never_the_same_one_twice() {
-        assert_eq!(pairing_candidates(None), vec!["000000"]);
-        assert_eq!(pairing_candidates(Some("123456")), vec!["000000", "123456"]);
-        assert_eq!(pairing_candidates(Some("000000")), vec!["000000"]);
-        assert_eq!(pairing_candidates(Some("12a456")), vec!["000000"]);
-        assert_eq!(reconnect_candidates(Some("123456")), vec!["123456", "000000"]);
-        assert_eq!(reconnect_candidates(None), vec!["000000"]);
+    fn the_stored_pins_are_presented_with_the_vendor_pin_and_never_twice() {
+        let stored = |pins: &[&str]| pins.iter().map(|pin| pin.to_string()).collect::<Vec<_>>();
+        assert_eq!(pairing_candidates(&[]), vec!["000000"]);
+        assert_eq!(pairing_candidates(&stored(&["123456"])), vec!["000000", "123456"]);
+        assert_eq!(pairing_candidates(&stored(&["000000"])), vec!["000000"]);
+        assert_eq!(pairing_candidates(&stored(&["12a456"])), vec!["000000"]);
+        assert_eq!(reconnect_candidates(&stored(&["123456"])), vec!["123456", "000000"]);
+        assert_eq!(reconnect_candidates(&[]), vec!["000000"]);
+        assert_eq!(
+            reconnect_candidates(&stored(&["123456", "654321"])),
+            vec!["123456", "654321", "000000"],
+            "two stored PINs are presented in the order given"
+        );
     }
 
     #[test]

@@ -8,8 +8,9 @@ thing that can say the app works on hardware; everything the crate tests prove i
 **Ten checks are back, 2026-09-27: `00`, `03`, `04`, `05`, `06`, `08`, `09`, `11`, `12` and `13`.** The first
 nine pass 293 of 293 on both machines; `13-device-tab`, the Device tab with no cube, passes 37 of 37 on the Mac
 and on Linux. **The device range, `50`, `51`, `53`, `54`, `63`, `65`, `67` and `68`, passed on both machines on 2026-09-28, with `52`, `66` and `99`. The time-tracking range, `55`, `57`, `61`, `62` and `64`, came with `feature/timeTracking` on 2026-09-29.** What each one had to drop because the Rust app does not have it yet is said in its
-own header. `07-history-timer` stays out: it is the cube's history fetch, and it comes back with the device
-range. `10-google-calendar` waits for calendar sync.
+own header. **`feature/swiftParity` brings back the rest on 2026-09-29: `01`, `02`, `10`, `56`, `58` and `60`,
+with the Swift `07-history-timer` as `69`**, numbered after `51` because it needs a paired cube. Every Swift
+script now has a Rust counterpart.
 
 **`11` needs somebody to sign in to Google on every full run.** It presses Sign in, the browser opens on that
 machine's screen, and it waits four minutes for the account to come back. Nobody signing in is a fail.
@@ -48,13 +49,13 @@ cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 | `04-categories` | Creating a category, renaming it, retiring it, and bringing it back |
 | `05-faces-timing` | Picking a category starts the clock on it, and pausing stops it |
 | `06-time-entries` | A finished segment becoming tracked time, and a flick past a face not becoming anything |
-| `07-history-timer` | It runs while something is being timed, and stops when nothing is |
 | `08-app-settings` | Every row on the App tab written to the table, and put back again |
 | `09-report` | Picking a range, what it totals, folding a category open, and the two sort columns |
 | `10-google-calendar` | The Google section, and recorded time reaching the calendar |
 | `11-google-reconnect` | Disconnecting an account and connecting it again, with the calendar surviving in between |
 | `12-daily-limit` | Reaching the hard limit stops the clock, and the app then refuses to start it again |
 | `13-device-tab` | The Device tab's two sections, and the folds that need no cube |
+| `14-time-zone` | A time entry, its segment and the trace are filed under this machine's own zone, with the machine's own local time beside it. New with the Rust app |
 
 ### Cube required
 
@@ -68,7 +69,7 @@ cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 | `55-device-face` | The resting face: asked for when the link comes up, followed on every turn after |
 | `56-manual-mode` | Manual mode with a device still paired: what a click may do before it is chosen, and what the app stops doing after |
 | `57-cube-pause` | A single click stops the cube and starts it again |
-| `58-wrong-pin` | A paired cube that refuses this app's PIN: the offer, Rescan, and taking timing by hand |
+| `58-wrong-pin` | A paired cube that refuses this app's PIN: the offer, Rescan, and taking timing by hand. Not run on macOS, where the Keychain prompts after the PIN item is rewritten |
 | `59-double-tap` | The cube's double tap, which this app turns off and never turns back on |
 | `60-device-backlog` | A cube that goes out of range while timing, is turned while nobody can hear it, and comes back |
 | `61-lock-without-pause` | Locking with `pause_on_lock` off: the lock still goes, only the pause is skipped |
@@ -78,6 +79,7 @@ cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 | `65-auto-pause` | The delay stepped, sent as `0x05`, read back with `0x10`, and only then written down |
 | `66-device-rename` | `0x15` to the hardware, the row written only after it |
 | `67-pause-on-lock` | The pause-on-lock row, kept in the table and sent nowhere. **New with the Rust app** |
+| `69-history-timer` | The history timer firing on the table's interval while the link is held, and a changed interval read at the next arming. **The Swift `07`**, whose timer ran only while something was timed |
 | `68-device-link-lost` | A held link dropping: noticed, recorded, the pairing kept, and a relaunch reaching the cube. **New with the Rust app** |
 | `99-quit` | The way out closes what was left open, and the cube is left as the factory made it |
 

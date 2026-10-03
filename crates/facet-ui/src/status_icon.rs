@@ -8,6 +8,10 @@
 //! **Three glyphs, and the icon is as wide as it needs to be.** Play or Pause always, with Lock beside
 //! it at the same size when the cube is locked. Two facts, two glyphs, side by side.
 //!
+//! **The icon alone is what the menu bar shows, so its colours carry the mode.** Play is cyan when timing by
+//! hand, green while the cube is connected and yellow while it cannot be contacted. Pause is white, or red once
+//! the daily limit is spent. Lock is always red. `facet_core::status_line::icon_colour` decides the first two.
+//!
 //! **Composed from three glyphs rather than stored as four pictures.** The four combinations are
 //! exactly Play, Pause, Play+Lock and Pause+Lock, so four files would work and were offered. Three
 //! glyphs are kept instead because states multiply: a third fact, a low battery or a lost connection,
@@ -36,15 +40,17 @@
 //! **Drawn in code, and that is temporary.** These are legible at this size and no more than that. The
 //! real artwork is `Facet.svg`, which wants an SVG rasteriser this binary does not yet pull in.
 //!
-//! **Each glyph carries its own colour, which means the icon is not a template image.** A template is
+//! **Each glyph carries a colour, which means the icon is not a template image.** A template is
 //! alpha only: macOS throws the colours away and draws the shape in the menu bar's own ink, black on a
 //! light bar and white on a dark one. That is why an earlier build came out black whatever it was told.
 //! `with_icon_as_template(false)` is what lets these colours through on that platform.
 //!
-//! **The cost is that nothing adapts any more, and white is the one that suffers.** Green and red read
-//! on either menu bar. White pause does not: on a light bar it is white on near-white. The colours are
+//! **The cost is that nothing adapts any more, and white is the one that suffers.** Cyan, green, yellow and red
+//! read on either menu bar. White pause does not: on a light bar it is white on near-white. The colours are
 //! what was asked for and they are here; `facet-mac/examples/draw-status-icons.rs` renders every state on
 //! both a light and a dark background so the problem can be looked at rather than argued about.
+
+use facet_core::status_line::StatusColour;
 
 /// What the menu bar is saying right now.
 ///
@@ -55,8 +61,24 @@
 pub struct Showing {
     pub paused: bool,
     pub locked: bool,
+    /// The colour of the play or pause glyph. `Ordinary` is drawn white.
+    pub colour: StatusColour,
 }
 
+impl Showing {
+    /// What the icon shows, in the trace's words: `play cyan`, `pause white` or `pause red`, then `, locked` while
+    /// the lock is drawn.
+    pub fn description(self) -> String {
+        let glyph = if self.paused { "pause" } else { "play" };
+        let colour = if self.colour == StatusColour::Ordinary { "white" } else { self.colour.name() };
+        if self.locked { format!("{glyph} {colour}, locked") } else { format!("{glyph} {colour}") }
+    }
+}
+
+/// What a pause glyph is drawn in when nothing is wrong.
+const WHITE: [u8; 3] = [255, 255, 255];
+/// The lock's colour.
+const LOCK_RED: [u8; 3] = [255, 59, 48];
 /// One glyph's square. Every glyph gets the same cell, which is what makes them the same size.
 const CELL: i32 = 32;
 /// Clear pixels between two glyphs, so they read as two things rather than one wide smudge.
@@ -83,14 +105,16 @@ enum Glyph {
 impl Glyph {
     /// The colour it is drawn in.
     ///
+    /// **Play and pause take `showing`'s colour, white for `Ordinary`; lock is always red.** The lock's red is
+    /// `StatusColour::Spent`'s, and a test holds the two together.
+    ///
     /// **The system palette rather than pure channels**, because a flat `0,255,0` is harsh beside the
     /// rest of the menu bar and reads as a warning rather than as a state. These are Apple's own green
     /// and red, which is what everything else up there uses.
-    fn colour(self) -> [u8; 3] {
+    fn colour(self, showing: Showing) -> [u8; 3] {
         match self {
-            Glyph::Play => [52, 199, 89],
-            Glyph::Pause => [255, 255, 255],
-            Glyph::Lock => [255, 59, 48],
+            Glyph::Play | Glyph::Pause => showing.colour.rgb().unwrap_or(WHITE),
+            Glyph::Lock => LOCK_RED,
         }
     }
 }
@@ -111,7 +135,7 @@ pub fn render(showing: Showing) -> Rendered {
 
     for (slot, glyph) in glyphs.iter().enumerate() {
         let origin = slot as i32 * (CELL + GAP);
-        let [r, g, b] = glyph.colour();
+        let [r, g, b] = glyph.colour(showing);
         for y in 0..CELL {
             for x in 0..CELL {
                 if ink(*glyph, x, y) {
@@ -184,10 +208,10 @@ mod tests {
     use super::*;
 
     const STATES: [Showing; 4] = [
-        Showing { paused: false, locked: false },
-        Showing { paused: true, locked: false },
-        Showing { paused: false, locked: true },
-        Showing { paused: true, locked: true },
+        Showing { paused: false, locked: false, colour: StatusColour::Cube },
+        Showing { paused: true, locked: false, colour: StatusColour::Ordinary },
+        Showing { paused: false, locked: true, colour: StatusColour::Cube },
+        Showing { paused: true, locked: true, colour: StatusColour::Ordinary },
     ];
 
     /// Every state draws something, and no two states draw the same thing.
@@ -220,8 +244,8 @@ mod tests {
     #[test]
     fn locking_adds_a_glyph_and_changes_nothing_else() {
         for paused in [false, true] {
-            let plain = render(Showing { paused, locked: false });
-            let locked = render(Showing { paused, locked: true });
+            let plain = render(Showing { paused, locked: false, colour: StatusColour::Ordinary });
+            let locked = render(Showing { paused, locked: true, colour: StatusColour::Ordinary });
 
             assert_eq!(plain.width, CELL as u32, "an unlocked icon is one cell wide");
             assert_eq!(locked.width, (CELL * 2 + GAP) as u32, "a locked icon is two cells and a gap");
@@ -240,7 +264,7 @@ mod tests {
     /// The two glyphs never touch: every column of the gap is empty.
     #[test]
     fn there_is_clear_space_between_the_glyphs() {
-        let locked = render(Showing { paused: true, locked: true });
+        let locked = render(Showing { paused: true, locked: true, colour: StatusColour::Ordinary });
         for x in CELL..CELL + GAP {
             for y in 0..CELL {
                 let alpha = locked.rgba[((y * locked.width as i32 + x) * 4 + 3) as usize];
@@ -300,16 +324,54 @@ mod tests {
             assert!(seen > 0, "slot {slot} of {showing:?} has no lit pixels");
         };
 
-        let green = Glyph::Play.colour();
-        let white = Glyph::Pause.colour();
-        let red = Glyph::Lock.colour();
+        let green = StatusColour::Cube.rgb().expect("cube green");
+        let by = |paused: bool, locked: bool, colour: StatusColour| Showing { paused, locked, colour };
 
-        expect(Showing { paused: false, locked: false }, 0, green);
-        expect(Showing { paused: true, locked: false }, 0, white);
-        expect(Showing { paused: false, locked: true }, 0, green);
-        expect(Showing { paused: false, locked: true }, 1, red);
-        expect(Showing { paused: true, locked: true }, 0, white);
-        expect(Showing { paused: true, locked: true }, 1, red);
+        expect(by(false, false, StatusColour::Cube), 0, green);
+        expect(by(true, false, StatusColour::Ordinary), 0, WHITE);
+        expect(by(false, true, StatusColour::Cube), 0, green);
+        expect(by(false, true, StatusColour::Cube), 1, LOCK_RED);
+        expect(by(true, true, StatusColour::Ordinary), 0, WHITE);
+        expect(by(true, true, StatusColour::Ordinary), 1, LOCK_RED);
+    }
+
+    /// Play takes cyan, green or yellow and pause takes white or red, whatever the lock is doing.
+    #[test]
+    fn play_and_pause_take_the_colour_they_are_given() {
+        let slot_colour = |showing: Showing| {
+            let r = render(showing);
+            let i = (0..r.rgba.len() / 4).map(|p| p * 4).find(|&i| r.rgba[i + 3] != 0).expect("a lit pixel");
+            [r.rgba[i], r.rgba[i + 1], r.rgba[i + 2]]
+        };
+        for locked in [false, true] {
+            for (paused, colour, expected) in [
+                (false, StatusColour::ByHand, [0, 199, 217]),
+                (false, StatusColour::Cube, [52, 199, 89]),
+                (false, StatusColour::Unreachable, [255, 204, 0]),
+                (true, StatusColour::Ordinary, [255, 255, 255]),
+                (true, StatusColour::Spent, [255, 59, 48]),
+            ] {
+                let showing = Showing { paused, locked, colour };
+                assert_eq!(slot_colour(showing), expected, "{showing:?}");
+            }
+        }
+    }
+
+    /// The lock is the same red as a spent limit, so the two read as one signal.
+    #[test]
+    fn the_lock_is_the_red_of_a_spent_limit() {
+        assert_eq!(Some(LOCK_RED), StatusColour::Spent.rgb());
+    }
+
+    /// The trace's words for the icon, which checks read.
+    #[test]
+    fn the_icon_describes_itself_in_the_traces_words() {
+        let showing = |paused, locked, colour| Showing { paused, locked, colour };
+        assert_eq!(showing(false, false, StatusColour::ByHand).description(), "play cyan");
+        assert_eq!(showing(false, false, StatusColour::Cube).description(), "play green");
+        assert_eq!(showing(false, false, StatusColour::Unreachable).description(), "play yellow");
+        assert_eq!(showing(true, false, StatusColour::Ordinary).description(), "pause white");
+        assert_eq!(showing(true, true, StatusColour::Spent).description(), "pause red, locked");
     }
 
     /// The lock reads as a padlock: a shackle above a wider body, joined rather than floating.

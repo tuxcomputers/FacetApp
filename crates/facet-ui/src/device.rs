@@ -23,13 +23,15 @@ use facet_core::app_settings::Value;
 use facet_core::database;
 use facet_core::debug_log::{Record, Tag, Trace, plain};
 use facet_core::device::command::{self, CubeStatus};
+use facet_core::device::forced_pause::{self, Decision, PauseClaim, Resting};
 use facet_core::device::name::{self, NameDecision, NameProblem};
+use facet_core::device::pin_source::{self, AfterLogin, AtRead};
 use facet_core::device::rows::{self, DeviceInfo, DeviceSetting};
 use facet_core::device::session::{Fetched, ResetOutcome};
 use facet_core::device::system_state::{self, CubeHardwareState, CubeSyncState};
 use facet_core::device::trace::TracedRadio;
 use facet_core::device::{colour, face, history, info, login, scan, session, uuids};
-use facet_core::port::{Advert, Link, Radio, RadioState, SecretLookup, SecretStore};
+use facet_core::port::{Advert, Link, Radio, RadioState, SecretLookup, SecretStore, Zone};
 use facet_core::{app_settings, cube_history};
 use rusqlite::Connection;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
@@ -42,8 +44,53 @@ use crate::{DeviceData, FoundDevice, SettingsWindow};
 const LIVENESS_EVERY: Duration = Duration::from_secs(5);
 /// The longest a pairing waits for a scan it stopped to end before connecting anyway.
 const SCAN_END_WAIT: Duration = Duration::from_secs(5);
+/// The first wait before looking for a cube that dropped out, doubled after each miss up to [`REACH_AGAIN_AT_MOST`].
+const REACH_AGAIN_FIRST: Duration = Duration::from_secs(2);
+const REACH_AGAIN_AT_MOST: Duration = Duration::from_secs(30);
 /// How long each half of the low-battery blink lasts.
 const BLINK_EVERY: Duration = Duration::from_millis(500);
+/// How long a stepper's value has to stand still before it is sent to the cube.
+pub const EDIT_QUIET_FOR: Duration = Duration::from_millis(500);
+/// How long a quit waits for the cube to be paused, locked and let go of before quitting without it.
+pub const QUIT_DEADLINE: Duration = Duration::from_secs(5);
+
+/// One stepper's edits on their way to the cube.
+#[derive(Default)]
+struct EditedSetting {
+    /// Restarted by every edit, and sends the newest value when it runs out.
+    timer: slint::Timer,
+    /// The newest value edited and not yet sent.
+    unsent: Cell<Option<i64>>,
+    /// Whether a send of this setting is out with the cube.
+    is_sending: Cell<bool>,
+}
+
+impl EditedSetting {
+    /// Whether the person's value is still on its way to the table, and so not the table's to overwrite.
+    fn is_open(&self) -> bool {
+        self.unsent.get().is_some() || self.is_sending.get()
+    }
+}
+
+/// The three settings whose edits wait for the value to stop moving: the ones that go to the cube.
+#[derive(Default)]
+struct EditedSettings {
+    auto_pause: EditedSetting,
+    led_brightness: EditedSetting,
+    led_blink: EditedSetting,
+}
+
+impl EditedSettings {
+    /// `None` for a setting no stepper edits.
+    fn of(&self, setting: DeviceSetting) -> Option<&EditedSetting> {
+        match setting {
+            DeviceSetting::AutoPause => Some(&self.auto_pause),
+            DeviceSetting::LedBrightness => Some(&self.led_brightness),
+            DeviceSetting::LedBlink => Some(&self.led_blink),
+            DeviceSetting::PauseOnLock | DeviceSetting::BatteryWarning => None,
+        }
+    }
+}
 
 /// Where a background job logs: each line goes to the UI thread as it happens, through the same channel as the
 /// outcomes, so the trace keeps the order things happened in.
@@ -127,15 +174,6 @@ enum Outcome {
     Released,
 }
 
-/// Why the app paused the cube itself, which decides whether it may start it again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PauseClaim {
-    /// The face it rests on holds no category. Lifted once the face is given one.
-    NoCategory,
-    /// The category on show has spent its daily limit. Held until the limit is not spent.
-    DailyLimit,
-}
-
 /// A successful pairing: the cube is logged in, on `pin`, and the link is held.
 struct Paired {
     handle: String,
@@ -156,6 +194,11 @@ pub struct Device {
     notice: Rc<Notice>,
     radio: Option<Arc<dyn Radio>>,
     pins: Arc<dyn SecretStore>,
+    /// Where the PIN goes when `pins` will not take it, and is read from when `pins` will not answer.
+    pin_fallback: RefCell<Option<Arc<dyn SecretStore>>>,
+    /// Names the zone each cube event is filed under when it is first recorded.
+    zone: Arc<dyn Zone>,
+    edited: EditedSettings,
     link: Arc<Mutex<Option<Box<dyn Link>>>>,
     /// The history characteristic's notifications for the held link, subscribed once at login.
     history_feed: Arc<Mutex<Option<Receiver<Vec<u8>>>>>,
@@ -165,6 +208,11 @@ pub struct Device {
     /// read because the lock is in no table: it is the cube's, and every pause or lock exchange reads it again.
     cube_status: Cell<Option<CubeStatus>>,
     on_cube_not_found: RefCell<Vec<Box<dyn Fn()>>>,
+    on_blink: RefCell<Vec<Box<dyn Fn()>>>,
+    /// While the cube that dropped out is being looked for again: the wait before the next look. `None` otherwise,
+    /// and while it is `Some` a failed look tries again rather than offering Rescan.
+    reach_again_after: Cell<Option<Duration>>,
+    reach_again: slint::Timer,
     /// When all twelve colours last went because the cube asked, so a cube that keeps asking is answered at most
     /// every 30 seconds.
     colours_asked_at: Cell<Option<std::time::Instant>>,
@@ -215,6 +263,7 @@ impl Device {
         notice: Rc<Notice>,
         radio: Option<Arc<dyn Radio>>,
         pins: Arc<dyn SecretStore>,
+        zone: Arc<dyn Zone>,
     ) -> Rc<Device> {
         let (sender, receiver) = channel();
         // Every connection the radio makes is traced, into the same channel the jobs log through.
@@ -227,11 +276,17 @@ impl Device {
             notice,
             radio,
             pins,
+            pin_fallback: RefCell::new(None),
+            zone,
+            edited: EditedSettings::default(),
             link: Arc::new(Mutex::new(None)),
             history_feed: Arc::new(Mutex::new(None)),
             cube_face: Cell::new(None),
             cube_status: Cell::new(None),
             on_cube_not_found: RefCell::new(Vec::new()),
+            on_blink: RefCell::new(Vec::new()),
+            reach_again_after: Cell::new(None),
+            reach_again: slint::Timer::default(),
             colours_asked_at: Cell::new(None),
             has_said_task_parameters: Cell::new(false),
             settings_sent_at: Cell::new(None),
@@ -325,7 +380,7 @@ impl Device {
             let weak = Rc::downgrade(&device);
             move |value: i32| {
                 if let Some(device) = weak.upgrade() {
-                    device.send_setting(setting, i64::from(value));
+                    device.edited(setting, i64::from(value));
                 }
             }
         };
@@ -333,6 +388,12 @@ impl Device {
         data.on_led_brightness_edited(sends(DeviceSetting::LedBrightness));
         data.on_led_blink_edited(sends(DeviceSetting::LedBlink));
         device
+    }
+
+    /// Gives the PIN a second home, `fallback`, which is written when the secret store will not take a PIN and read
+    /// when it will not answer. Call at launch, before a cube is paired or reconnected.
+    pub fn set_pin_fallback(&self, fallback: Arc<dyn SecretStore>) {
+        *self.pin_fallback.borrow_mut() = Some(fallback);
     }
 
     /// Reads the tab from the table, folds the sections as a fresh window has them, and asks the radio whether
@@ -392,9 +453,16 @@ impl Device {
         data.set_firmware(info::shown(paired, pairing.info.firmware.as_deref()).into());
         data.set_pause_on_lock(settings.pause_on_lock);
         data.set_battery_warning_percent(settings.battery_warning_percent as i32);
-        data.set_auto_pause_minutes(settings.auto_pause_minutes as i32);
-        data.set_led_brightness_percent(settings.led_brightness_percent as i32);
-        data.set_led_blink_seconds(settings.led_blink_seconds as i32);
+        // A value being edited is not read back underneath the person editing it, until its send has ended.
+        if !self.edited.auto_pause.is_open() {
+            data.set_auto_pause_minutes(settings.auto_pause_minutes as i32);
+        }
+        if !self.edited.led_brightness.is_open() {
+            data.set_led_brightness_percent(settings.led_brightness_percent as i32);
+        }
+        if !self.edited.led_blink.is_open() {
+            data.set_led_blink_seconds(settings.led_blink_seconds as i32);
+        }
         data.set_can_scan(self.radio.is_some());
         data.set_is_scanning(self.is_scanning.get());
         data.set_is_reaching_for_cube(self.is_reaching_for_cube.get());
@@ -536,8 +604,13 @@ impl Device {
                     format!("The paired cube was not reconnected: {}", plain(&message))
                 });
                 self.set_status(message);
-                for callback in self.on_cube_not_found.borrow().iter() {
-                    callback();
+                self.notify_history_changed();
+                if self.reach_again_after.get().is_some() {
+                    self.schedule_reach_again();
+                } else {
+                    for callback in self.on_cube_not_found.borrow().iter() {
+                        callback();
+                    }
                 }
             }
             Outcome::CubeCommanded { reason, status } => {
@@ -557,6 +630,8 @@ impl Device {
                     self.report(rows::record_connection_lost(&connection, &*self.log));
                 }
                 self.check_battery_warning();
+                self.reach_again_after.set(Some(REACH_AGAIN_FIRST));
+                self.schedule_reach_again();
             }
             Outcome::Face(face) => self.face_arrived(face),
             Outcome::SystemState(bytes) => self.system_state_arrived(&bytes),
@@ -585,6 +660,15 @@ impl Device {
             .unwrap_or_default();
         let all = self.ui.upgrade().is_some_and(|ui| ui.global::<DeviceData>().get_scan_all());
         self.heard.borrow().iter().filter(|advert| scan::is_eligible(advert, &known, all)).count()
+    }
+
+    /// Stops a scan that is running, saying `reason`: leaving the Device tab or closing the window. Does nothing with
+    /// no scan running.
+    pub fn stop_scan(&self, reason: &str) {
+        if self.is_scanning.get() && !self.stop.load(Ordering::Relaxed) {
+            self.log.record(Tag::Radio, || format!("Stopping the scan: {}", plain(reason)));
+            self.stop.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Starts a scan, or stops the one that is running.
@@ -640,6 +724,7 @@ impl Device {
         self.draw();
         let handle = handle.to_string();
         let pins = Arc::clone(&self.pins);
+        let fallback = self.pin_fallback.borrow().clone();
         let held = Arc::clone(&self.link);
         let feed = Arc::clone(&self.history_feed);
         let is_radio_scanning = Arc::clone(&self.is_radio_scanning);
@@ -656,11 +741,11 @@ impl Device {
                     "The scan had not ended after 5s, so connecting anyway".to_string()
                 });
             }
-            let stored = match stored_pin(&pins, lines) {
+            let stored = match read_pins(&pins, fallback.as_ref(), lines) {
                 Ok(stored) => stored,
                 Err(message) => return Outcome::PairingFailed { label, message },
             };
-            let candidates = login::pairing_candidates(stored.as_deref());
+            let candidates = login::pairing_candidates(&stored.order());
             let new_pin = match login::new_pin() {
                 Ok(pin) => pin,
                 Err(reason) => {
@@ -671,9 +756,19 @@ impl Device {
                 }
             };
             match session::log_in(&*radio, &handle, &candidates, Some(&new_pin), lines) {
-                session::LoginOutcome::LoggedIn { link, pin, rotated } => {
-                    settle(link, &pin, rotated, stored.as_deref(), &pins, &held, &feed, lines, handle, label)
-                }
+                session::LoginOutcome::LoggedIn { link, pin, rotated } => settle(
+                    link,
+                    &pin,
+                    rotated,
+                    &stored,
+                    &pins,
+                    fallback.as_ref(),
+                    &held,
+                    &feed,
+                    lines,
+                    handle,
+                    label,
+                ),
                 outcome => Outcome::PairingFailed { message: outcome.describe(&label), label },
             }
         });
@@ -683,6 +778,30 @@ impl Device {
     /// tries the handle last recorded first, and presents the stored PIN and then the vendor PIN to each, on
     /// connections of their own. The one that accepts is this app's cube. Does nothing when no cube is paired or
     /// there is no radio. Call once at launch.
+    /// Looks for the cube that dropped out again after the current wait, doubling the wait for the next miss. Stops
+    /// once the cube is reached, forgotten or reset.
+    fn schedule_reach_again(&self) {
+        let Some(after) = self.reach_again_after.get() else { return };
+        self.log.record(Tag::Pair, || {
+            format!("The cube went away; looking for it again in {}s", after.as_secs())
+        });
+        self.reach_again_after.set(Some((after * 2).min(REACH_AGAIN_AT_MOST)));
+        let weak = self.this.borrow().clone();
+        self.reach_again.start(slint::TimerMode::SingleShot, after, move || {
+            let Some(device) = weak.upgrade() else { return };
+            if device.reach_again_after.get().is_none() || device.is_cube_connected() {
+                return;
+            }
+            device.reconnect();
+        });
+    }
+
+    /// Stops looking for a cube that dropped out.
+    fn stop_reaching_again(&self) {
+        self.reach_again_after.set(None);
+        self.reach_again.stop();
+    }
+
     pub fn reconnect(&self) {
         let Some(radio) = self.radio.clone() else { return };
         let Some(connection) = self.connect() else { return };
@@ -696,11 +815,12 @@ impl Device {
         self.set_status("Looking for the paired cube...");
         self.draw();
         let pins = Arc::clone(&self.pins);
+        let fallback = self.pin_fallback.borrow().clone();
         let held = Arc::clone(&self.link);
         let feed = Arc::clone(&self.history_feed);
         self.run(move |lines| {
             lines.record(Tag::Pair, || "Looking for the paired cube".to_string());
-            let stored = match stored_pin(&pins, lines) {
+            let stored = match read_pins(&pins, fallback.as_ref(), lines) {
                 Ok(stored) => stored,
                 Err(message) => return Outcome::ReconnectFailed { message },
             };
@@ -720,7 +840,7 @@ impl Device {
                 return Outcome::ReconnectFailed { message: format!("The scan failed: {reason}") };
             }
             found.sort_by_key(|advert| recorded.as_deref() != Some(advert.handle.as_str()));
-            let candidates = login::reconnect_candidates(stored.as_deref());
+            let candidates = login::reconnect_candidates(&stored.order());
             let new_pin = match login::new_pin() {
                 Ok(pin) => pin,
                 Err(reason) => {
@@ -737,8 +857,9 @@ impl Device {
                             link,
                             &pin,
                             rotated,
-                            stored.as_deref(),
+                            &stored,
                             &pins,
+                            fallback.as_ref(),
                             &held,
                             &feed,
                             lines,
@@ -763,6 +884,7 @@ impl Device {
 
     fn paired(&self, paired: Paired) {
         self.is_reaching_for_cube.set(false);
+        self.stop_reaching_again();
         self.heard.borrow_mut().clear();
         self.battery.set(paired.battery);
         self.cube_face.set(paired.face);
@@ -1022,6 +1144,28 @@ impl Device {
         self.cube_face.get().filter(|_| self.is_cube_connected())
     }
 
+    /// Whether a paired launch is still reaching for its cube, with no link held yet. False while looking for the cube
+    /// again after a link dropped, which is the cube being unreachable rather than a launch connecting.
+    pub fn is_connecting(&self) -> bool {
+        self.is_reaching_for_cube.get() && !self.is_cube_connected() && self.reach_again_after.get().is_none()
+    }
+
+    /// Whether the low battery warning is on, and whether its blink is on the lit half.
+    pub fn battery_warning(&self) -> (bool, bool) {
+        (self.is_battery_low.get(), self.is_blink_on.get())
+    }
+
+    /// Registers `callback` to run on each half of the low battery blink, and when the warning goes on or off.
+    pub fn set_on_blink(&self, callback: impl Fn() + 'static) {
+        self.on_blink.borrow_mut().push(Box::new(callback));
+    }
+
+    fn notify_blink(&self) {
+        for callback in self.on_blink.borrow().iter() {
+            callback();
+        }
+    }
+
     /// Whether a link to the cube is held now.
     pub fn is_cube_connected(&self) -> bool {
         self.link.try_lock().map_or(true, |slot| slot.is_some()) && !self.is_factory_reset_running.get()
@@ -1079,8 +1223,9 @@ impl Device {
         });
     }
 
-    /// Locks the cube if it is unlocked, pausing it first when pause_on_lock is on, and unlocks and resumes it if it
-    /// is locked. Refused, and said, with no cube connected.
+    /// Locks the cube if it is unlocked, pausing it first when pause_on_lock is on, and unlocks it if it is locked.
+    /// **Unlocking never changes whether the cube is paused**: a paused cube stays paused and a running one stays
+    /// running. Refused, and said, with no cube connected.
     pub fn toggle_cube_lock(&self) {
         if !self.is_cube_connected() {
             self.log.record(Tag::Command, || {
@@ -1089,17 +1234,6 @@ impl Device {
             return;
         }
         let unlock = self.is_cube_locked() == Some(true);
-        // An unlock resumes the cube, unless the category on show has spent its daily limit.
-        let is_limit_holding = self
-            .connect()
-            .and_then(|connection| self.report(facet_core::timing::read_cube(&connection, now_seconds())))
-            .flatten()
-            .is_some_and(|reading| reading.is_limit_reached);
-        if unlock && is_limit_holding {
-            self.log.record(Tag::Limit, || {
-                "The cube is left stopped: the category on show has spent its daily limit".to_string()
-            });
-        }
         self.pause_claim.set(None);
         let pause_on_lock = self
             .connect()
@@ -1108,15 +1242,7 @@ impl Device {
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
             let status = with_link(&held, |link| {
-                if unlock {
-                    let (status, _) = session::set_lock(link, false, lines)?;
-                    if is_limit_holding {
-                        return Ok(status);
-                    }
-                    session::set_pause(link, false, lines).map(|(status, _)| status)
-                } else {
-                    lock_the_cube(link, pause_on_lock, lines)
-                }
+                if unlock { session::unlock(link, lines) } else { lock_the_cube(link, pause_on_lock, lines) }
             });
             Outcome::CubeCommanded {
                 reason: format!(
@@ -1143,24 +1269,28 @@ impl Device {
         else {
             return;
         };
-        let decision = if !reading.is_paused {
-            match &reading.category {
-                None => Some((true, PauseClaim::NoCategory)),
-                Some(_) if reading.is_limit_reached => Some((true, PauseClaim::DailyLimit)),
-                Some(_) => None,
-            }
-        } else if self.pause_claim.get() == Some(PauseClaim::NoCategory)
-            && reading.category.is_some()
-            && !reading.is_limit_reached
-        {
-            Some((false, PauseClaim::NoCategory))
-        } else {
-            None
+        let cube = Resting {
+            face: reading.face,
+            is_paused: reading.is_paused,
+            has_category: reading.category.is_some(),
+            is_limit_reached: reading.is_limit_reached,
         };
-        let Some((pause, claim)) = decision else { return };
+        let (pause, claim) = match forced_pause::decide(cube, self.pause_claim.get()) {
+            Decision::Leave => return,
+            Decision::Release => {
+                self.log.record(Tag::Forced, || {
+                    "Forced pause released: the cube is no longer stopped on the face the app stopped it on"
+                        .to_string()
+                });
+                self.pause_claim.set(None);
+                return;
+            }
+            Decision::Pause(claim) => (true, claim),
+            Decision::Resume(claim) => (false, claim),
+        };
         let face = reading.face;
         match (pause, claim) {
-            (true, PauseClaim::NoCategory) => self.log.record(Tag::Forced, || {
+            (true, PauseClaim::NoCategory { .. }) => self.log.record(Tag::Forced, || {
                 format!("Forced pause: face {face} has no category, so the cube is being stopped")
             }),
             (true, PauseClaim::DailyLimit) => {
@@ -1182,7 +1312,7 @@ impl Device {
                 with_link(&held, |link| session::set_pause(link, pause, lines).map(|(status, _)| status));
             Outcome::CubeCommanded {
                 reason: match (pause, claim) {
-                    (true, PauseClaim::NoCategory) => format!("face {face} has no category"),
+                    (true, PauseClaim::NoCategory { .. }) => format!("face {face} has no category"),
                     (true, PauseClaim::DailyLimit) => "a category spent its daily limit".to_string(),
                     (false, _) => format!("face {face} has a category now"),
                 },
@@ -1191,7 +1321,8 @@ impl Device {
         });
     }
 
-    /// Registers `callback` to run whenever a history fetch has written to `device_event`, and when the link goes.
+    /// Registers `callback` to run whenever a history fetch has written to `device_event`, when the link goes, and when
+    /// a look for the paired cube ends without it.
     pub fn set_on_history_changed(&self, callback: impl Fn() + 'static) {
         self.on_history_changed.borrow_mut().push(Box::new(callback));
     }
@@ -1261,14 +1392,25 @@ impl Device {
             None => "the database would not open".to_string(),
             Some(connection) => match result {
                 Ok(Fetched::Unchanged(frame)) => {
-                    match self.report(cube_history::record(&connection, &frame, true, &*self.log)) {
+                    match self.report(cube_history::record(
+                        &connection,
+                        &*self.zone,
+                        &frame,
+                        true,
+                        &*self.log,
+                    )) {
                         Some(_) => format!("event {} again, {}s", frame.event_number, frame.duration_seconds),
                         None => "the table refused the write".to_string(),
                     }
                 }
                 Ok(Fetched::Frames { frames, latest }) => match history::plan(&frames, latest) {
                     Some(batch) => {
-                        match self.report(cube_history::record_batch(&connection, &batch, &*self.log)) {
+                        match self.report(cube_history::record_batch(
+                            &connection,
+                            &*self.zone,
+                            &batch,
+                            &*self.log,
+                        )) {
                             Some(count) => format!("{count} frame(s) written"),
                             None => "the table refused a write".to_string(),
                         }
@@ -1314,6 +1456,9 @@ impl Device {
                 let Some(device) = weak.upgrade() else { return };
                 let is_link_held = device.link.try_lock().map_or(true, |slot| slot.is_some());
                 if !is_link_held {
+                    device.log.record(Tag::History, || {
+                        "History timer stopped, it fired with no link to the cube held".to_string()
+                    });
                     return;
                 }
                 device
@@ -1350,6 +1495,7 @@ impl Device {
     /// Forgets the paired cube and drops the link. The PIN is kept, since it is what identifies this app's cube.
     fn forget(&self) {
         self.log.record(Tag::Click, || "Button clicked: Forget Device".to_string());
+        self.stop_reaching_again();
         self.link_gone();
         self.check_battery_warning();
         let held = Arc::clone(&self.link);
@@ -1368,9 +1514,10 @@ impl Device {
         self.draw();
     }
 
-    /// Closes the link to the cube and records the quit. Blocks until the cube is disconnected; call once, as the
-    /// app quits.
+    /// Leaves the cube paused and locked, lets go of it and records the quit. Blocks until the cube is let go of or
+    /// [`QUIT_DEADLINE`] passes, whichever is first; call once, as the app quits.
     pub fn quit(&self) {
+        self.stop_reaching_again();
         self.liveness.stop();
         self.history_timer.stop();
         let link = match self.link.lock() {
@@ -1389,17 +1536,47 @@ impl Device {
             .connect()
             .and_then(|connection| self.report(rows::settings(&connection)))
             .is_none_or(|settings| settings.pause_on_lock);
-        let is_locked =
-            lock_the_cube(&mut *link, pause_on_lock, &*self.log).is_ok_and(|status| status.is_locked);
-        self.log.record(Tag::Quit, || {
-            match (is_locked, pause_on_lock) {
-                (true, true) => "Quit: the cube is paused and locked",
-                (true, false) => "Quit: the cube is locked",
-                (false, _) => "Quit: the cube was not left locked",
+        let (lines_sender, lines) = channel();
+        let (done_sender, done) = channel();
+        let worker_lines = Lines(lines_sender);
+        std::thread::spawn(move || {
+            let is_locked =
+                lock_the_cube(&mut *link, pause_on_lock, &worker_lines).is_ok_and(|status| status.is_locked);
+            session::disconnect(&mut *link, &worker_lines);
+            if done_sender.send(is_locked).is_err() {
+                eprintln!("facet: the quit had stopped waiting for the cube before it was let go of");
             }
-            .to_string()
         });
-        session::disconnect(&mut *link, &*self.log);
+        let deadline = std::time::Instant::now() + QUIT_DEADLINE;
+        let is_locked = loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match lines.recv_timeout(left) {
+                Ok(Outcome::Log(tag, message, true)) => self.log.record_failure(tag, || message),
+                Ok(Outcome::Log(tag, message, false)) => self.log.record(tag, || message),
+                Ok(other) => self.log.record(Tag::Quit, || {
+                    format!("Quit: {} arrived while locking the cube, and was dropped", describe_lost(&other))
+                }),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => match done.try_recv() {
+                    Ok(is_locked) => break Some(is_locked),
+                    Err(error) => {
+                        self.log.record_failure(Tag::Quit, || {
+                            format!("Quit: locking the cube ended without an answer: {error}")
+                        });
+                        break Some(false);
+                    }
+                },
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break None,
+            }
+        };
+        self.log.record(Tag::Quit, || match (is_locked, pause_on_lock) {
+            (Some(true), true) => "Quit: the cube is paused and locked".to_string(),
+            (Some(true), false) => "Quit: the cube is locked".to_string(),
+            (Some(false), _) => "Quit: the cube was not left locked".to_string(),
+            (None, _) => format!(
+                "Quit: the cube did not answer within {}s, so the app quits without it",
+                QUIT_DEADLINE.as_secs()
+            ),
+        });
         if let Some(connection) = self.connect() {
             self.report(rows::record_quit(&connection, &*self.log));
         }
@@ -1410,11 +1587,12 @@ impl Device {
     fn reset_pressed(&self) {
         self.log.record(Tag::Click, || "Button clicked: Reset Device".to_string());
         let weak = self.this.borrow().clone();
-        self.notice.ask(
+        self.notice.ask_with_way_out(
             "Reset this TimeFlip to factory settings?",
             "This erases everything stored on the device -- face colours, task settings, name, and password -- back \
              to factory defaults. This cannot be undone.",
             &["Cancel", "Reset Device"],
+            Some(0),
             move |choice| {
                 let Some(device) = weak.upgrade() else { return };
                 if choice == 1 {
@@ -1438,6 +1616,7 @@ impl Device {
         };
         let label = pairing.name.clone().unwrap_or_else(|| "this TimeFlip".to_string());
         self.is_factory_reset_running.set(true);
+        self.stop_reaching_again();
         self.link_gone();
         self.set_status(format!("Resetting {label}..."));
         self.draw();
@@ -1681,12 +1860,14 @@ impl Device {
                             ui.global::<DeviceData>()
                                 .set_battery_alert(device.is_battery_low.get() && device.is_blink_on.get());
                         }
+                        device.notify_blink();
                     }
                 });
             } else {
                 self.blink.stop();
                 self.is_blink_on.set(false);
             }
+            self.notify_blink();
         }
         self.draw();
     }
@@ -1706,10 +1887,34 @@ impl Device {
         self.draw();
     }
 
+    /// A stepper changed `setting` to `value`. Only the value it stops on is sent, once, [`EDIT_QUIET_FOR`] after the
+    /// last change: a held arrow is a burst of changes, and the cube refuses a second command while the first is
+    /// out. The field keeps what was edited until the table holds it or the cube refuses it.
+    fn edited(&self, setting: DeviceSetting, value: i64) {
+        let Some(edit) = self.edited.of(setting) else { return };
+        edit.unsent.set(Some(value));
+        self.log.record(Tag::Settings, || format!("Device setting {setting:?} edited to {value}"));
+        let weak = self.this.borrow().clone();
+        edit.timer.start(slint::TimerMode::SingleShot, EDIT_QUIET_FOR, move || {
+            if let Some(device) = weak.upgrade() {
+                device.send_edited(setting);
+            }
+        });
+    }
+
+    /// Sends the value `setting` was last edited to, if it has not gone already.
+    fn send_edited(&self, setting: DeviceSetting) {
+        let Some(value) = self.edited.of(setting).and_then(|edit| edit.unsent.take()) else { return };
+        self.send_setting(setting, value);
+    }
+
     /// Sends a setting to the connected cube and stores it once the cube has it. Auto-pause is confirmed by
     /// reading it back with `0x10`; LED brightness and blink interval have no read-back, so the cube's
     /// acknowledgement is all there is.
     fn send_setting(&self, setting: DeviceSetting, value: i64) {
+        if let Some(edit) = self.edited.of(setting) {
+            edit.is_sending.set(true);
+        }
         let held = Arc::clone(&self.link);
         self.run(move |lines| {
             let result = (|| {
@@ -1741,6 +1946,9 @@ impl Device {
     }
 
     fn sent(&self, setting: DeviceSetting, value: i64, result: Result<(), String>) {
+        if let Some(edit) = self.edited.of(setting) {
+            edit.is_sending.set(false);
+        }
         match result {
             Ok(()) => self.store_setting(setting, &Value::Number(value)),
             Err(reason) => {
@@ -1785,16 +1993,135 @@ impl Device {
     }
 }
 
-/// The PIN the store holds, or `None` when it holds none. An error, already logged, is a store that would not
-/// answer, and says so in words fit for the Device tab; the caller stops there rather than presenting a PIN.
-fn stored_pin(pins: &Arc<dyn SecretStore>, lines: &Lines) -> Result<Option<String>, String> {
-    match timed::look_up(pins) {
-        SecretLookup::Found(pin) => Ok(Some(pin)),
-        SecretLookup::Missing => Ok(None),
+/// What the two homes of the cube's PIN hold.
+struct StoredPins {
+    /// The PIN in the config file, which only holds one because the secret store refused it.
+    file: Option<String>,
+    /// The PIN in the secret store.
+    store: Option<String>,
+}
+
+impl StoredPins {
+    /// The PINs to present, in order.
+    fn order(&self) -> Vec<String> {
+        pin_source::read_order(self.file.as_deref(), self.store.as_deref())
+    }
+}
+
+/// The PINs the two homes hold, read now. An error, already logged, is a secret store that would not answer with
+/// nothing in the config file to go on, and says so in words fit for the Device tab; the caller stops there rather than
+/// presenting a PIN.
+///
+/// A config file copy that the secret store already holds is removed here, being a live PIN in a plain file for no
+/// reason. Two that differ are left for the next login to settle, since only the cube can say which it took.
+fn read_pins(
+    pins: &Arc<dyn SecretStore>,
+    fallback: Option<&Arc<dyn SecretStore>>,
+    lines: &Lines,
+) -> Result<StoredPins, String> {
+    let (store, unreadable) = match timed::look_up(pins) {
+        SecretLookup::Found(pin) => (Some(pin), None),
+        SecretLookup::Missing => (None, None),
+        SecretLookup::Unavailable(reason) => (None, Some(reason)),
+    };
+    let file = fallback.and_then(|fallback| match timed::look_up(fallback) {
+        SecretLookup::Found(pin) => Some(pin),
+        SecretLookup::Missing => None,
         SecretLookup::Unavailable(reason) => {
-            lines
-                .record_failure(Tag::Pin, || format!("The stored PIN could not be read: {}", plain(&reason)));
-            Err(format!("The stored PIN could not be read, so no cube was contacted: {reason}"))
+            lines.record_failure(Tag::Pin, || {
+                format!("The config file could not be read: {}", plain(&reason))
+            });
+            None
+        }
+    });
+    if let Some(reason) = unreadable {
+        lines.record_failure(Tag::Pin, || format!("The stored PIN could not be read: {}", plain(&reason)));
+        if file.is_none() {
+            return Err(format!("The stored PIN could not be read, so no cube was contacted: {reason}"));
+        }
+        lines.record(Tag::Pin, || {
+            "The secret store would not say whether it holds a PIN, so the one in the config file is used"
+                .to_string()
+        });
+    }
+    match (pin_source::at_read(file.as_deref(), store.as_deref()), fallback) {
+        (AtRead::ClearTheFile, Some(fallback)) => clear_config_copy(
+            fallback,
+            lines,
+            "The secret store already holds the PIN the config file names, so the file no longer needs to",
+        ),
+        (AtRead::AwaitTheCube, _) => lines.record(Tag::Pin, || {
+            "The secret store and the config file name different PINs, so the next login settles it"
+                .to_string()
+        }),
+        _ => {}
+    }
+    Ok(StoredPins { file, store })
+}
+
+/// Removes the config file's copy of the PIN, and says whether it went.
+fn clear_config_copy(fallback: &Arc<dyn SecretStore>, lines: &Lines, said: &str) {
+    match timed::clear(fallback) {
+        Ok(()) => lines.record(Tag::Pin, || said.to_string()),
+        Err(reason) => lines.record_failure(Tag::Pin, || {
+            format!("The config file would not give up its copy of the PIN: {}", plain(&reason))
+        }),
+    }
+}
+
+/// Writes down the PIN a cube has just proved it is on, which is called only after the cube has taken it. The secret
+/// store is where it belongs. When that refuses, the config file holds it instead, so the cube is never left on a PIN
+/// nothing can name. An error says why nowhere would hold it.
+fn record_pin(
+    pin: &str,
+    rotated: bool,
+    stored: &StoredPins,
+    pins: &Arc<dyn SecretStore>,
+    fallback: Option<&Arc<dyn SecretStore>>,
+    lines: &Lines,
+) -> Result<(), String> {
+    match pin_source::after_login(pin, rotated, stored.file.as_deref(), stored.store.as_deref()) {
+        AfterLogin::Nothing => Ok(()),
+        AfterLogin::ClearTheFile => {
+            if let Some(fallback) = fallback {
+                clear_config_copy(
+                    fallback,
+                    lines,
+                    "The secret store holds the PIN the cube answered to, so the config file no longer needs to hold one",
+                );
+            }
+            Ok(())
+        }
+        AfterLogin::WriteIt => {
+            let refused = match timed::store(pins, pin) {
+                Ok(true) => None,
+                Ok(false) => Some("it did not read back".to_string()),
+                Err(reason) => Some(reason),
+            };
+            let Some(reason) = refused else {
+                if let (Some(fallback), Some(_)) = (fallback, stored.file.as_deref()) {
+                    clear_config_copy(
+                        fallback,
+                        lines,
+                        "The PIN the cube answered to is in the secret store, so the config file no longer needs to hold one",
+                    );
+                }
+                return Ok(());
+            };
+            let Some(fallback) = fallback else { return Err(reason) };
+            match timed::store(fallback, pin) {
+                Ok(true) => {
+                    lines.record(Tag::Pin, || {
+                        format!(
+                            "The secret store would not take the PIN ({}), so it is in the config file instead",
+                            plain(&reason)
+                        )
+                    });
+                    Ok(())
+                }
+                Ok(false) => Err(format!("{reason}; and the config file did not read back")),
+                Err(file_reason) => Err(format!("{reason}; and the config file: {file_reason}")),
+            }
         }
     }
 }
@@ -1932,23 +2259,16 @@ fn settle(
     mut link: Box<dyn Link>,
     pin: &str,
     rotated: bool,
-    stored: Option<&str>,
+    stored: &StoredPins,
     pins: &Arc<dyn SecretStore>,
+    fallback: Option<&Arc<dyn SecretStore>>,
     held: &Arc<Mutex<Option<Box<dyn Link>>>>,
     feed: &Arc<Mutex<Option<Receiver<Vec<u8>>>>>,
     lines: &Lines,
     handle: String,
     label: String,
 ) -> Outcome {
-    let pin_stored = if rotated || stored != Some(pin) {
-        match timed::store(pins, pin) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err("it did not read back".to_string()),
-            Err(reason) => Err(reason),
-        }
-    } else {
-        Ok(())
-    };
+    let pin_stored = record_pin(pin, rotated, stored, pins, fallback, lines);
     set_the_clock(&mut *link, lines);
     let gap_name = link.gap_name();
     let info = session::device_info(&mut *link, lines);
@@ -2100,6 +2420,20 @@ mod tests {
         }
     }
 
+    /// A store that holds nothing and will not take anything, as a Keychain that refuses a write.
+    struct RefusingStore;
+    impl SecretStore for RefusingStore {
+        fn store(&self, _secret: &str) -> Result<bool, String> {
+            Err("refused".into())
+        }
+        fn look_up(&self) -> SecretLookup {
+            SecretLookup::Missing
+        }
+        fn clear(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     /// A store that never answers with a secret, as a Keychain waiting on a permission prompt.
     struct UnreadableStore;
     impl SecretStore for UnreadableStore {
@@ -2143,7 +2477,7 @@ mod tests {
         }
         let connection = database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
         let ui = SettingsWindow::new().expect("the window should build");
-        let notice = Notice::attach(&ui);
+        let notice = Notice::attach(&ui, Rc::new(Trace::none()));
         let data = ui.global::<DeviceData>();
 
         let without = Device::attach(
@@ -2153,6 +2487,7 @@ mod tests {
             Rc::clone(&notice),
             None,
             Arc::new(MemoryStore(Mutex::new(None))),
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         without.open();
         assert_eq!(data.get_scan_status(), "This build has no Bluetooth.");
@@ -2171,6 +2506,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::clone(&store) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         device.open();
         settle(&device);
@@ -2209,6 +2545,29 @@ mod tests {
         settle(&device);
         assert_eq!(rows::settings(&connection).expect("read").led_brightness_percent, 70);
 
+        // A held arrow is a burst of edits: nothing goes while the value moves, and then only where it stopped.
+        let before = sent.lock().expect("lock").len();
+        for minutes in [6, 7, 8] {
+            data.set_auto_pause_minutes(minutes);
+            device.edited(DeviceSetting::AutoPause, i64::from(minutes));
+        }
+        assert_eq!(sent.lock().expect("lock").len(), before, "nothing is sent while the value is moving");
+        // The field holds what was edited, whatever else makes the tab redraw, while the table has the old value.
+        device.draw();
+        assert_eq!(data.get_auto_pause_minutes(), 8);
+        assert_eq!(rows::settings(&connection).expect("read").auto_pause_minutes, 5);
+        std::thread::sleep(EDIT_QUIET_FOR + Duration::from_millis(200));
+        slint::platform::update_timers_and_animations();
+        settle(&device);
+        let writes: Vec<Vec<u8>> = sent.lock().expect("lock")[before..].to_vec();
+        assert_eq!(writes, vec![vec![0x05, 0x00, 0x08]], "one write, at the number the arrow stopped on");
+        assert_eq!(rows::settings(&connection).expect("read").auto_pause_minutes, 8);
+        assert_eq!(data.get_auto_pause_minutes(), 8);
+        // With nothing left unsent the table is the answer again.
+        data.set_auto_pause_minutes(3);
+        device.draw();
+        assert_eq!(data.get_auto_pause_minutes(), 8);
+
         // A name the cube cannot store is refused before anything is sent; one it can is sent and then recorded.
         device.rename_opened();
         assert!(data.get_is_editing_device_name());
@@ -2239,6 +2598,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::clone(&store) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         assert!(!rows::pairing(&connection).expect("read").is_cube_connected);
         device.open();
@@ -2261,6 +2621,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::new(UnreadableStore),
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         locked.open();
         settle(&locked);
@@ -2279,6 +2640,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::clone(&store) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         device.open();
         settle(&device);
@@ -2325,6 +2687,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::clone(&empty) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         device.open();
         device.scan_pressed();
@@ -2347,6 +2710,7 @@ mod tests {
             Rc::clone(&notice),
             Some(radio),
             Arc::new(UnreadableStore),
+            Arc::new(facet_core::timezone::SYDNEY),
         );
         locked.open();
         locked.scan_pressed();
@@ -2356,6 +2720,73 @@ mod tests {
         assert!(data.get_scan_status().contains("stored PIN could not be read"));
         assert!(!rows::pairing(&connection).expect("read").is_cube_paired);
         assert_eq!(pin.lock().expect("lock").as_str(), "000000");
+        drop(locked);
+
+        // A secret store that refuses the new PIN leaves it in the config file, and the cube is paired all the same.
+        let file = Arc::new(MemoryStore(Mutex::new(None)));
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let refused = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::new(RefusingStore),
+            Arc::new(facet_core::timezone::SYDNEY),
+        );
+        refused.set_pin_fallback(Arc::clone(&file) as Arc<dyn SecretStore>);
+        refused.open();
+        refused.scan_pressed();
+        settle(&refused);
+        refused.pair("cube");
+        settle(&refused);
+        assert_eq!(notice.title(), "", "a PIN the config file holds is a PIN saved");
+        assert!(rows::pairing(&connection).expect("read").is_cube_paired);
+        let rotated = pin.lock().expect("lock").clone();
+        assert_ne!(rotated, "000000");
+        assert_eq!(file.look_up(), SecretLookup::Found(rotated.clone()), "the config file holds the new PIN");
+        drop(refused);
+
+        // A secret store that will not answer no longer stops the reconnect when the config file has the PIN.
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let from_file = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::new(UnreadableStore),
+            Arc::new(facet_core::timezone::SYDNEY),
+        );
+        from_file.set_pin_fallback(Arc::clone(&file) as Arc<dyn SecretStore>);
+        from_file.open();
+        settle(&from_file);
+        from_file.reconnect();
+        settle(&from_file);
+        assert_eq!(data.get_connection(), "Connected");
+        assert_eq!(pin.lock().expect("lock").as_str(), rotated, "nothing was rotated");
+        drop(from_file);
+
+        // Once the secret store takes the PIN again, the next login moves it there and the file lets go of it.
+        let store = Arc::new(MemoryStore(Mutex::new(None)));
+        let radio: Arc<dyn Radio> = Arc::new(FakeRadio(Arc::clone(&pin), Arc::clone(&sent)));
+        let healed = Device::attach(
+            &ui,
+            path.clone(),
+            Rc::new(Trace::none()),
+            Rc::clone(&notice),
+            Some(radio),
+            Arc::clone(&store) as Arc<dyn SecretStore>,
+            Arc::new(facet_core::timezone::SYDNEY),
+        );
+        healed.set_pin_fallback(Arc::clone(&file) as Arc<dyn SecretStore>);
+        healed.open();
+        settle(&healed);
+        healed.reconnect();
+        settle(&healed);
+        assert_eq!(store.look_up(), SecretLookup::Found(rotated.clone()), "the secret store has it now");
+        assert_eq!(file.look_up(), SecretLookup::Missing, "and the config file does not");
+        drop(healed);
 
         std::fs::remove_file(&path).expect("the test database should be removable");
     }

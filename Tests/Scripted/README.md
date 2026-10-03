@@ -220,28 +220,28 @@ correctly, so it passes and the line says which case it met.
 | | |
 |---|---|
 | `00-setup` | seeds what a rebuilt database cannot have: the Google account, and history with fractional durations |
-| `01-launch` | the database opens, one instance only, the debug log records |
-| `02-menu-bar` | the status item, its menu, and the pause on its right half |
-| `03-settings-window` | the window opens, the tabs switch, it closes, and the run's calendar is made |
+| `01-launch` | the launch reaches the status item, the debug log records, and a second copy stands down before opening either database |
+| `02-menu-bar` | the status item, the idle line reading Facet, its menu, and Settings from the menu |
+| `03-settings-window` | the window opens, the tabs switch, it closes by the window manager, its Close button and Escape, and the run's calendar is made |
 | `04-categories` | create, rename, retire, reinstate, renaming a retired one, and the alerts a namesake raises |
-| `05-faces-timing` | a category on a face, the clock starting and pausing |
+| `05-faces-timing` | a category on a face, the clock starting and pausing, and the menu bar naming it in cyan |
 | `06-time-entries` | a finished segment becoming tracked time, and a blip not |
-| `07-history-timer` | it fires while timing and stops when nothing is |
 | `08-app-settings` | each row on the App tab written and read back |
 | `09-report` | the range, the totals, folding a category open, the sorting |
-| `10-google-calendar` | the account, and recorded time reaching the calendar `03` made |
+| `10-google-calendar` | the account, and recorded time reaching the calendar `03` made, each event read back before it is ticked |
 | `11-google-reconnect` | disconnect keeps the calendar, and signing back in still reaches it (**asks you to sign in**) |
 | `12-daily-limit` | a category spending its `daily_limit` stops the clock, and every way of starting it again refuses |
 | `13-device-tab` | the Device tab's two sections folding, including a fold inside a fold, and every Settings control dead with no cube |
+| `14-time-zone` | a time entry, its segment and the trace filed under this machine's own zone, read from the operating system, with its local time beside it |
 | `50-device-scan` | the scan lists the cube, stops when pressed, ends by itself after fifteen seconds, and All Devices widens it |
 | `51-device-connect` | pairing: every step of the login, the PIN rotated or kept, what the table and the tab say afterwards, and Reset offered and called off |
 | `52-device-reset` | the factory reset: asked, called off, then sent, proved on the vendor PIN, and forgotten, and the wiped cube paired onto a new PIN |
-| `53-device-reconnect` | a quit closing the link, a paired app reaching its own cube at launch with the window shut, Forget, and a launch with nothing paired |
+| `53-device-reconnect` | a quit closing the link, a paired app reaching its own cube at launch with the window shut and the menu bar saying Connecting..., Forget, and a launch with nothing paired |
 | `54-device-battery` | the charge read as the link comes up, followed from then on, and shown on the tab, and the battery warning row |
 | `55-device-face` | the login's clock and face, history filed into `device_event` and growing in place, the Faces tab following the cube, and a turn opening a new segment (**asks you to turn the cube**) |
 | `56-manual-mode` | a paired app that cannot find its cube: what a click refuses, and what taking manual mode stops (**asks you to switch Bluetooth off and on**) |
-| `57-cube-pause` | the menu's Pause, Resume, Lock and Unlock on the cube, each read back, the pause before the lock, and the quit leaving it paused and locked |
-| `58-wrong-pin` | a cube that refuses this app's PIN: the offer, Retry, and taking manual mode (**asks you to answer a dialog twice**) |
+| `57-cube-pause` | the menu's Pause, Resume, Lock and Unlock on the cube, each read back, the pause before the lock, a left click pausing and a double click locking, and the quit leaving it paused and locked, from the menu and on a SIGTERM |
+| `58-wrong-pin` | a cube that refuses this app's PIN: the offer, Retry, and taking manual mode (**asks you to answer a dialog twice**). Not run on macOS, where the Keychain prompts after the PIN item is rewritten |
 | `59-double-tap` | the four registers: stepped, sent, read back off the cube, then written down, and dead while the gesture is off |
 | `60-device-backlog` | a cube out of range: what the app shows, what it refuses to write, and what the cube backfills when it returns (**asks you to switch Bluetooth off and on, and to turn the cube in between**) |
 | `61-lock-without-pause` | locking the cube from the menu with `pause_on_lock` off |
@@ -252,6 +252,7 @@ correctly, so it passes and the line says which case it met.
 | `66-device-rename` | the cube renamed from the Device tab: `0x15` to the hardware, the row written only after it, and the cube still found afterwards |
 | `67-pause-on-lock` | the pause-on-lock row: written to the table and sent nowhere |
 | `68-device-link-lost` | the link dropping is noticed and recorded, the pairing kept, and a relaunch reaching the cube again (**asks you to switch Bluetooth off and on**) |
+| `69-history-timer` | the history timer firing on the interval the table holds, and a changed interval read at the next arming with no relaunch |
 | `99-quit` | the cube factory reset, so it is left on the vendor PIN, and the app quitting |
 
 ## How a check is written

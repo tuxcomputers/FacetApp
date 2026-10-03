@@ -9,7 +9,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::debug_log::{Record, Tag};
 use crate::face;
+use crate::port::Zone;
 use crate::time_entry;
+use crate::timezone;
 
 /// One `device_event` row, in the columns timing needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,13 +78,15 @@ pub fn current_app_face(connection: &Connection) -> Result<i64, rusqlite::Error>
 /// those is then offered to [`time_entry::consider`]. The event number is `now`, or one more than the
 /// highest already used within that second.
 ///
-/// `timezone_id` is written as 0 (Unknown): the core has no way to name this machine's time zone.
+/// `timezone_id` is the machine's zone as `zone` names it when the segment opens, or Unknown when it cannot.
 pub fn start_segment(
     connection: &Connection,
+    zone: &dyn Zone,
     face: i64,
     now: i64,
     log: &impl Record,
 ) -> Result<i64, rusqlite::Error> {
+    let timezone_id = timezone::current_id(connection, zone, log);
     let transaction = connection.unchecked_transaction()?;
     let stranded = open_row_ids(&transaction, false)?;
     transaction.execute("UPDATE device_event SET finalised = 1 WHERE finalised != 1", [])?;
@@ -96,8 +100,8 @@ pub fn start_segment(
         "INSERT INTO device_event (event_number, event_type_id, device_face, start_time, timezone_id, \
                                    start_epoch, duration_seconds, paused, finalised) \
          VALUES (?1, (SELECT event_type_id FROM event_type WHERE event_name = 'face_flip'), ?2, \
-                 strftime('%Y-%m-%dT%H:%M:%S', ?3, 'unixepoch', 'localtime'), 0, ?3, 0, 0, 0)",
-        params![event_number, face, now],
+                 strftime('%Y-%m-%dT%H:%M:%S', ?3, 'unixepoch', 'localtime'), ?4, ?3, 0, 0, 0)",
+        params![event_number, face, now, timezone_id],
     )?;
     let id = transaction.last_insert_rowid();
     transaction.commit()?;
@@ -198,6 +202,7 @@ fn open_row_ids(connection: &Connection, only_app_faces: bool) -> Result<Vec<i64
 mod tests {
     use super::*;
     use crate::testing::seeded;
+    use crate::timezone::SYDNEY;
 
     const NO_LOG: Option<crate::debug_log::DebugLog> = None;
 
@@ -211,6 +216,40 @@ mod tests {
             .expect("the row should read")
     }
 
+    fn zone_of(connection: &Connection, id: i64) -> String {
+        connection
+            .query_row(
+                "SELECT timezone_name FROM device_event JOIN timezone USING (timezone_id) WHERE device_event_id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .expect("the row should name a zone")
+    }
+
+    #[test]
+    fn a_started_segment_is_filed_under_the_zone_the_machine_names() {
+        let connection = seeded();
+        let id = start_segment(&connection, &SYDNEY, 13, 1_000, &NO_LOG).expect("should start");
+        assert_eq!(zone_of(&connection, id), "Australia/Sydney");
+        let elsewhere =
+            start_segment(&connection, &crate::timezone::FixedZone("America/Havana"), 14, 2_000, &NO_LOG)
+                .expect("should start");
+        assert_eq!(zone_of(&connection, elsewhere), "America/Havana");
+        assert_eq!(
+            zone_of(&connection, id),
+            "Australia/Sydney",
+            "an earlier row keeps the zone it was taken in"
+        );
+    }
+
+    #[test]
+    fn a_segment_is_still_written_when_the_zone_cannot_be_named() {
+        let connection = seeded();
+        let id = start_segment(&connection, &crate::timezone::UnnamedZone, 13, 1_000, &NO_LOG)
+            .expect("should start");
+        assert_eq!(zone_of(&connection, id), "Unknown");
+    }
+
     #[test]
     fn a_fresh_database_has_nothing_open_and_uses_the_first_app_face() {
         let connection = seeded();
@@ -221,7 +260,7 @@ mod tests {
     #[test]
     fn a_started_segment_is_open_on_its_face_with_the_epoch_as_its_event_number() {
         let connection = seeded();
-        let id = start_segment(&connection, 13, 1_000, &NO_LOG).expect("should start");
+        let id = start_segment(&connection, &SYDNEY, 13, 1_000, &NO_LOG).expect("should start");
         let open = open_segment(&connection).expect("should read").expect("a segment should be open");
         assert_eq!(
             open,
@@ -239,8 +278,8 @@ mod tests {
     #[test]
     fn two_segments_in_one_second_take_different_event_numbers() {
         let connection = seeded();
-        start_segment(&connection, 13, 1_000, &NO_LOG).expect("should start");
-        start_segment(&connection, 14, 1_000, &NO_LOG).expect("should start");
+        start_segment(&connection, &SYDNEY, 13, 1_000, &NO_LOG).expect("should start");
+        start_segment(&connection, &SYDNEY, 14, 1_000, &NO_LOG).expect("should start");
         let open = open_segment(&connection).expect("should read").expect("a segment should be open");
         assert_eq!((open.face, open.event_number), (14, 1_001));
     }
@@ -248,7 +287,7 @@ mod tests {
     #[test]
     fn closing_measures_whole_seconds_from_the_start() {
         let connection = seeded();
-        let id = start_segment(&connection, 13, 1_000, &NO_LOG).expect("should start");
+        let id = start_segment(&connection, &SYDNEY, 13, 1_000, &NO_LOG).expect("should start");
         assert_eq!(close_open_segment(&connection, 1_042, &NO_LOG).expect("should close"), Some(id));
         assert_eq!(duration(&connection, id), (42.0, true));
         assert_eq!(open_segment(&connection).expect("should read"), None);
@@ -257,7 +296,7 @@ mod tests {
     #[test]
     fn a_clock_that_went_backwards_closes_at_zero() {
         let connection = seeded();
-        let id = start_segment(&connection, 13, 1_000, &NO_LOG).expect("should start");
+        let id = start_segment(&connection, &SYDNEY, 13, 1_000, &NO_LOG).expect("should start");
         close_open_segment(&connection, 900, &NO_LOG).expect("should close");
         assert_eq!(duration(&connection, id), (0.0, true));
     }
@@ -265,7 +304,7 @@ mod tests {
     #[test]
     fn a_cube_segment_is_left_open() {
         let connection = seeded();
-        let id = start_segment(&connection, 5, 1_000, &NO_LOG).expect("should start");
+        let id = start_segment(&connection, &SYDNEY, 5, 1_000, &NO_LOG).expect("should start");
         assert_eq!(close_open_segment(&connection, 1_100, &NO_LOG).expect("should run"), None);
         assert_eq!(duration(&connection, id), (0.0, false));
     }
@@ -273,15 +312,15 @@ mod tests {
     #[test]
     fn starting_a_segment_finalises_any_left_open() {
         let connection = seeded();
-        let first = start_segment(&connection, 13, 1_000, &NO_LOG).expect("should start");
-        start_segment(&connection, 14, 1_010, &NO_LOG).expect("should start");
+        let first = start_segment(&connection, &SYDNEY, 13, 1_000, &NO_LOG).expect("should start");
+        start_segment(&connection, &SYDNEY, 14, 1_010, &NO_LOG).expect("should start");
         assert!(duration(&connection, first).1);
     }
 
     #[test]
     fn refreshing_writes_the_duration_and_leaves_it_open() {
         let connection = seeded();
-        let id = start_segment(&connection, 13, 1_000, &NO_LOG).expect("should start");
+        let id = start_segment(&connection, &SYDNEY, 13, 1_000, &NO_LOG).expect("should start");
         refresh_open_segment(&connection, 1_030).expect("should refresh");
         assert_eq!(duration(&connection, id), (30.0, false));
     }
@@ -289,9 +328,9 @@ mod tests {
     #[test]
     fn a_stranded_segment_is_closed_with_the_duration_it_already_had() {
         let connection = seeded();
-        let id = start_segment(&connection, 14, 1_000, &NO_LOG).expect("should start");
+        let id = start_segment(&connection, &SYDNEY, 14, 1_000, &NO_LOG).expect("should start");
         refresh_open_segment(&connection, 1_020).expect("should refresh");
-        let cube = start_segment(&connection, 3, 2_000, &NO_LOG);
+        let cube = start_segment(&connection, &SYDNEY, 3, 2_000, &NO_LOG);
         // Starting the cube segment finalised the app one, so reopen it to model a crash.
         connection
             .execute("UPDATE device_event SET finalised = 0 WHERE device_event_id = ?1", params![id])

@@ -263,7 +263,7 @@ impl App {
         if !self.has_trace() {
             return;
         }
-        let file = self.log.file().to_path_buf();
+        let file = self.log.file();
         self.log.record(Tag::Settings, || format!("Revealing the trace at {}", file.display()));
         if let Err(error) = self.opener.reveal(&file) {
             self.log.record_failure(Tag::Settings, || format!("The trace could not be revealed: {error}"));
@@ -283,7 +283,7 @@ impl App {
             self.log.record(Tag::Settings, || "The trace was not copied".to_string());
             return;
         };
-        match trace_file::copy_to(self.log.file(), &destination) {
+        match trace_file::copy_to(&self.log.file(), &destination) {
             Ok(()) => self.log.record(Tag::Settings, || format!("Trace copied to {}", destination.display())),
             Err(error) => {
                 self.log.record_failure(Tag::Settings, || format!("The trace was not copied: {error}"));
@@ -298,19 +298,20 @@ impl App {
             return;
         }
         let this = self.this.borrow().clone();
-        self.notice.ask(
+        self.notice.ask_with_way_out(
             "Clear the debug trace?",
             "This removes every message Facet has recorded so far. It cannot be undone, and anything you have \
              been asked to send in goes with it.\n\nNothing else is affected: your recorded time, categories and \
              settings are in a different file.",
             &["Cancel", "Clear Trace"],
+            Some(0),
             move |index| {
                 let Some(app) = this.upgrade() else { return };
                 if index != 1 {
                     app.log.record(Tag::Settings, || "The trace was not cleared".to_string());
                     return;
                 }
-                match trace_file::clear(app.log.file()) {
+                match trace_file::clear(&app.log.file()) {
                     Ok(()) => app.log.record(Tag::Settings, || "Trace cleared".to_string()),
                     Err(error) => {
                         app.log.record_failure(Tag::Settings, || format!("The trace was not cleared: {error}"));
@@ -478,13 +479,14 @@ mod tests {
         }
         let connection = database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
         let ui = SettingsWindow::new().expect("the window should build");
-        let notice = Notice::attach(&ui);
+        let notice = Notice::attach(&ui, Rc::new(Trace::none()));
         let trace_file =
             std::env::temp_dir().join(format!("facet-ui-app-trace-{}.sqlite", std::process::id()));
         if trace_file.exists() {
             std::fs::remove_file(&trace_file).expect("a stale trace should be removable");
         }
-        let trace = Rc::new(Trace::new(trace_file.clone(), None));
+        let trace =
+            Rc::new(Trace::new(trace_file.clone(), None, std::sync::Arc::new(facet_core::timezone::SYDNEY)));
         let app = App::attach(
             &ui,
             path.clone(),

@@ -1,16 +1,15 @@
 //! Composition root for macOS. The only place that knows both a port and the thing that performs it.
 //!
-//! Today that is a status item, a menu, the Settings window and the two databases behind them. There is
-//! no radio yet. What it does establish is the shape the rest hangs off, and the two rules that are easy
-//! to get wrong later: the menu is the primary route to everything, and left click is an accelerator
-//! rather than a mechanism.
+//! That is a status item, a menu, the Settings window, the two databases behind them, the radio, the secret store
+//! and the Google calendar. Two rules hold throughout: the menu is the primary route to everything, and left
+//! click is an accelerator rather than a mechanism.
 //!
 //! **Where the files live is decided here and nowhere else.** `facet-core` is handed paths; it does not
 //! know which platform laid them out, and asking it to would be the core caring what it is running on.
 
 mod opener;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -20,11 +19,12 @@ use facet_adapters::dialogs::NativeFileChooser;
 use facet_adapters::http::UreqHttp;
 use facet_adapters::loopback::StdLoopbackListener;
 use facet_adapters::radio::BtleplugRadio;
-use facet_adapters::secrets::KeyringSecretStore;
+use facet_adapters::secrets::{FileSecretStore, KeyringSecretStore};
+use facet_adapters::zone::SystemZone;
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
+use facet_core::debug_log::{self, Record, Tag, Trace, plain};
 use facet_core::google::Credentials;
-use facet_core::port::{Opener, Radio};
+use facet_core::port::{Opener, Radio, Zone};
 use facet_core::setting;
 use facet_ui::app::App;
 use facet_ui::categories::Categories;
@@ -49,18 +49,42 @@ mod status_icon;
 const TRAY_POLL: Duration = Duration::from_millis(100);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // **One copy at a time, claimed before either database is opened**, so a second copy touches neither. Held until
+    // main returns; a second copy finds it held, says so on stderr and goes.
+    let directory = data_directory();
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
+    let _instance = match facet_core::instance::claim(&directory) {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            eprintln!("Facet is already running, so this copy quits.");
+            return Ok(());
+        }
+        Err(reason) => return Err(format!("The single instance lock could not be taken: {reason}").into()),
+    };
+
     // **Before the window**, so that a database that will not come up says so in a terminal rather than
     // from behind a status item nobody has clicked yet.
     //
     // **Shared rather than copied**, there being one trace database and one connection to it. Rc because
     // everything that records is on the UI thread; the day something off-thread needs to, it gets a
     // channel to this one rather than a second connection.
-    let log = Rc::new(open_databases()?);
+    let zone: Arc<dyn Zone> = Arc::new(SystemZone);
+    let log = Rc::new(open_databases(&zone)?);
 
     let ui = SettingsWindow::new()?;
 
     // One notice for the whole window, shared by every tab that raises one.
-    let notice = Notice::attach(&ui);
+    let notice = Notice::attach(&ui, Rc::clone(&log));
+    // A notice raised while Settings is hidden shows the window, which closes again once the notice is answered.
+    let notice_ui = ui.as_weak();
+    let notice_log = Rc::clone(&log);
+    notice.set_window_opener(move || {
+        if let Some(ui) = notice_ui.upgrade() {
+            ui.invoke_open_on_faces();
+            show_settings(&ui, "Faces", &notice_log);
+        }
+    });
 
     // `false` for has_given_up_on_cube: a paired cube is followed until the reconnect fails to find it and the
     // owner chooses to time by hand.
@@ -70,6 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Rc::clone(&log),
         false,
         Rc::clone(&notice),
+        Arc::clone(&zone),
     );
 
     let categories =
@@ -134,11 +159,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Rc::clone(&notice),
         radio,
         Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
+        Arc::clone(&zone),
     );
+    // Where the cube's PIN goes when the secret store will not take it, so the cube is never left on a PIN nothing can
+    // name. The file also holds the Google client credentials, which it leaves alone.
+    device.set_pin_fallback(Arc::new(FileSecretStore::new(data_directory().join("config.json"), "PIN")));
     // The Faces tab asks the cube which face is up, and a face given a category, or a category recoloured or retired,
     // relights the cube.
     let face_device = Rc::downgrade(&device);
     faces.set_cube_face_source(move || face_device.upgrade().and_then(|device| device.cube_face()));
+    let flags_device = Rc::downgrade(&device);
+    faces.set_cube_flags_source(move || match flags_device.upgrade() {
+        Some(device) => {
+            let (is_battery_low, is_blink_on) = device.battery_warning();
+            facet_ui::faces::CubeFlags {
+                is_connecting: device.is_connecting(),
+                is_locked: device.is_cube_locked() == Some(true),
+                is_battery_low,
+                is_blink_on,
+            }
+        }
+        None => facet_ui::faces::CubeFlags::default(),
+    });
     let assigned_device = Rc::downgrade(&device);
     faces.set_on_face_assigned(move |face, reason| {
         if let Some(device) = assigned_device.upgrade() {
@@ -167,8 +209,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             faces.refresh_timing();
         }
     });
+    // The one way out, whatever asks for it: the menu, the not-found notice, a signal, or the Mac logging out. A
+    // second ask while the first is running does nothing.
+    let quit_faces = Rc::downgrade(&faces);
+    let quit_device = Rc::downgrade(&device);
+    let quit_log = Rc::clone(&log);
+    let is_quitting = Cell::new(false);
+    let quit: Rc<dyn Fn(&str)> = Rc::new(move |reason: &str| {
+        if is_quitting.replace(true) {
+            return;
+        }
+        quit_log.record(Tag::Quit, || format!("Quitting {reason}"));
+        if let Some(faces) = quit_faces.upgrade() {
+            faces.quit();
+        }
+        if let Some(device) = quit_device.upgrade() {
+            device.quit();
+        }
+        // Not a discarded Result: a quit that the loop refuses leaves the app running with nothing said about why.
+        if let Err(error) = slint::quit_event_loop() {
+            quit_log.record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
+        }
+    });
     // A paired cube the launch cannot find is offered again or given up on, in the Settings window, which is shown
     // for it.
+    let lost_quit = Rc::clone(&quit);
     let lost_faces = Rc::downgrade(&faces);
     let lost_device = Rc::downgrade(&device);
     let lost_notice = Rc::clone(&notice);
@@ -181,21 +246,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let faces = lost_faces.clone();
         let device = lost_device.clone();
-        lost_notice.ask(
+        let quit = Rc::clone(&lost_quit);
+        lost_notice.ask_with_way_out(
             "The TimeFlip was not found",
-            "Facet could not find the paired TimeFlip. Flip it to wake it and look again, or time by hand for the rest \
-             of this launch.",
-            &["Rescan", "Time by Hand"],
-            move |choice| {
-                if choice == 0 {
+            "Facet could not find the paired TimeFlip. Flip it to wake it and look again, time by hand for the rest of \
+             this launch, or quit.",
+            &["Rescan", "Time by Hand", "Quit"],
+            Some(0),
+            move |choice| match choice {
+                0 => {
                     if let Some(device) = device.upgrade() {
                         device.reconnect();
                     }
-                } else if let Some(faces) = faces.upgrade() {
-                    faces.give_up_on_cube();
                 }
+                1 => {
+                    if let Some(faces) = faces.upgrade() {
+                        faces.give_up_on_cube();
+                    }
+                }
+                _ => quit("on the not-found notice"),
             },
         );
+    });
+    // Recorded time goes to the Google calendar: whatever is waiting at launch, and whatever a history fetch or the
+    // app's own clock has just recorded.
+    google.sync_calendar("the app started");
+    let fetched_google = Rc::downgrade(&google);
+    device.set_on_history_changed(move || {
+        if let Some(google) = fetched_google.upgrade() {
+            google.sync_calendar("the cube history was filed");
+        }
+    });
+    let timed_google = Rc::downgrade(&google);
+    faces.set_on_timing_changed(move || {
+        if let Some(google) = timed_google.upgrade() {
+            google.sync_calendar("the clock changed");
+        }
     });
     // Finds the paired cube again, when there is one; a launch with nothing paired does nothing here.
     device.reconnect();
@@ -217,10 +303,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tab_categories = Rc::clone(&categories);
     let tab_report = Rc::clone(&report);
     let tab_google = Rc::clone(&google);
+    let tab_device = Rc::clone(&device);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
         tab_log.record(Tag::Settings, || format!("Settings tab selected: {tab}"));
+        if tab != "Device" {
+            tab_device.stop_scan(&format!("the {tab} tab was selected"));
+        }
         if tab == "Faces" {
             tab_faces.refresh();
         }
@@ -242,10 +332,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // again. The values it holds are not carried over, whatever it keeps in memory: the window reads them
     // again on every open, per the source-of-truth rule in CLAUDE.md.
     let close_log = Rc::clone(&log);
+    let pressed_log = Rc::clone(&close_log);
+    let closing_device = Rc::clone(&device);
+    let pressed_device = Rc::clone(&device);
     ui.window().on_close_requested(move || {
         show_in_dock(false, &close_log);
+        closing_device.stop_scan("the Settings window closed");
         close_log.record(Tag::Settings, || "Settings closed".to_string());
         slint::CloseRequestResponse::HideWindow
+    });
+    // The Close button and Escape hide the window the way its own close control does.
+    let pressed_ui = ui.as_weak();
+    ui.on_close_pressed(move || {
+        let Some(ui) = pressed_ui.upgrade() else { return };
+        if let Err(error) = ui.hide() {
+            pressed_log
+                .record_failure(Tag::Settings, || format!("The Settings window would not hide: {error}"));
+            return;
+        }
+        show_in_dock(false, &pressed_log);
+        pressed_device.stop_scan("the Settings window closed");
+        pressed_log.record(Tag::Settings, || "Settings closed".to_string());
     });
 
     // About sits on the top level menu, and that placement is a licence condition. Slint's
@@ -278,7 +385,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     menu.append(&about_item)?;
     menu.append(&quit_item)?;
 
-    let showing = Rc::new(Cell::new(status_icon::Showing { paused: false, locked: false }));
+    let showing = Rc::new(Cell::new(status_icon::Showing {
+        paused: false,
+        locked: false,
+        colour: facet_core::status_line::StatusColour::Ordinary,
+    }));
 
     // Right click makes the host show the menu; left click reaches the app instead. That split is the
     // shape every platform can manage, and it is why nothing may live behind a left click that has no
@@ -315,6 +426,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pump_report = Rc::clone(&report);
     let pump_app = Rc::clone(&app);
     let pump_device = Rc::clone(&device);
+    let pump_quit = Rc::clone(&quit);
+    let left_click = facet_ui::status_click::gesture(
+        Rc::downgrade(&faces),
+        Rc::downgrade(&device),
+        Rc::clone(&log),
+        double_click_interval,
+    );
 
     // The status item and the Pause item follow the clock: redrawn whenever `faces` re-reads timing, which
     // is after every toggle, every click on the Faces tab and every tick.
@@ -325,6 +443,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let follow_pause_item = pause_item.clone();
     let follow_lock_item = lock_item.clone();
     let follow_device = Rc::downgrade(&device);
+    // The line the tooltip was last set from, so a tick that changes nothing sets nothing.
+    let follow_line: Rc<RefCell<Option<facet_core::status_line::StatusLine>>> = Rc::new(RefCell::new(None));
     // A change to the icon, the item's title or whether it is enabled writes one row, in the wording the
     // Linux tray writes, which the scripted checks read. The item's current text and enabled state are read
     // from the item itself.
@@ -338,7 +458,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             follow_lock_item.set_text(lock_title);
             follow_lock_item.set_enabled(is_connected);
         }
-        let next = status_icon::Showing { paused: timing.is_paused, locked: is_locked };
+        let next =
+            status_icon::Showing { paused: timing.is_paused, locked: is_locked, colour: timing.icon_colour };
+        let previous = follow_line.borrow().clone();
+        if previous.as_ref() != Some(&timing.line) {
+            show_status_line(&follow_tray, &timing.line, &follow_log);
+            if previous.as_ref().map(|line| line.colour_description())
+                != Some(timing.line.colour_description())
+            {
+                follow_log.record(Tag::Status, || format!("Menu bar: {}", timing.line.colour_description()));
+            }
+            if previous.as_ref().map(|line| &line.name) != Some(&timing.line.name) {
+                follow_log.record(Tag::Status, || format!("Menu bar reads {}", plain(&timing.line.name)));
+            }
+            *follow_line.borrow_mut() = Some(timing.line.clone());
+        }
         let is_item_changed = follow_pause_item.text() != timing.pause_title
             || follow_pause_item.is_enabled() != timing.is_clickable;
         let is_icon_changed = next != follow_showing.get();
@@ -358,8 +492,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         });
     };
+    let follow = Rc::new(follow);
     follow();
-    faces.set_on_timing_changed(follow);
+    let timed_follow = Rc::clone(&follow);
+    faces.set_on_timing_changed(move || timed_follow());
+    // The low battery blink flashes the name, so each half of it draws the line again.
+    let blink_follow = Rc::clone(&follow);
+    device.set_on_blink(move || blink_follow());
 
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
@@ -390,18 +529,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pump_device.open();
                     }
                 }
-                "quit" => {
-                    pump_log.record(Tag::Quit, || "Quitting on the menu item".to_string());
-                    pump_faces.quit();
-                    pump_device.quit();
-                    // Not a discarded Result: a quit that the loop refuses leaves the app running with
-                    // nothing said about why, which is the shape CLAUDE.md has a section about. The Linux
-                    // composition root reports the same failure the same way.
-                    if let Err(error) = slint::quit_event_loop() {
-                        pump_log
-                            .record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
-                    }
-                }
+                "quit" => pump_quit("on the menu item"),
                 other => {
                     // Nothing fails silently: an id with no arm is a menu item somebody added and
                     // did not wire up, and it should say so rather than doing nothing.
@@ -414,15 +542,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let TrayIconEvent::Click { button, button_state, .. } = event {
                 pump_log.record(Tag::Tray, || format!("Status item {button:?} {button_state:?}"));
 
-                // **Left click is Pause's accelerator**, which is what it already is on Linux and what
-                // the design rule in docs/rust-port.md asks for on every platform: the menu is the
-                // primary route and left click is a shortcut to its first item.
+                // **Left click is Pause's accelerator, and a double click Lock's**, which is what they are on
+                // Linux and what the design rule in docs/rust-port.md asks for on every platform: the menu is
+                // the primary route and a click is a shortcut to one of its items.
                 //
                 // **On the release, not the press.** macOS delivers both edges of a left click here, so
                 // acting on each would flip pause twice and land back where it started. Right click never
                 // arrives as a pair, the menu taking it, so this is not a general rule about clicks.
                 if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                    toggle_pause(&pump_faces, &pump_device);
+                    left_click();
                 }
             }
         }
@@ -434,6 +562,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settle.start(slint::TimerMode::SingleShot, Duration::from_millis(0), move || {
         show_in_dock(false, &settle_log);
     });
+
+    // A kill, the Mac logging out, restarting or shutting down, and a terminate from the app menu quit the way the
+    // status item menu does, so the cube is left paused and locked.
+    let signal_quit = Rc::clone(&quit);
+    let signal_watch = slint::Timer::default();
+    match facet_adapters::termination::requests() {
+        Ok(requests) => {
+            signal_watch.start(slint::TimerMode::Repeated, Duration::from_millis(250), move || {
+                if let Ok(name) = requests.try_recv() {
+                    signal_quit(&format!("on {name}"));
+                }
+            })
+        }
+        Err(reason) => {
+            log.record_failure(Tag::Quit, || format!("A kill will not lock the cube: {}", plain(&reason)))
+        }
+    }
+    let _termination = quit_on_termination(Rc::clone(&quit), &log);
 
     log.record(Tag::Launch, || "Facet is in the menu bar. Right click the icon for the menu".to_string());
 
@@ -520,6 +666,107 @@ fn show_in_dock(wanted: bool, log: &impl Record) {
 #[cfg(not(target_os = "macos"))]
 fn show_in_dock(_wanted: bool, _log: &impl Record) {}
 
+/// The double-click interval set in System Settings.
+#[cfg(target_os = "macos")]
+fn double_click_interval() -> Duration {
+    let seconds = objc2_app_kit::NSEvent::doubleClickInterval();
+    // AppKit answers a positive number of seconds; anything else is taken as half a second.
+    if seconds.is_finite() && seconds > 0.0 {
+        Duration::from_secs_f64(seconds)
+    } else {
+        Duration::from_millis(500)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn double_click_interval() -> Duration {
+    Duration::from_millis(500)
+}
+
+/// Runs `quit` when the Mac is about to log out, restart or shut down, and when AppKit is about to terminate the app,
+/// which is what the app menu's Quit and Command-Q do while a window is open. `quit` blocks until the cube is let go
+/// of, and the process does not exit while it does. The returned observers must be held for as long as that is
+/// wanted.
+#[cfg(target_os = "macos")]
+fn quit_on_termination(
+    quit: Rc<dyn Fn(&str)>,
+    log: &impl Record,
+) -> Vec<objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2::runtime::NSObjectProtocol>>> {
+    use objc2_app_kit::{
+        NSApplicationWillTerminateNotification, NSWorkspace, NSWorkspaceWillPowerOffNotification,
+    };
+    use objc2_foundation::{NSNotification, NSNotificationCenter, NSNotificationName, NSOperationQueue};
+
+    let observe = |centre: &NSNotificationCenter, name: &NSNotificationName, reason: &'static str| {
+        let quit = Rc::clone(&quit);
+        let block = block2::RcBlock::new(move |_: std::ptr::NonNull<NSNotification>| quit(reason));
+        // SAFETY: the block is run on the main queue, which is the thread that made it, and the observer is never
+        // removed, so the block is neither run nor released on another thread while the app runs.
+        unsafe {
+            centre.addObserverForName_object_queue_usingBlock(
+                Some(name),
+                None,
+                Some(&NSOperationQueue::mainQueue()),
+                &block,
+            )
+        }
+    };
+    let observers = vec![
+        observe(
+            &NSWorkspace::sharedWorkspace().notificationCenter(),
+            // SAFETY: an AppKit constant, set before main runs.
+            unsafe { NSWorkspaceWillPowerOffNotification },
+            "as the Mac logs out, restarts or shuts down",
+        ),
+        observe(
+            &NSNotificationCenter::defaultCenter(),
+            // SAFETY: an AppKit constant, set before main runs.
+            unsafe { NSApplicationWillTerminateNotification },
+            "as the app is terminated",
+        ),
+    ];
+    log.record(Tag::Launch, || {
+        "Logging out, shutting down and a terminate will quit through the quit sequence".to_string()
+    });
+    observers
+}
+
+#[cfg(not(target_os = "macos"))]
+fn quit_on_termination(_quit: Rc<dyn Fn(&str)>, _log: &impl Record) -> Vec<()> {
+    Vec::new()
+}
+
+/// Sets the status item's tooltip to `Facet` and then `line`'s spoken words, and gives its button the spoken words
+/// for a screen reader. The line itself is not drawn: the item shows its icon alone.
+#[cfg(target_os = "macos")]
+fn show_status_line(tray: &TrayIcon, line: &facet_core::status_line::StatusLine, log: &impl Record) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSAccessibility;
+    use objc2_foundation::NSString;
+
+    if let Err(error) =
+        tray.set_tooltip(Some(format!("{}\n{}", facet_core::status_line::APP_LABEL, line.spoken)))
+    {
+        log.record_failure(Tag::Status, || format!("The status item tooltip could not be changed: {error}"));
+    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        log.record_failure(Tag::Status, || {
+            "Not on the main thread, so the status item was not given its spoken line".to_string()
+        });
+        return;
+    };
+    let Some(button) = tray.ns_status_item().and_then(|item| item.button(mtm)) else {
+        log.record_failure(Tag::Status, || {
+            "The status item has no button, so it was not given its spoken line".to_string()
+        });
+        return;
+    };
+    button.setAccessibilityLabel(Some(&NSString::from_str(&line.spoken)));
+}
+
+#[cfg(not(target_os = "macos"))]
+fn show_status_line(_tray: &TrayIcon, _line: &facet_core::status_line::StatusLine, _log: &impl Record) {}
+
 /// Gives the status item's button an accessibility identifier, so a script can find it by name.
 ///
 /// The identifier is `status-item` because that is what `scripts/status-item-click.py` already looks
@@ -599,9 +846,7 @@ fn redraw_status_item(tray: &TrayIcon, showing: status_icon::Showing, log: &impl
                 });
                 return;
             }
-            log.record(Tag::Tray, || {
-                format!("Status item now shows paused={} locked={}", showing.paused, showing.locked)
-            });
+            log.record(Tag::Tray, || format!("Status icon: {}", showing.description()));
         }
         Err(error) => {
             log.record_failure(Tag::Tray, || format!("The status item icon could not be drawn: {error}"))
@@ -637,7 +882,7 @@ fn data_directory() -> PathBuf {
 /// The app database is opened even when nothing is going to be recorded, because it is what says whether
 /// anything should be. Its connection is then dropped: nothing reads it yet, and holding one open would be
 /// this app keeping a file the Swift one may also want.
-fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
+fn open_databases(zone: &Arc<dyn Zone>) -> Result<Trace, Box<dyn std::error::Error>> {
     let directory = data_directory();
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
@@ -661,6 +906,7 @@ fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
         stored => expand_home(stored),
     };
     let file = folder.join("debug.sqlite");
+    let fallback = directory.join("debug.sqlite");
 
     if !trace.enabled {
         // Said on stderr rather than recorded, there being nowhere to record it. It is the one message a
@@ -669,14 +915,30 @@ fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
         eprintln!(
             "[launch  ] Logging is off in the {which} database. Turn on debug.enabled in setting to record a trace."
         );
-        return Ok(Trace::new(file, None));
+        return Ok(Trace::new(file, None, Arc::clone(zone)).with_fallback(fallback));
     }
 
-    std::fs::create_dir_all(&folder)
-        .map_err(|error| format!("{} could not be created: {error}", folder.display()))?;
-    let log = Trace::new(file.clone(), Some(DebugLog::open(&file)?));
-    log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
-    Ok(log)
+    // A folder that cannot be used, such as one on a disk that is not mounted, falls back to the folder the app keeps
+    // its databases in, said on stderr and in the trace. With neither usable the launch goes on without a trace, said
+    // on stderr: a trace that cannot be kept is not a reason to refuse to track time.
+    match debug_log::open_with_fallback(&file, &fallback, &**zone) {
+        Ok((debug, used, refused)) => {
+            let log = Trace::new(used.clone(), Some(debug), Arc::clone(zone)).with_fallback(fallback);
+            log.record(Tag::Database, || {
+                format!("Trace open at {}, against the {which} database", used.display())
+            });
+            if let Some(reason) = refused {
+                debug_log::say_fallback(&log, &file, &used, &reason);
+            }
+            Ok(log)
+        }
+        Err(reason) => {
+            eprintln!(
+                "[launch  ] The trace could not be kept anywhere, so this run records nothing: {reason}"
+            );
+            Ok(Trace::new(file, None, Arc::clone(zone)).with_fallback(fallback))
+        }
+    }
 }
 
 /// A stored path with its leading `~` turned into this machine's home.

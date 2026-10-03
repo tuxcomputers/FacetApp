@@ -16,10 +16,13 @@
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rusqlite::{Connection, params};
 
 use crate::database;
+use crate::port::Zone;
+use crate::timezone::{self, UnnamedZone};
 
 /// What a message is about. **One enum, so the padding is computed rather than typed**, and adding a case
 /// re-pads every tag automatically.
@@ -56,6 +59,10 @@ pub enum Tag {
     Colour,
     /// The app pausing the cube itself: a face with no category.
     Forced,
+    /// Time entries sent to the Google calendar.
+    Sync,
+    /// What the menu bar line says and its colours.
+    Status,
 }
 
 impl Tag {
@@ -87,6 +94,8 @@ impl Tag {
         Tag::History,
         Tag::Colour,
         Tag::Forced,
+        Tag::Sync,
+        Tag::Status,
     ];
 
     /// The word inside the brackets, and what goes in the `tag` column. Lower case, because a `LIKE`
@@ -118,6 +127,8 @@ impl Tag {
             Tag::History => "history",
             Tag::Colour => "colour",
             Tag::Forced => "forced",
+            Tag::Sync => "sync",
+            Tag::Status => "status",
         }
     }
 
@@ -198,24 +209,36 @@ impl<T: Record + ?Sized> Record for std::rc::Rc<T> {
 /// Recording can be switched while the app runs. Off holds no logger at all. The file is fixed for the
 /// launch; a folder chosen in the settings applies from the next launch.
 pub struct Trace {
-    file: PathBuf,
+    /// The file in use, which is the fallback once the chosen one has been refused.
+    file: RefCell<PathBuf>,
+    /// Where the trace goes when the chosen folder cannot be used.
+    fallback: PathBuf,
     log: RefCell<Option<DebugLog>>,
+    /// Names the machine's zone each time the log is opened.
+    zone: Arc<dyn Zone>,
 }
 
 impl Trace {
-    /// A trace kept in `file`, recording when `log` is given.
-    pub fn new(file: PathBuf, log: Option<DebugLog>) -> Trace {
-        Trace { file, log: RefCell::new(log) }
+    /// A trace kept in `file`, recording when `log` is given. `zone` names the zone the rows are filed under whenever
+    /// recording is switched on.
+    pub fn new(file: PathBuf, log: Option<DebugLog>, zone: Arc<dyn Zone>) -> Trace {
+        Trace { fallback: file.clone(), file: RefCell::new(file), log: RefCell::new(log), zone }
+    }
+
+    /// The same trace, kept in `fallback` when its folder cannot be used.
+    pub fn with_fallback(mut self, fallback: PathBuf) -> Trace {
+        self.fallback = fallback;
+        self
     }
 
     /// A trace that records nothing and has no file, for tests and renders.
     pub fn none() -> Trace {
-        Trace::new(PathBuf::new(), None)
+        Trace::new(PathBuf::new(), None, Arc::new(UnnamedZone))
     }
 
-    /// The trace file for this launch.
-    pub fn file(&self) -> &Path {
-        &self.file
+    /// The trace file in use.
+    pub fn file(&self) -> PathBuf {
+        self.file.borrow().clone()
     }
 
     pub fn is_recording(&self) -> bool {
@@ -225,25 +248,75 @@ impl Trace {
     /// Starts or stops recording. Starting opens the file, creating its folder, and then records `Logging
     /// turned on`; stopping records `Logging turned off` and then closes it. Asking for the state it is
     /// already in does nothing.
-    pub fn set_recording(&self, on: bool) -> Result<(), database::Error> {
+    ///
+    /// **A folder that cannot be used falls back to the fallback folder**, said on stderr and in the trace itself.
+    /// An error means neither could be used.
+    pub fn set_recording(&self, on: bool) -> Result<(), String> {
         if on == self.is_recording() {
             return Ok(());
         }
         if on {
-            if let Some(folder) = self.file.parent() {
-                std::fs::create_dir_all(folder).map_err(|error| database::Error::Open {
-                    path: folder.display().to_string(),
-                    source: rusqlite::Error::InvalidPath(PathBuf::from(error.to_string())),
-                })?;
-            }
-            *self.log.borrow_mut() = Some(DebugLog::open(&self.file)?);
+            let chosen = self.file();
+            let (log, used, refused) = open_with_fallback(&chosen, &self.fallback, &*self.zone)?;
+            *self.file.borrow_mut() = used.clone();
+            *self.log.borrow_mut() = Some(log);
             self.record(Tag::Settings, || "Logging turned on".to_string());
+            if let Some(reason) = refused {
+                say_fallback(self, &chosen, &used, &reason);
+            }
         } else {
             self.record(Tag::Settings, || "Logging turned off".to_string());
             *self.log.borrow_mut() = None;
         }
         Ok(())
     }
+}
+
+/// Opens the trace in `file`, creating its folder, and in `fallback` when `file` cannot be used. Returns the log, the
+/// file it is in, and why `file` was refused when it was. An error says why neither could be used.
+pub fn open_with_fallback(
+    file: &Path,
+    fallback: &Path,
+    zone: &dyn Zone,
+) -> Result<(DebugLog, PathBuf, Option<String>), String> {
+    match open_in_folder(file, zone) {
+        Ok(log) => Ok((log, file.to_path_buf(), None)),
+        Err(refused) if file != fallback => match open_in_folder(fallback, zone) {
+            Ok(log) => Ok((log, fallback.to_path_buf(), Some(refused.to_string()))),
+            Err(also) => Err(format!("{refused}, and neither could {}: {also}", fallback.display())),
+        },
+        Err(refused) => Err(refused.to_string()),
+    }
+}
+
+fn open_in_folder(file: &Path, zone: &dyn Zone) -> Result<DebugLog, database::Error> {
+    if let Some(folder) = file.parent() {
+        std::fs::create_dir_all(folder).map_err(|error| database::Error::Open {
+            path: folder.display().to_string(),
+            source: rusqlite::Error::InvalidPath(PathBuf::from(error.to_string())),
+        })?;
+    }
+    DebugLog::open(file, zone)
+}
+
+/// Says that the trace is kept in `used` because `chosen` was refused: on stderr, which is read when the trace itself
+/// cannot be, and as the trace's own first row.
+pub fn say_fallback(trace: &Trace, chosen: &Path, used: &Path, reason: &str) {
+    eprintln!(
+        "[{:width$}] the trace cannot be kept in {}, so it is kept in {}: {reason}",
+        Tag::Database.word(),
+        chosen.display(),
+        used.display(),
+        width = Tag::WIDTH
+    );
+    trace.record(Tag::Database, || {
+        format!(
+            "The trace could not be kept in {}, so it is kept in {}: {}",
+            plain(&chosen.display().to_string()),
+            plain(&used.display().to_string()),
+            plain(reason)
+        )
+    });
 }
 
 impl Record for Trace {
@@ -266,6 +339,8 @@ fn clock(stamped: &str) -> &str {
 /// The trace database, open from launch to quit.
 pub struct DebugLog {
     connection: Connection,
+    /// The zone every row is filed under, named when the log opened.
+    timezone_id: i64,
     /// Whether a failed write has already been complained about. **Announced once rather than never and
     /// rather than every time**: a trace that cannot be written is one fact, and repeating it per message
     /// would bury the run it is trying to describe under the complaint.
@@ -278,11 +353,30 @@ impl DebugLog {
     /// **The file is brought up by whoever opens it, not by the first message.** The Swift app deferred it
     /// so that a launch recording nothing left no `debug.sqlite` behind; here the logger is only built at
     /// all when the setting says so, so the launch that opens it is already one that is recording.
-    pub fn open(path: &Path) -> Result<Self, database::Error> {
-        Ok(DebugLog {
-            connection: database::open(path, database::DEBUG_DDL)?,
-            reported_failure: Cell::new(false),
-        })
+    ///
+    /// **The machine's zone is named once, here, and every row carries it.** A zone that cannot be named files the
+    /// rows under Unknown, said on stderr, there being nowhere else to say it.
+    pub fn open(path: &Path, zone: &dyn Zone) -> Result<Self, database::Error> {
+        let connection = database::open(path, database::DEBUG_DDL)?;
+        let timezone_id = match zone.name() {
+            Ok(name) => timezone::id_for(&connection, &name).unwrap_or_else(|error| {
+                eprintln!(
+                    "[{:width$}] the time zone {name} could not be filed, so the trace rows are filed under Unknown: {error}",
+                    Tag::Database.word(),
+                    width = Tag::WIDTH
+                );
+                timezone::UNKNOWN
+            }),
+            Err(error) => {
+                eprintln!(
+                    "[{:width$}] the time zone of this machine could not be named, so the trace rows are filed under Unknown: {error}",
+                    Tag::Database.word(),
+                    width = Tag::WIDTH
+                );
+                timezone::UNKNOWN
+            }
+        };
+        Ok(DebugLog { connection, timezone_id, reported_failure: Cell::new(false) })
     }
 
     /// Writes the message as a row and gives back the timestamp it was written with, so the line printed
@@ -314,8 +408,8 @@ impl DebugLog {
         };
 
         let written = self.connection.execute(
-            "INSERT INTO debug_log (logged_at, tag, message) VALUES (?1, ?2, ?3)",
-            params![stamped, tag.word(), message],
+            "INSERT INTO debug_log (logged_at, timezone_id, tag, message) VALUES (?1, ?2, ?3, ?4)",
+            params![stamped, self.timezone_id, tag.word(), message],
         );
         if let Err(error) = written {
             self.complain_once(&error);
@@ -344,6 +438,7 @@ impl DebugLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timezone::SYDNEY;
 
     #[test]
     fn every_tag_is_padded_to_the_longest_one() {
@@ -363,7 +458,7 @@ mod tests {
 
     #[test]
     fn a_recorded_message_is_a_row_that_can_be_read_back() {
-        let log = Some(DebugLog::open(&tempfile()).expect("the trace should open"));
+        let log = Some(DebugLog::open(&tempfile(), &SYDNEY).expect("the trace should open"));
         log.record(Tag::Launch, || "Facet is in the menu bar".to_string());
 
         let Some(log) = &log else { unreachable!() };
@@ -381,6 +476,40 @@ mod tests {
         assert_eq!(&stamped[10..11], "T", "got {stamped}");
     }
 
+    #[test]
+    fn every_row_is_filed_under_the_zone_the_machine_named_when_the_log_opened() {
+        let log = Some(DebugLog::open(&tempfile(), &SYDNEY).expect("the trace should open"));
+        log.record(Tag::Launch, || "one".to_string());
+        log.record(Tag::Launch, || "two".to_string());
+
+        let Some(log) = &log else { unreachable!() };
+        let zones: Vec<String> = log
+            .connection
+            .prepare(
+                "SELECT timezone_name FROM debug_log JOIN timezone USING (timezone_id) ORDER BY debug_log_id",
+            )
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows");
+        assert_eq!(zones, ["Australia/Sydney", "Australia/Sydney"]);
+    }
+
+    #[test]
+    fn a_zone_that_cannot_be_named_files_the_rows_under_unknown() {
+        let log =
+            Some(DebugLog::open(&tempfile(), &crate::timezone::UnnamedZone).expect("the trace should open"));
+        log.record(Tag::Launch, || "one".to_string());
+
+        let Some(log) = &log else { unreachable!() };
+        let id: i64 = log
+            .connection
+            .query_row("SELECT timezone_id FROM debug_log", [], |row| row.get(0))
+            .expect("the row should be there");
+        assert_eq!(id, crate::timezone::UNKNOWN);
+    }
+
     /// The gate is in the composition root, so this is what a launch with logging off costs.
     #[test]
     fn a_launch_with_no_logger_records_nothing_and_builds_nothing() {
@@ -395,7 +524,7 @@ mod tests {
 
     #[test]
     fn messages_arrive_in_the_order_they_were_recorded() {
-        let log = Some(DebugLog::open(&tempfile()).expect("the trace should open"));
+        let log = Some(DebugLog::open(&tempfile(), &SYDNEY).expect("the trace should open"));
         log.record(Tag::Launch, || "first".to_string());
         log.record(Tag::Settings, || "second".to_string());
         log.record(Tag::Quit, || "third".to_string());
@@ -416,7 +545,7 @@ mod tests {
     #[test]
     fn recording_switches_on_and_off_and_says_so_in_the_file() {
         let file = tempfile();
-        let trace = Trace::new(file.clone(), None);
+        let trace = Trace::new(file.clone(), None, Arc::new(SYDNEY));
         assert!(!trace.is_recording());
         trace.record(Tag::Settings, || "not written".to_string());
         trace.set_recording(true).expect("recording should start");
@@ -436,6 +565,59 @@ mod tests {
             .map(|m| m.expect("row"))
             .collect();
         assert_eq!(messages, ["Logging turned on", "written", "Logging turned off"]);
+    }
+
+    /// A path that cannot be made into a folder: its parent is a regular file.
+    fn unusable_trace_file() -> std::path::PathBuf {
+        let blocker = tempfile();
+        std::fs::write(&blocker, b"not a folder").expect("the blocker should be written");
+        blocker.join("trace").join("debug.sqlite")
+    }
+
+    #[test]
+    fn a_usable_folder_is_used_and_nothing_is_said() {
+        let chosen = tempfile();
+        let fallback = tempfile();
+        let (_, used, refused) = open_with_fallback(&chosen, &fallback, &SYDNEY).expect("should open");
+        assert_eq!((used, refused), (chosen, None));
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_made_falls_back_and_says_why() {
+        let chosen = unusable_trace_file();
+        let fallback = tempfile();
+        let (log, used, refused) = open_with_fallback(&chosen, &fallback, &SYDNEY).expect("should fall back");
+        assert_eq!(used, fallback);
+        assert!(refused.is_some_and(|reason| reason.contains("could not be opened")), "the reason is given");
+        Some(log).record(Tag::Launch, || "it works".to_string());
+    }
+
+    #[test]
+    fn with_neither_usable_the_error_names_both() {
+        let chosen = unusable_trace_file();
+        let fallback = unusable_trace_file();
+        let error = open_with_fallback(&chosen, &fallback, &SYDNEY).err().expect("neither should open");
+        assert!(error.contains("neither could"), "{error}");
+    }
+
+    #[test]
+    fn turning_recording_on_falls_back_and_the_file_in_use_follows() {
+        let fallback = tempfile();
+        let trace = Trace::new(unusable_trace_file(), None, Arc::new(SYDNEY)).with_fallback(fallback.clone());
+        trace.set_recording(true).expect("recording should start in the fallback");
+        assert_eq!(trace.file(), fallback);
+        assert!(trace.is_recording());
+        let rows: Vec<String> = Connection::open(&fallback)
+            .expect("the fallback should open")
+            .prepare("SELECT message FROM debug_log ORDER BY debug_log_id")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows");
+        assert_eq!(rows[0], "Logging turned on");
+        assert!(rows[1].starts_with("The trace could not be kept in "), "{rows:?}");
+        assert!(rows[1].contains("so it is kept in "), "{rows:?}");
     }
 
     fn tempfile() -> std::path::PathBuf {

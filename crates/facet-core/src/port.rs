@@ -149,3 +149,10 @@ pub trait Link: Send {
 
     fn disconnect(&mut self) -> Result<(), String>;
 }
+
+/// Names the time zone this machine is in.
+pub trait Zone: Send + Sync {
+    /// The IANA name of the zone the machine is in now, such as `Australia/Sydney`. An error says why it could not
+    /// be named.
+    fn name(&self) -> Result<String, String>;
+}

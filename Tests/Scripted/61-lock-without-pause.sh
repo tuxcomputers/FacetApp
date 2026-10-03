@@ -1,6 +1,6 @@
 #!/bin/bash
-# Locking the cube with pause_on_lock off: the lock still goes, only the pause is skipped, and Unlock resumes it as
-# ever. The setting is put back on at the end.
+# Locking the cube with pause_on_lock off: the lock still goes, only the pause is skipped, and Unlock sends nothing
+# about the pause either, the cube running before and after. The setting is put back on at the end.
 #
 # **Starts from the cube running on Break**, and leaves it there.
 #
@@ -34,7 +34,9 @@ check "no pause was sent" "0" \
 since=$(mark)
 menu_press toggle-cube-lock
 expect_log "Unlock unlocks" "$since" "The cube is unlocked" 15
-expect_log "and resumes" "$since" "The cube is running" 15
+sleep 1
+check "and sends nothing about the pause" "0" \
+    "$(dsql "SELECT COUNT(*) FROM debug_log WHERE debug_log_id > $since AND message LIKE 'Sending 06 %';")"
 check "the open segment counts" "0" \
     "$(wait_sql 0 "SELECT paused FROM device_event WHERE finalised = 0 AND device_face BETWEEN 1 AND 12 ORDER BY start_epoch DESC LIMIT 1;" 20)"
 

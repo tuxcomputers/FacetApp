@@ -1430,8 +1430,11 @@ dependencies = [
  "dirs 7.0.0",
  "facet-core",
  "futures",
+ "iana-time-zone",
  "keyring",
  "rfd",
+ "serde_json",
+ "signal-hook",
  "tokio",
  "ureq",
 ]
@@ -1460,6 +1463,7 @@ dependencies = [
 name = "facet-mac"
 version = "0.1.0"
 dependencies = [
+ "block2 0.6.2",
  "facet-adapters",
  "facet-core",
  "facet-ui",
@@ -3097,8 +3101,6 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "ksni"
 version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "814b44c24cd2cb236c3b8a41c7f08237b452a8e76ecaa81f1cec40b5b678215b"
 dependencies = [
  "async-executor",
  "async-io",
@@ -5062,6 +5064,16 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "signal-hook"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
 
 [[package]]
 name = "signal-hook-registry"

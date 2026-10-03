@@ -46,6 +46,8 @@ facet-adapters = { path = "crates/facet-adapters" }
 # and the XDG portal backend Linux uses does not need it.
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 dirs = "7.0.0"
+iana-time-zone = "0.1"
+serde_json = "1"
 # HTTPS for the Google calls, rustls with ring.
 ureq = "3.4.2"
 
@@ -80,3 +82,11 @@ keyring = "4.2.0"
 sha2 = "0.11.0"
 # PKCE verifiers and OAuth state values.
 getrandom = "0.4.3"
+# SIGTERM, SIGHUP and SIGINT, so a logout or a kill quits through the same sequence as the menu.
+signal-hook = "0.3"
+
+# **ksni with the Ayatana label.** 0.3.6 publishes the title as `Title` only, and the XApp host on the tower draws
+# `XAyatanaLabel` beside the icon, not `Title`, so the tray showed no text (seen on the tower 2026-09-30).
+# vendor/ksni is 0.3.6 with that property and its `XAyatanaNewLabel` signal added, each marked `Facet:`.
+[patch.crates-io]
+ksni = { path = "vendor/ksni" }

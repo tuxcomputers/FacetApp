@@ -7,16 +7,15 @@
 #
 # **Converted from the Swift suite 2026-09-28**, against the Device tab `feature/deviceTab` builds:
 #
-# - **A quit only closes the link.** The Swift quit paused and locked the cube, and nothing here does yet.
-# - **Nothing is sent to the cube on reconnecting** beyond the login and the reads, the LED settings not being pushed
-#   at connect, so the Swift checks on that are gone until they are.
-# - **The menu bar says nothing about reaching the cube yet**, so those checks are gone too.
+# - **The quit is checked for closing the link.** It also leaves the cube paused and locked, which `57` checks.
+# - **What is pushed to the cube at login** (the clock, the LED settings, auto-pause) is checked by the scripts that
+#   own each setting, not here.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
 ensure_app_running
 # What this script checks when everything passes. See `finish` in lib.sh for what a mismatch means.
-EXPECTED_CHECKS=33
+EXPECTED_CHECKS=34
 start "reconnecting to a paired TimeFlip at launch, and forgetting it"
 
 require_a_paired_cube "there is nothing to come back to"
@@ -40,6 +39,7 @@ since=$(mark)
 ensure_app_running
 step "launched; nothing will be pressed from here until the reconnect is checked"
 expect_log "a paired app goes looking for its cube by itself" "$since" "Looking for the paired cube" 20
+expect_log "and the menu bar says it is connecting" "$since" "Menu bar reads Connecting..." 20
 expect_log "and opens a link to the one it has on record" "$since" "Connecting to $paired_uuid" 40
 first=$(wait_for "$since" "password withResponse: %" 30)
 if [ -n "$first" ] && [[ "$first" != *"(000000)"* ]]; then

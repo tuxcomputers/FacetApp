@@ -9,6 +9,8 @@ repository.workspace = true
 [dependencies]
 facet-core.workspace = true
 dirs.workspace = true
+iana-time-zone.workspace = true
+serde_json.workspace = true
 keyring.workspace = true
 rfd.workspace = true
 ureq.workspace = true
@@ -18,3 +20,4 @@ ureq.workspace = true
 btleplug.workspace = true
 futures.workspace = true
 tokio.workspace = true
+signal-hook.workspace = true

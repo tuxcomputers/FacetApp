@@ -1,9 +1,8 @@
 //! Composition root for Linux. The only place that knows both a port and the thing that performs it.
 //!
-//! Today that is a tray icon, a menu, the Settings window and the two databases behind them. There is no
-//! radio yet. What it does establish is the shape the rest hangs off, and the two rules that are easy to
-//! get wrong later: the menu is the primary route to everything, and left click is an accelerator rather
-//! than a mechanism.
+//! That is a tray icon, a menu, the Settings window, the two databases behind them, the radio, the secret store
+//! and the Google calendar. Two rules hold throughout: the menu is the primary route to everything, and left
+//! click is an accelerator rather than a mechanism.
 //!
 //! **Where the files live is decided here and nowhere else.** `facet-core` is handed paths; it does not
 //! know which platform laid them out, and asking it to would be the core caring what it is running on.
@@ -26,11 +25,12 @@ use facet_adapters::dialogs::NativeFileChooser;
 use facet_adapters::http::UreqHttp;
 use facet_adapters::loopback::StdLoopbackListener;
 use facet_adapters::radio::BtleplugRadio;
-use facet_adapters::secrets::KeyringSecretStore;
+use facet_adapters::secrets::{FileSecretStore, KeyringSecretStore};
+use facet_adapters::zone::SystemZone;
 use facet_core::database;
-use facet_core::debug_log::{DebugLog, Record, Tag, Trace};
+use facet_core::debug_log::{self, Record, Tag, Trace, plain};
 use facet_core::google::Credentials;
-use facet_core::port::{Opener, Radio};
+use facet_core::port::{Opener, Radio, Zone};
 use facet_core::setting;
 use facet_ui::app::App;
 use facet_ui::categories::Categories;
@@ -55,17 +55,41 @@ use tray::{FacetTray, FromTray};
 const TRAY_POLL: Duration = Duration::from_millis(100);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // **One copy at a time, claimed before either database is opened**, so a second copy touches neither. Held until
+    // main returns; a second copy finds it held, says so on stderr and goes.
+    let directory = data_directory();
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
+    let _instance = match facet_core::instance::claim(&directory) {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            eprintln!("Facet is already running, so this copy quits.");
+            return Ok(());
+        }
+        Err(reason) => return Err(format!("The single instance lock could not be taken: {reason}").into()),
+    };
+
     // **Before the window**, so that a database that will not come up says so in a terminal rather than
     // from behind a tray icon nobody has clicked yet.
     //
     // **Shared rather than copied**, there being one trace database and one connection to it. Rc because
     // everything that records is on the UI thread; the tray thread has none and posts messages instead.
-    let log = std::rc::Rc::new(open_databases()?);
+    let zone: Arc<dyn Zone> = Arc::new(SystemZone);
+    let log = std::rc::Rc::new(open_databases(&zone)?);
 
     let ui = SettingsWindow::new()?;
 
     // One notice for the whole window, shared by every tab that raises one.
-    let notice = Notice::attach(&ui);
+    let notice = Notice::attach(&ui, std::rc::Rc::clone(&log));
+    // A notice raised while Settings is hidden shows the window, which closes again once the notice is answered.
+    let notice_ui = ui.as_weak();
+    let notice_log = std::rc::Rc::clone(&log);
+    notice.set_window_opener(move || {
+        if let Some(ui) = notice_ui.upgrade() {
+            ui.invoke_open_on_faces();
+            show_settings(&ui, "Faces", &*notice_log);
+        }
+    });
 
     // `false` for has_given_up_on_cube: a paired cube is followed until the reconnect fails to find it and the
     // owner chooses to time by hand.
@@ -75,6 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::rc::Rc::clone(&log),
         false,
         std::rc::Rc::clone(&notice),
+        Arc::clone(&zone),
     );
 
     let categories = Categories::attach(
@@ -142,11 +167,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::rc::Rc::clone(&notice),
         radio,
         Arc::new(KeyringSecretStore::new("au.com.tux.facet.cube", "pin")),
+        Arc::clone(&zone),
     );
+    // Where the cube's PIN goes when the secret store will not take it, so the cube is never left on a PIN nothing can
+    // name. The file also holds the Google client credentials, which it leaves alone.
+    device.set_pin_fallback(Arc::new(FileSecretStore::new(data_directory().join("config.json"), "PIN")));
     // The Faces tab asks the cube which face is up, and a face given a category, or a category recoloured or retired,
     // relights the cube.
     let face_device = std::rc::Rc::downgrade(&device);
     faces.set_cube_face_source(move || face_device.upgrade().and_then(|device| device.cube_face()));
+    let flags_device = std::rc::Rc::downgrade(&device);
+    faces.set_cube_flags_source(move || match flags_device.upgrade() {
+        Some(device) => {
+            let (is_battery_low, is_blink_on) = device.battery_warning();
+            facet_ui::faces::CubeFlags {
+                is_connecting: device.is_connecting(),
+                is_locked: device.is_cube_locked() == Some(true),
+                is_battery_low,
+                is_blink_on,
+            }
+        }
+        None => facet_ui::faces::CubeFlags::default(),
+    });
     let assigned_device = std::rc::Rc::downgrade(&device);
     faces.set_on_face_assigned(move |face, reason| {
         if let Some(device) = assigned_device.upgrade() {
@@ -175,8 +217,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             faces.refresh_timing();
         }
     });
+    // The one way out, whatever asks for it: the menu, the not-found notice, or a signal, which is how a logout or a
+    // shutdown asks. A second ask while the first is running does nothing.
+    let quit_faces = std::rc::Rc::downgrade(&faces);
+    let quit_device = std::rc::Rc::downgrade(&device);
+    let quit_log = std::rc::Rc::clone(&log);
+    let is_quitting = std::cell::Cell::new(false);
+    let quit: std::rc::Rc<dyn Fn(&str)> = std::rc::Rc::new(move |reason: &str| {
+        if is_quitting.replace(true) {
+            return;
+        }
+        quit_log.record(Tag::Quit, || format!("Quitting {reason}"));
+        if let Some(faces) = quit_faces.upgrade() {
+            faces.quit();
+        }
+        if let Some(device) = quit_device.upgrade() {
+            device.quit();
+        }
+        if let Err(error) = slint::quit_event_loop() {
+            quit_log.record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
+        }
+    });
     // A paired cube the launch cannot find is offered again or given up on, in the Settings window, which is shown
     // for it.
+    let lost_quit = std::rc::Rc::clone(&quit);
     let lost_faces = std::rc::Rc::downgrade(&faces);
     let lost_device = std::rc::Rc::downgrade(&device);
     let lost_notice = std::rc::Rc::clone(&notice);
@@ -189,21 +253,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let faces = lost_faces.clone();
         let device = lost_device.clone();
-        lost_notice.ask(
+        let quit = std::rc::Rc::clone(&lost_quit);
+        lost_notice.ask_with_way_out(
             "The TimeFlip was not found",
-            "Facet could not find the paired TimeFlip. Flip it to wake it and look again, or time by hand for the rest \
-             of this launch.",
-            &["Rescan", "Time by Hand"],
-            move |choice| {
-                if choice == 0 {
+            "Facet could not find the paired TimeFlip. Flip it to wake it and look again, time by hand for the rest of \
+             this launch, or quit.",
+            &["Rescan", "Time by Hand", "Quit"],
+            Some(0),
+            move |choice| match choice {
+                0 => {
                     if let Some(device) = device.upgrade() {
                         device.reconnect();
                     }
-                } else if let Some(faces) = faces.upgrade() {
-                    faces.give_up_on_cube();
                 }
+                1 => {
+                    if let Some(faces) = faces.upgrade() {
+                        faces.give_up_on_cube();
+                    }
+                }
+                _ => quit("on the not-found notice"),
             },
         );
+    });
+    // Recorded time goes to the Google calendar: whatever is waiting at launch, and whatever a history fetch or the
+    // app's own clock has just recorded.
+    google.sync_calendar("the app started");
+    let fetched_google = std::rc::Rc::downgrade(&google);
+    device.set_on_history_changed(move || {
+        if let Some(google) = fetched_google.upgrade() {
+            google.sync_calendar("the cube history was filed");
+        }
+    });
+    let timed_google = std::rc::Rc::downgrade(&google);
+    faces.set_on_timing_changed(move || {
+        if let Some(google) = timed_google.upgrade() {
+            google.sync_calendar("the clock changed");
+        }
     });
     // Finds the paired cube again, when there is one; a launch with nothing paired does nothing here.
     device.reconnect();
@@ -220,10 +305,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tab_categories = std::rc::Rc::clone(&categories);
     let tab_report = std::rc::Rc::clone(&report);
     let tab_google = std::rc::Rc::clone(&google);
+    let tab_device = std::rc::Rc::clone(&device);
     ui.on_tab_selected(move |tab| {
         // The scripted suite reads a message of exactly this shape to prove that selecting a tab did
         // something, so the wording is interface.
         tab_log.record(Tag::Settings, || format!("Settings tab selected: {tab}"));
+        if tab != "Device" {
+            tab_device.stop_scan(&format!("the {tab} tab was selected"));
+        }
         if tab == "Faces" {
             tab_faces.refresh();
         }
@@ -245,9 +334,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // again. The values it holds are not carried over, whatever it keeps in memory: the window reads them
     // again on every open, per the source-of-truth rule in CLAUDE.md.
     let close_log = std::rc::Rc::clone(&log);
+    let pressed_log = std::rc::Rc::clone(&close_log);
+    let closing_device = std::rc::Rc::clone(&device);
+    let pressed_device = std::rc::Rc::clone(&device);
     ui.window().on_close_requested(move || {
+        closing_device.stop_scan("the Settings window closed");
         close_log.record(Tag::Settings, || "Settings closed".to_string());
         slint::CloseRequestResponse::HideWindow
+    });
+    // The Close button and Escape hide the window the way its own close control does.
+    let pressed_ui = ui.as_weak();
+    ui.on_close_pressed(move || {
+        let Some(ui) = pressed_ui.upgrade() else { return };
+        if let Err(error) = ui.hide() {
+            pressed_log
+                .record_failure(Tag::Settings, || format!("The Settings window would not hide: {error}"));
+            return;
+        }
+        pressed_device.stop_scan("the Settings window closed");
+        pressed_log.record(Tag::Settings, || "Settings closed".to_string());
     });
 
     let (to_ui, from_tray) = std::sync::mpsc::channel();
@@ -260,9 +365,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // makes, which is every toggle from here or the tab, every click on the tab and every tick while the
     // figure moves, and once now so the first thing on the panel is the database's answer rather than the
     // tray's starting guess. Weak, because `faces` holds this closure and would otherwise hold itself.
-    let follow = follow_the_clock(Rc::downgrade(&faces), Rc::downgrade(&device), tray, Rc::clone(&log));
+    let follow =
+        Rc::new(follow_the_clock(Rc::downgrade(&faces), Rc::downgrade(&device), tray, Rc::clone(&log)));
     follow();
-    faces.set_on_timing_changed(follow);
+    let timed_follow = Rc::clone(&follow);
+    faces.set_on_timing_changed(move || timed_follow());
+    // The low battery blink flashes the name, so each half of it draws the line again.
+    let blink_follow = Rc::clone(&follow);
+    device.set_on_blink(move || blink_follow());
 
     let ui_weak = ui.as_weak();
     let pump_log = std::rc::Rc::clone(&log);
@@ -272,11 +382,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         report: std::rc::Rc::clone(&report),
         app: std::rc::Rc::clone(&app),
         device: std::rc::Rc::clone(&device),
+        quit: std::rc::Rc::clone(&quit),
+        left_click: Box::new(facet_ui::status_click::gesture(
+            std::rc::Rc::downgrade(&faces),
+            std::rc::Rc::downgrade(&device),
+            std::rc::Rc::clone(&log),
+            || DOUBLE_CLICK_INTERVAL,
+        )),
     };
     let pump = slint::Timer::default();
     pump.start(slint::TimerMode::Repeated, TRAY_POLL, move || {
         drain(&from_tray, &ui_weak, &pump_log, &tabs);
     });
+
+    // A kill, a logout and a shutdown quit the way the menu does, so the cube is left paused and locked.
+    let signal_quit = std::rc::Rc::clone(&quit);
+    let signal_watch = slint::Timer::default();
+    match facet_adapters::termination::requests() {
+        Ok(requests) => {
+            signal_watch.start(slint::TimerMode::Repeated, Duration::from_millis(250), move || {
+                if let Ok(name) = requests.try_recv() {
+                    signal_quit(&format!("on {name}"));
+                }
+            })
+        }
+        Err(reason) => {
+            log.record_failure(Tag::Quit, || format!("A kill will not lock the cube: {}", plain(&reason)))
+        }
+    }
 
     log.record(Tag::Launch, || "Facet is in the tray. Right click the icon for the menu".to_string());
 
@@ -296,7 +429,14 @@ struct Tabs {
     report: std::rc::Rc<Report>,
     app: std::rc::Rc<App>,
     device: std::rc::Rc<Device>,
+    /// Quits the app, saying why.
+    quit: std::rc::Rc<dyn Fn(&str)>,
+    /// What a left click on the status item does.
+    left_click: Box<dyn Fn()>,
 }
+
+/// How soon a second left click must follow the first to be a double click: GTK's default `gtk-double-click-time`.
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 
 /// Takes everything the tray thread has posted and acts on it, on the UI thread.
 ///
@@ -310,11 +450,10 @@ fn drain(
 ) {
     while let Ok(message) = from_tray.try_recv() {
         match message {
-            // **The same call as the Faces tab's glyph, for both routes**, so the three cannot disagree, and
-            // left click stays an accelerator for the first menu item rather than a mechanism of its own.
+            // Left click is an accelerator for the menu's Pause, and a double click for its Lock.
             FromTray::Activated => {
                 log.record(Tag::Tray, || "Status item left clicked".to_string());
-                toggle_pause(&tabs.faces, &tabs.device);
+                (tabs.left_click)();
             }
             FromTray::SecondaryActivated => {
                 log.record(Tag::Tray, || "Status item middle clicked".to_string());
@@ -349,14 +488,7 @@ fn drain(
                     tabs.device.open();
                 }
             }
-            FromTray::Quit => {
-                log.record(Tag::Quit, || "Quitting on the menu item".to_string());
-                tabs.faces.quit();
-                tabs.device.quit();
-                if let Err(error) = slint::quit_event_loop() {
-                    log.record_failure(Tag::Quit, || format!("The event loop refused to quit: {error}"));
-                }
-            }
+            FromTray::Quit => (tabs.quit)("on the menu item"),
         }
     }
 }
@@ -387,6 +519,9 @@ fn follow_the_clock(
     log: Rc<Trace>,
 ) -> impl Fn() + 'static {
     let has_reported_stopping = Cell::new(false);
+    let last_icon: Cell<Option<facet_ui::status_icon::Showing>> = Cell::new(None);
+    let last_line: std::cell::RefCell<Option<facet_core::status_line::StatusLine>> =
+        std::cell::RefCell::new(None);
     move || {
         // No tray means start_the_tray has already said why, and there is nothing to follow into.
         let Some(tray) = tray.as_ref() else { return };
@@ -414,6 +549,30 @@ fn follow_the_clock(
                 "The tray service has stopped, so the status item no longer follows the clock".to_string()
             }),
             None => {}
+        }
+        let icon = facet_ui::status_icon::Showing {
+            paused: timing.is_paused,
+            locked: is_locked,
+            colour: timing.icon_colour,
+        };
+        if last_icon.get() != Some(icon) && tray.update(|tray| tray.show_icon_colour(icon.colour)).is_some() {
+            log.record(Tag::Tray, || format!("Status icon: {}", icon.description()));
+            last_icon.set(Some(icon));
+        }
+        let previous = last_line.borrow().clone();
+        if previous.as_ref() != Some(&timing.line) {
+            if tray.update(|tray| tray.show_line(&timing.line.text(), &timing.line.spoken)).is_none() {
+                return;
+            }
+            if previous.as_ref().map(|line| line.colour_description())
+                != Some(timing.line.colour_description())
+            {
+                log.record(Tag::Status, || format!("Menu bar: {}", timing.line.colour_description()));
+            }
+            if previous.as_ref().map(|line| &line.name) != Some(&timing.line.name) {
+                log.record(Tag::Status, || format!("Menu bar reads {}", plain(&timing.line.name)));
+            }
+            *last_line.borrow_mut() = Some(timing.line.clone());
         }
     }
 }
@@ -512,7 +671,7 @@ fn data_directory() -> PathBuf {
 /// The app database is opened even when nothing is going to be recorded, because it is what says whether
 /// anything should be. Its connection is then dropped: nothing reads it yet, and holding one open would be
 /// this app keeping a file something else may also want.
-fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
+fn open_databases(zone: &Arc<dyn Zone>) -> Result<Trace, Box<dyn std::error::Error>> {
     let directory = data_directory();
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("{} could not be created: {error}", directory.display()))?;
@@ -536,6 +695,7 @@ fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
         stored => expand_home(stored),
     };
     let file = folder.join("debug.sqlite");
+    let fallback = directory.join("debug.sqlite");
 
     if !trace.enabled {
         // Said on stderr rather than recorded, there being nowhere to record it. It is the one message a
@@ -544,14 +704,30 @@ fn open_databases() -> Result<Trace, Box<dyn std::error::Error>> {
         eprintln!(
             "[launch  ] Logging is off in the {which} database. Turn on debug.enabled in setting to record a trace."
         );
-        return Ok(Trace::new(file, None));
+        return Ok(Trace::new(file, None, Arc::clone(zone)).with_fallback(fallback));
     }
 
-    std::fs::create_dir_all(&folder)
-        .map_err(|error| format!("{} could not be created: {error}", folder.display()))?;
-    let log = Trace::new(file.clone(), Some(DebugLog::open(&file)?));
-    log.record(Tag::Database, || format!("Trace open at {}, against the {which} database", file.display()));
-    Ok(log)
+    // A folder that cannot be used, such as one on a disk that is not mounted, falls back to the folder the app keeps
+    // its databases in, said on stderr and in the trace. With neither usable the launch goes on without a trace, said
+    // on stderr: a trace that cannot be kept is not a reason to refuse to track time.
+    match debug_log::open_with_fallback(&file, &fallback, &**zone) {
+        Ok((debug, used, refused)) => {
+            let log = Trace::new(used.clone(), Some(debug), Arc::clone(zone)).with_fallback(fallback);
+            log.record(Tag::Database, || {
+                format!("Trace open at {}, against the {which} database", used.display())
+            });
+            if let Some(reason) = refused {
+                debug_log::say_fallback(&log, &file, &used, &reason);
+            }
+            Ok(log)
+        }
+        Err(reason) => {
+            eprintln!(
+                "[launch  ] The trace could not be kept anywhere, so this run records nothing: {reason}"
+            );
+            Ok(Trace::new(file, None, Arc::clone(zone)).with_fallback(fallback))
+        }
+    }
 }
 
 /// A stored path with its leading `~` turned into this machine's home.

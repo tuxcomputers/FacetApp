@@ -4,8 +4,9 @@
 # `device_event` is what a source says happened; `time_entry` is what the app counts. They are
 # deliberately not the same question, and this is where the second one gets answered.
 #
-# **Converted from the Swift suite 2026-09-25.** The Google half of the sync check is gone with Google: the Rust
-# app has no account to sync to, so an entry stays unsynced and that is asserted outright.
+# **Converted from the Swift suite 2026-09-25.** Whether the entry syncs depends on whether a Google account is
+# connected, as in the Swift suite: a suite run always has one, `00-setup` seeding it, and then the entry reaches the
+# calendar; with none it stays unsynced. Until 2026-09-29 the Rust app had no sync, and this asserted unsynced outright.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_test_database
@@ -70,9 +71,15 @@ fi
 # The end is the start plus the length, both through the segment's own zone.
 check "both ends carry a zone" "0" "$(sql "SELECT COUNT(*) FROM time_entry WHERE time_entry_id = $entry AND (start_timezone_id IS NULL OR end_timezone_id IS NULL);")"
 
-# **No account, so nowhere to sync it.** The Rust app has no Google half yet; when it does, this check takes back
-# the Swift version's branch on whether an account is connected.
-check "it stays unsynced, there being nowhere to sync it" "0" "$(sql "SELECT synced_to_google_calendar FROM time_entry WHERE time_entry_id = $entry;")"
+# **Synced when there is an account to sync to, and not otherwise.** The sweep runs once the entry is recorded, so it is
+# waited for rather than read at once. `10` is where the sync itself is checked.
+if [ -n "$(sql "SELECT json_extract(setting_value, '\$.email') FROM setting WHERE setting_name = 'google_account';")" ]; then
+    check "it is synced to the calendar, an account being connected" "1" \
+        "$(wait_sql "1" "SELECT synced_to_google_calendar FROM time_entry WHERE time_entry_id = $entry;" 60)"
+else
+    check "it stays unsynced, there being nowhere to sync it" "0" \
+        "$(sql "SELECT synced_to_google_calendar FROM time_entry WHERE time_entry_id = $entry;")"
+fi
 
 # **One entry per segment, as a constraint rather than a convention** (`UN1_time_entry`).
 segment=$(sql "SELECT device_event_id FROM time_entry WHERE time_entry_id = $entry;")

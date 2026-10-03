@@ -318,7 +318,7 @@ impl Categories {
                     active_namesake.name
                 );
                 let this = self.this.borrow().clone();
-                self.notice.ask(title, &message, &["Cancel"], move |_| {
+                self.notice.ask_with_way_out(title, &message, &["Cancel"], Some(0), move |_| {
                     if let Some(this) = this.upgrade() {
                         this.log.record(Tag::Click, || {
                             format!("Button clicked: Cancel, {} rename refused, name taken", plain(&old))
@@ -359,7 +359,7 @@ impl Categories {
             format!("Category {} rename -> {}, asking: {title}", plain(&old), plain(&new_name))
         });
         let this = self.this.borrow().clone();
-        self.notice.ask(title, &message, &["Cancel", confirm], move |index| {
+        self.notice.ask_with_way_out(title, &message, &["Cancel", confirm], Some(0), move |index| {
             if let Some(this) = this.upgrade() {
                 this.rename_answered(id, &old, &new_name, index == 1, confirm);
             }
@@ -653,7 +653,7 @@ mod tests {
         }
         database::open(&path, database::APPDATA_DDL).expect("the app DDL should apply");
         let ui = SettingsWindow::new().expect("the window should build");
-        let notice = Notice::attach(&ui);
+        let notice = Notice::attach(&ui, Rc::new(Trace::none()));
         let tab = Categories::attach(&ui, path.clone(), Rc::new(Trace::none()), Rc::clone(&notice));
         let changes = Rc::new(std::cell::Cell::new(0));
         let counted = Rc::clone(&changes);

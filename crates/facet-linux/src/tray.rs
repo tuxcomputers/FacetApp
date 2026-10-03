@@ -20,6 +20,7 @@
 
 use std::sync::mpsc::Sender;
 
+use facet_core::status_line::StatusColour;
 use facet_ui::status_icon::{Rendered, Showing, render};
 use ksni::menu::StandardItem;
 use ksni::{Category, Icon, MenuItem, Status, ToolTip, Tray};
@@ -66,6 +67,9 @@ pub struct FacetTray {
     is_pause_clickable: bool,
     /// Whether Lock does anything: only while a cube is connected.
     is_lock_clickable: bool,
+    /// The line beside the icon, and what a screen reader is told, pushed in with the clock.
+    line: String,
+    spoken: String,
     to_ui: Sender<FromTray>,
 }
 
@@ -74,10 +78,12 @@ impl FacetTray {
     /// nothing offered until the first read says otherwise. That read is pushed in straight after spawning.
     pub fn new(to_ui: Sender<FromTray>) -> Self {
         Self {
-            showing: Showing { paused: true, locked: false },
+            showing: Showing { paused: true, locked: false, colour: StatusColour::Ordinary },
             pause_title: "Pause",
             is_pause_clickable: false,
             is_lock_clickable: false,
+            line: "Facet".to_string(),
+            spoken: "Facet".to_string(),
             to_ui,
         }
     }
@@ -108,6 +114,22 @@ impl FacetTray {
         changed
     }
 
+    /// Draws the icon's play or pause glyph in `colour`. Returns whether it changed.
+    pub fn show_icon_colour(&mut self, colour: StatusColour) -> bool {
+        let changed = self.showing.colour != colour;
+        self.showing.colour = colour;
+        changed
+    }
+
+    /// Shows `line` beside the icon, where the host shows a title, with `spoken` as the tooltip. Returns whether it
+    /// changed.
+    pub fn show_line(&mut self, line: &str, spoken: &str) -> bool {
+        let changed = self.line != line || self.spoken != spoken;
+        self.line = line.to_string();
+        self.spoken = spoken.to_string();
+        changed
+    }
+
     /// Posts to the UI thread, and says so if the channel has gone.
     ///
     /// **A closed channel means the event loop has ended**, which happens on the way out and is not a
@@ -128,9 +150,10 @@ impl Tray for FacetTray {
         "facet".into()
     }
 
-    /// **Shown beside the icon on desktops that do that**, which macOS and MATE can and Windows never can.
+    /// The line beside the icon. Published as `Title` and, through vendor/ksni, as `XAyatanaLabel`, which is the one
+    /// an XApp or Ayatana host draws.
     fn title(&self) -> String {
-        "Facet".into()
+        self.line.clone()
     }
 
     fn category(&self) -> Category {
@@ -154,7 +177,7 @@ impl Tray for FacetTray {
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
             title: "Facet".into(),
-            description: String::new(),
+            description: self.spoken.clone(),
             icon_name: String::new(),
             icon_pixmap: Vec::new(),
         }
@@ -269,7 +292,7 @@ mod tests {
     fn every_state_fills_the_buffer_it_declares() {
         for paused in [false, true] {
             for locked in [false, true] {
-                let showing = Showing { paused, locked };
+                let showing = Showing { paused, locked, colour: StatusColour::Ordinary };
                 let icon = argb_icon(&render(showing));
                 assert_eq!(
                     icon.data.len(),
@@ -328,8 +351,8 @@ mod tests {
     /// The conversion must not quietly drop the second glyph, which a chunk-size mistake would do.
     #[test]
     fn locking_widens_the_pixmap() {
-        let plain = argb_icon(&render(Showing { paused: false, locked: false }));
-        let locked = argb_icon(&render(Showing { paused: false, locked: true }));
+        let plain = argb_icon(&render(Showing { paused: false, locked: false, colour: StatusColour::Cube }));
+        let locked = argb_icon(&render(Showing { paused: false, locked: true, colour: StatusColour::Cube }));
         assert!(locked.width > plain.width, "the locked icon is not wider");
         assert_eq!(locked.height, plain.height, "locking must not change the height");
     }
