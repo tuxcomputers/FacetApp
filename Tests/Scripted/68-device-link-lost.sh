@@ -55,8 +55,8 @@ check "the settings go dead" "1" "$(tree | grep -cE "id=device-auto-pause([[:spa
 check "and Forget is still offered, the cube still being paired" "1" "$(on_tab device-forget)"
 
 close_settings
-if ! action_required "Turn Bluetooth back ON" \
-    "Turn it on the same way it went off, then answer y." \
+if ! hands_required "Turn Bluetooth back ON" \
+    "Turn it on the same way it went off, then press Return." \
     "The app finds the cube again by itself, with no relaunch."; then
     fail "Bluetooth was not turned back on"
     finish

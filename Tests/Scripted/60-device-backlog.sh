@@ -11,7 +11,7 @@
 #
 # **Asks for hands four times**: Bluetooth off, the cube onto Meeting (face 2, lit cyan), Bluetooth on, and the cube
 # back onto Break (face 8, lit red). The turn onto Meeting is made while the app cannot hear the cube, so it is asked
-# for with `action_required` and detected afterwards from what the backfill files. `watch_bluetooth` asks for the
+# for with `hands_required` and detected afterwards from what the backfill files. `watch_bluetooth` asks for the
 # radio back on any way out of the script.
 #
 # **Starts and ends with the cube resting on Break, running, paired, unlocked and connected.**
@@ -116,10 +116,10 @@ check "the Break row is left open at the duration the cube last gave" "0|$DURATI
 
 # ---------------------------------------------------------------------------- the turn nobody can hear
 
-if ! action_required \
+if ! hands_required \
     "Turn the cube so the Meeting face is up" \
     "That is face 2, the one lit cyan. Bluetooth stays off, so nothing will appear on screen." \
-    "The cube records the turn itself. Leave it on Meeting, then answer y."
+    "The cube records the turn itself. Leave it on Meeting, then press Return."
 then
     fail "the cube was not turned, so there is no backlog for the reconnect to bring in"
     finish
@@ -132,8 +132,8 @@ check "and nothing reached time_entry" "$ENTRIES_BEFORE" "$(sql "SELECT COUNT(*)
 # ---------------------------------------------------------------------------- and it comes back
 
 back=$(mark)
-if ! action_required "Turn Bluetooth back ON" \
-    "Turn it on the same way it went off, then answer y." \
+if ! hands_required "Turn Bluetooth back ON" \
+    "Turn it on the same way it went off, then press Return." \
     "The app finds the cube again by itself, with no relaunch. Leave the cube on Meeting."; then
     fail "Bluetooth was not turned back on, so the backlog was never brought in"
     finish

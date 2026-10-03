@@ -17,10 +17,11 @@ Rust app is built differently is said in its own header.
 machine's screen, and it waits four minutes for the account to come back. Nobody signing in is a fail.
 
 **A full run needs somebody there.** `00-setup` asks whether the run may use your TimeFlip, then (when the run
-has no Google account) for a Google sign-in, then for a y once the cube is on Break; `51` asks for the Break turn
+has no Google account) for a Google sign-in, then for Return once the cube is on Break; `51` asks for the Break turn
 if the cube is elsewhere; `11` asks for a sign-in on every run; `55`, `62` and `65` ask for turns of the cube;
 `56`, `60` and `68` ask for Bluetooth off and on (`60` also asks for turns). Each waits and carries on by itself
-once it sees the change. Everything else runs unattended.
+once it sees the change. Everything else runs unattended. Only the first of those questions, whether the run may use
+your TimeFlip, wants a `y` or an `n`; every other prompt waits for Return.
 
 **What else is in this repository is the harness.** `Tests/Scripted/` carries `run.sh`, `lib.sh`, `platform.sh`,
 `testlog.sh`, `seed-private.sh` and the suite's own README, which drive **two** platforms, beside the 35 numbered
@@ -48,7 +49,7 @@ cat ~/harry.git/TimeFlipLinux/Tests/Scripted/55-device-face.sh
 
 | | What it proves | Needs |
 |---|---|---|
-| `00-setup` | Puts the app, the database and the cube into the state every other script starts from: debug logging on, the Google account written back, and, when the run may use the cube, the cube paired, put on Break and factory reset | Hands: whether the cube may be used, a Google sign-in if there is no account, a y once the cube is on Break |
+| `00-setup` | Puts the app, the database and the cube into the state every other script starts from: debug logging on, the Google account written back, and, when the run may use the cube, the cube paired, put on Break and factory reset | Hands: whether the cube may be used, a Google sign-in if there is no account, Return once the cube is on Break |
 | `01-launch` | The app starts, records what it is doing, and a second copy stands down before opening either database | None |
 | `02-menu-bar` | The status item: its idle line reading Facet, what its menu holds (Settings, About, Quit, one Pause item), and Settings from the menu | None |
 | `03-settings-window` | The six tabs, moving between them, closing the window three ways (window manager, Close, Escape), and the calendar the run fills | The Google account `00` seeds |

@@ -176,8 +176,8 @@ check "and it names no face of the cube" "0" "$(on_tab timing-device-face)"
 # ---------------------------------------------------------------------------- the radio back, and the cube left alone
 
 close_settings
-if ! action_required "Turn Bluetooth back ON" \
-    "Turn it on the same way it went off, then answer y." \
+if ! hands_required "Turn Bluetooth back ON" \
+    "Turn it on the same way it went off, then press Return." \
     "The app should carry on ignoring the cube. Nothing will appear to happen for 40 seconds."; then
     fail "Bluetooth was not turned back on"
     finish

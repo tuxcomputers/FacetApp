@@ -18,7 +18,7 @@
 # The proof that access came back is not a row: it is `Google calendar confirmed`, which the app writes only
 # after really fetching the calendar from Google.
 #
-# **Converted from the Swift suite 2026-09-27.** It asks y/n at the terminal before opening the browser, and pauses
+# **Converted from the Swift suite 2026-09-27.** It waits for Return at the terminal before opening the browser, and pauses
 # once the sign-in has come back, as the Swift script did. The secret store is checked directly, before and after,
 # where the Swift script took the disconnect's word.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -78,16 +78,16 @@ check "and neither is its name" "$before_name" "$(account calendar_name)"
 
 # ---------------------------------------------------------------------------- connecting again
 
-if ! action_required \
+if ! hands_required \
     "Sign in to Google, so the run can check the calendar survived." \
-    "1. Press y. Facet opens your browser at Google's sign-in page." \
+    "1. Press Return. Facet opens your browser at Google's sign-in page." \
     "2. Sign in as $email -- the same account, or the calendar will not resolve." \
     "3. Approve the access it asks for, then come back here." \
     "" \
     "The run waits for you and carries on by itself once you are done." \
-    "Answering anything else leaves Facet SIGNED OUT, and every later run's" \
+    "If the sign-in is not finished, Facet is left SIGNED OUT, and every later run's" \
     "Google checks fail until you sign in on the App tab by hand."; then
-    fail "the sign-in was declined, so reconnecting is untested"
+    fail "there was no terminal to ask, so reconnecting is untested"
     echo ""
     red   "  #########################################################################"
     red   "  ##  Facet is left signed out of Google."

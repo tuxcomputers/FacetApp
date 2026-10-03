@@ -57,9 +57,10 @@ yellow() { printf '\033[1;33m%s\033[0m\n' "$*"; }
 # goes through `step`, and `grey` is left for the value.
 step() { blue "  $*"; }
 
-# Stops the run and waits for the person running it. Answers 0 for yes, 1 for anything else.
+# Stops the run and waits for the person running it to decide. Answers 0 for yes, 1 for no. For something that only
+# needs doing, with nothing to choose, use `hands_required`.
 #
-#     action_required "Sign in to Google" "1. A browser opens." "2. Approve the account."
+#     action_required "May this run use your TimeFlip?" "It is factory reset three times."
 #
 # **Drawn big on purpose.** Almost every check here runs untouched, so a run is something you start and
 # come back to. A step that needs hands has to survive being scrolled past, which a sentence among two
@@ -85,7 +86,7 @@ step() { blue "  $*"; }
 # should not be counted against the app. A device script that usually takes two minutes and took thirty because
 # whoever was running it went to make coffee looks exactly like one that has broken.
 #
-# Accumulated here rather than at the call sites: every prompt in this file goes through one of the four helpers
+# Accumulated here rather than at the call sites: every prompt in this file goes through one of the helpers
 # below, so a new script asking for something gets its wait discounted without knowing this exists.
 HUMAN_SECONDS=0
 
@@ -94,7 +95,7 @@ note_human_wait() {
     HUMAN_SECONDS=$(( HUMAN_SECONDS + SECONDS - ${1:-$SECONDS} ))
 }
 
-action_required() {
+action_banner() {
     local title="$1"
     shift
     echo ""
@@ -111,6 +112,10 @@ action_required() {
     yellow "##"
     yellow "##############################################################################"
     echo ""
+}
+
+action_required() {
+    action_banner "$@"
 
     if [ ! -r /dev/tty ]; then
         step "no terminal to ask, so this is being skipped"
@@ -127,6 +132,34 @@ action_required() {
             *) red "  '$answer' is not an answer here. Type y or n." ;;
         esac
     done
+}
+
+# Asks for something only hands can do, and waits for Return. Answers 0 once Return is pressed, and 1 when there is no
+# terminal to ask or the terminal closes.
+#
+#     hands_required "Turn Bluetooth back ON" "Turn it on the same way it went off, then press Return."
+#
+# **For an ask with nothing to decide.** Return is the only answer, so no key can choose anything. A prompt whose
+# answer changes what the script does, such as consent or a skip, is `action_required`.
+#
+# **Return says it is done, not that it was.** A caller that needs the thing to have happened checks for it
+# afterwards, as `require_bluetooth` does.
+#
+# Reads `/dev/tty` and answers 1 with no terminal, for the same reasons `action_required` does.
+hands_required() {
+    action_banner "$@"
+
+    if [ ! -r /dev/tty ]; then
+        step "no terminal to ask, so this is being skipped"
+        return 1
+    fi
+
+    local asked=$SECONDS
+    printf '  Press Return when it is done: '
+    read -r _ < /dev/tty || { note_human_wait "$asked"; return 1; }
+    note_human_wait "$asked"
+    echo ""
+    return 0
 }
 
 # Holds the run until the person running it says go. Unlike `action_required` there is nothing to decide:
@@ -1032,17 +1065,19 @@ require_bluetooth() {
         return 0
     fi
 
-    if ! action_required \
+    if ! hands_required \
         "Turn Bluetooth ON" \
         "This run needs the radio and it is off. A run that turns it off asks for it back on its way out;" \
         "one that was killed outright cannot, so it is still off from last time." \
-        "Nothing has been pressed yet: this is asked before the app is given anything to fail at."
+        "Nothing has been pressed yet: this is asked before the app is given anything to fail at." \
+        "" \
+        "Press Return once it is on."
     then
         return 1
     fi
 
     # **Asked again rather than taken on trust**, which is this suite's first principle and cheap here: somebody can
-    # answer y to a banner without having done the thing, and every check after this would then fail about the app.
+    # press Return at a banner without having done the thing, and every check after this would then fail about the app.
     bluetooth_is_on
 }
 

@@ -19,10 +19,14 @@ Every Swift script has a Rust counterpart, and [`docs/scripted-suite.md`](../../
 all with what each proves.
 
 **A full run needs somebody there.** `00-setup` asks whether the run may use your TimeFlip and, on a yes, for the
-cube to be on Break (a y is waited for and trusted) before it factory resets it; it also asks for a Google sign-in
+cube to be on Break (Return is waited for and trusted) before it factory resets it; it also asks for a Google sign-in
 when the run has no account. `11` asks for a Google sign-in every run (the browser opens on that machine's screen
 and the run waits four minutes). `55`, `62` and `65` ask for turns of the cube, `56`, `60` and `68` for Bluetooth
 off and on. Everything else runs unattended.
+
+**Only the first question wants a `y` or an `n`**: whether the run may use your TimeFlip, which factory resets it
+three times. Every other prompt has nothing to decide and waits for Return, so a stray key cannot choose anything.
+A prompt for something a script can detect afterwards, such as a turn of the cube, does not wait for a key at all.
 
 **So read this for how the suite works and why.**
 
@@ -258,7 +262,7 @@ correctly, so it passes and the line says which case it met.
 
 | | |
 |---|---|
-| `00-setup` | puts the app and the database into the state a run starts from: debug logging on, the connected Google account written back, and, when the run may use the cube, the cube paired, put on Break and factory reset (**asks whether it may use your TimeFlip, for a Google sign-in if the run has no account, and for a y once the cube is on Break**) |
+| `00-setup` | puts the app and the database into the state a run starts from: debug logging on, the connected Google account written back, and, when the run may use the cube, the cube paired, put on Break and factory reset (**asks whether it may use your TimeFlip, for a Google sign-in if the run has no account, and for Return once the cube is on Break**) |
 | `01-launch` | the launch reaches the status item, the debug log records, and a second copy stands down before opening either database |
 | `02-menu-bar` | the status item, the idle line reading Facet, its menu, and Settings from the menu |
 | `03-settings-window` | the window opens, the tabs switch, it closes by the window manager, its Close button and Escape, and the run's calendar is made |
