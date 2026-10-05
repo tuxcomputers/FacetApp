@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Facet
+GenericName=Time tracker
+Comment=Record your time from a TimeFlip2 device
+Exec=facet-linux
+Icon=facet
+Terminal=false
+Categories=Utility;Office;
+StartupNotify=false
