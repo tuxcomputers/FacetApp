@@ -35,6 +35,7 @@ app needs. Every other concern has many cross-platform answers; the radio has al
 | [`vendor/`](vendor/) | `ksni` 0.3.6 with the Ayatana label added, patched in for the Linux tray |
 | [`probe/`](probe/) | Three Rust programs that answered a question and can be re-run |
 | [`scripts/`](scripts/) | The accessibility drivers for both platforms, the BLE probe, and the database tooling |
+| [`packaging/`](packaging/) | The scripts that build the macOS disk image and the Linux tarball offered on the website |
 | [`Tests/Scripted/`](Tests/Scripted/) | The harness that drives a running app against a real cube |
 | [`.github/workflows/`](.github/workflows/) | CI on pushes to main and pull requests: build, test and format on macOS and Linux, and a check that both machines' scripted-suite stamps cover the branch |
 
